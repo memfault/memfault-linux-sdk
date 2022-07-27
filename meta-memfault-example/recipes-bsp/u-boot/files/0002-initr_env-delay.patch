@@ -1,0 +1,19 @@
+diff -Naur a/common/board_r.c b/common/board_r.c
+--- a/common/board_r.c	2022-03-29 13:53:40.054224977 +0100
++++ b/common/board_r.c	2022-03-29 15:08:24.541597127 +0100
+@@ -714,7 +714,6 @@
+ #ifdef CONFIG_PVBLOCK
+ 	initr_pvblock,
+ #endif
+-	initr_env,
+ #ifdef CONFIG_SYS_BOOTPARAMS_LEN
+ 	initr_malloc_bootparams,
+ #endif
+@@ -806,6 +805,7 @@
+ #ifdef CONFIG_EFI_SETUP_EARLY
+ 	(init_fnc_t)efi_init_obj_list,
+ #endif
++	initr_env,
+ 	run_main_loop,
+ };
+ 

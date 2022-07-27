@@ -1,0 +1,44 @@
+#!/bin/sh
+
+currentInterval=$(grep "^Interval[[:space:]]*[[:digit:]]*$" /etc/collectd.conf | sed -e 's%^Interval[[:space:]]*\([[:digit:]]\+\)$%\1%')
+
+if [ ${#} -eq 0 ]; then
+    case ${currentInterval} in
+        3600)
+            echo collectd interval: hourly
+            ;;
+        86400)
+            echo collectd interval: daily
+            ;;
+        *)
+            echo collectd interval: ${currentInterval} seconds
+            ;;
+    esac
+    exit 0
+fi
+
+if [ ${#} -ne 1 ]; then
+    echo "Usage ${0} <hourly|daily>"
+    exit 1
+fi
+
+case ${1} in
+    hourly)
+        newInterval=3600
+        ;;
+    daily)
+        newInterval=86400
+        ;;
+    *)
+        echo "Usage ${0} <hourly|daily>"
+        exit 1
+        ;;
+esac
+
+if [ ${currentInterval} -ne ${newInterval} ]; then
+    sed -i -e "s/^Interval[[:space:]]*[[:digit:]]*$/Interval ${newInterval}/" /etc/collectd.conf
+
+    if [ -h /etc/systemd/system/multi-user.target.wants/collectd.service ]; then
+        systemctl restart collectd
+    fi
+fi

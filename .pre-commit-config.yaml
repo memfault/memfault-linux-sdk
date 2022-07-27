@@ -1,0 +1,72 @@
+# See https://pre-commit.com for more information
+# See https://pre-commit.com/hooks.html for more hooks
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.0.1
+    hooks:
+      - id: check-added-large-files # Prevent giant files from being committed
+      - id: check-case-conflict # Check for files that would conflict in case-insensitive filesystems
+      - id: check-executables-have-shebangs # Ensures that (non-binary) executables have a shebang.
+      - id: check-json # This hook checks json files for parseable syntax.
+        exclude: |
+          (?x)^(
+              \.vscode/.*\.json$  # these support // comments, skip them
+          )$
+      - id: check-yaml # This hook checks yaml files for parseable syntax.
+        exclude: .clang-format
+      - id: end-of-file-fixer # Ensures that a file is either empty, or ends with one newline.
+      - id: trailing-whitespace # This hook trims trailing whitespace.
+
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: "v2.7.1"
+    hooks:
+      - id: prettier
+        args: [--write]
+        files: \.(json|markdown|md|yaml|yml)$
+
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: "v13.0.1"
+    hooks:
+      - id: clang-format
+        args: [-style=file, -i]
+        files: \.(h|c|cpp)$
+
+  # use local hooks, so we use the versions installed via conda/poetry rather
+  # than relying on separately defined pre-commit versions
+  - repo: local
+    hooks:
+      - id: isort
+        name: isort
+        entry: isort
+        language: system
+        args: [--profile, black]
+        files: \.(py|pyi)$
+
+      - id: black
+        name: black
+        entry: black
+        language: system
+        files: \.(py|pyi)$
+
+      - id: flake8
+        name: flake8
+        entry: ./.lint/flake8-wrapper.sh
+        language: system
+        files: \.(py|pyi)$
+
+      - id: mypy
+        name: mypy
+        entry: mypy --sqlite-cache
+        language: system
+        # If we use the sqlite cache, it appears that multiple concurrent access attempts
+        # will cause a DatabaseLocked failure pretty frequently. To prevent this, just
+        # prevent mypy from being run concurrently.
+        require_serial: true
+        files: (tasks|test-scripts)/.*\.(py|pyi)$
+
+  - repo: https://github.com/AleksaC/circleci-cli-py
+    rev: v0.1.15932
+    hooks:
+      - id: circle-ci-validator
+        files: \.circleci/.*\.yml$

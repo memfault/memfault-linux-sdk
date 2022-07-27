@@ -1,0 +1,9 @@
+part /boot --fstype=vfat --ondisk vda --offset 2048s --align 4 --fixed-size 63M --active --label boot
+
+part / --source rootfs --fstype=ext4 --ondisk vda --label root-a --align 4 --fixed-size 256M
+
+part --fstype=ext4 --ondisk vda --label root-b --align 4 --fixed-size 256M
+
+part /media --fstype=ext4 --ondisk vda --label media --align 4 --fixed-size 448M
+
+bootloader --ptable msdos --timeout 1

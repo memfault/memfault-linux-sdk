@@ -1,0 +1,42 @@
+software = {
+    version = "__MEMFAULT_SOFTWARE_VERSION";
+
+    qemuarm64 = {
+        hardware-compatibility: [ "1.0" ];
+        stable: {
+            copy1: {
+                images: (
+                    {
+                        filename = "base-image-qemuarm64.ext4.gz";
+                        type = "raw";
+                        compressed = "zlib";
+                        device = "/dev/vda2";
+                    }
+                );
+                uboot: (
+                    {
+                        name = "rootpart";
+                        value = "2";
+                    }
+                );
+            }
+
+            copy2: {
+                images: (
+                    {
+                        filename = "base-image-qemuarm64.ext4.gz";
+                        type = "raw";
+                        compressed = "zlib";
+                        device = "/dev/vda3";
+                    }
+                );
+                uboot: (
+                    {
+                        name = "rootpart";
+                        value = "3";
+                    }
+                );
+            }
+        }
+    }
+}

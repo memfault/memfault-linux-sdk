@@ -1,0 +1,13 @@
+[Unit]
+Description=memfaultd daemon
+After=local-fs.target
+Before=swupdate.service systemd-pstore.service
+
+[Service]
+Type=forking
+PIDFile=/run/memfaultd.pid
+ExecStart=/usr/bin/memfaultd -d
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
