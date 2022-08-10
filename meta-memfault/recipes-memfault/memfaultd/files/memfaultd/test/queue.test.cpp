@@ -48,7 +48,8 @@ TEST_BASE(MemfaultdQueueUtest) {
   }
 
   void teardown() override {
-    unlink(tmp_dir);
+    unlink(tmp_queue_file);
+    rmdir(tmp_dir);
     mock().clear();
   }
 

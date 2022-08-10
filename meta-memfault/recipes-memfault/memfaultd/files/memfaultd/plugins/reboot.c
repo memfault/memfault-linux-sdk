@@ -169,6 +169,8 @@ static bool prv_reboot_is_systemd_state(sMemfaultdPlugin *handle, const char *st
 
   if (sd_bus_get_property_string(bus, service, path, interface, system_state, &error, &cur_state) <
       0) {
+    // System bus has often disappeared by this point when shutting down. Investigate a better
+    // method of detecting shutdown
     if (strcmp(state, "stopping") == 0) {
       sd_bus_error_free(&error);
       return true;

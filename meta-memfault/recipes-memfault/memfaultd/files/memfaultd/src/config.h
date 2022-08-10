@@ -33,5 +33,6 @@ bool memfaultd_config_get_boolean(sMemfaultdConfig *handle, const char *parent_k
                                   bool *val);
 bool memfaultd_config_get_objects(sMemfaultdConfig *handle, const char *parent_key,
                                   sMemfaultdConfigObject **objects, int *len);
+char *memfaultd_config_generate_rw_filename(sMemfaultdConfig *handle, const char *filename);
 
 #endif

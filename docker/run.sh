@@ -6,9 +6,6 @@ while getopts "bv:c:e:" options; do
     b)
         docker build --tag yocto .
         ;;
-    v)
-        downloadsmount="--mount type=bind,source=${OPTARG},target=/home/build/yocto/build/downloads"
-        ;;
     c)
         command="${OPTARG}"
         ;;
@@ -31,7 +28,6 @@ docker run \
     --interactive --rm --tty \
     --network="host" \
     --name memfault-linux-qemu \
-    ${downloadsmount} \
     ${buildmount} \
     ${sourcesmount} \
     ${metamount} \

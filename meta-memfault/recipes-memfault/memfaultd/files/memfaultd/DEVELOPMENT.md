@@ -29,5 +29,5 @@ From within the container, run:
 Or from the host:
 
 ```console
-./run.sh -b -v ~/memfault-linux-sdk-cache -e /test.sh
+./run.sh -b -e /test.sh
 ```

@@ -178,6 +178,22 @@ static void prv_config_merge_objects(json_object *a, json_object *b) {
   }
 }
 
+char *memfaultd_config_generate_rw_filename(sMemfaultdConfig *handle, const char *filename) {
+  const char *data_dir;
+  char *file = NULL;
+  if (memfaultd_config_get_string(handle, "", "data_dir", &data_dir) && strlen(data_dir) != 0) {
+    file = malloc(strlen(data_dir) + strlen(filename) + 1 + 1);
+    if (!file) {
+      return NULL;
+    }
+    strcpy(file, data_dir);
+    strcat(file, "/");
+    strcat(file, filename);
+  }
+
+  return file;
+}
+
 /**
  * @brief Initialise the config object
  *
@@ -210,15 +226,7 @@ sMemfaultdConfig *memfaultd_config_init(sMemfaultd *memfaultd, const char *file)
     close(fd);
   }
 
-  const char *data_dir;
-  char *runtime_path = NULL;
-  if (memfaultd_config_get_string(handle, "", "data_dir", &data_dir) && strlen(data_dir) != 0) {
-    runtime_path = malloc(strlen(data_dir) + 13 + 1);
-    if (runtime_path) {
-      strcpy(runtime_path, data_dir);
-      strcat(runtime_path, "/runtime.conf");
-    }
-  }
+  char *runtime_path = memfaultd_config_generate_rw_filename(handle, "runtime.conf");
 
   if (!runtime_path) {
     // No runtime config, warn but continue.
@@ -228,13 +236,13 @@ sMemfaultdConfig *memfaultd_config_init(sMemfaultd *memfaultd, const char *file)
     if ((fd = open(runtime_path, O_RDONLY)) == -1) {
       if (errno != ENOENT) {
         // Missing file is not an error
-        fprintf(stderr, "config:: Unable to open configuration file '%s', %s.\n", file,
+        fprintf(stderr, "config:: Unable to open configuration file '%s', %s.\n", runtime_path,
                 strerror(errno));
       }
       handle->runtime = json_object_new_object();
     } else {
       if (!(handle->runtime = json_object_from_fd(fd))) {
-        fprintf(stderr, "config:: Unable to parse configuration file  '%s'\n", file);
+        fprintf(stderr, "config:: Unable to parse configuration file  '%s'\n", runtime_path);
         handle->runtime = json_object_new_object();
       }
       close(fd);

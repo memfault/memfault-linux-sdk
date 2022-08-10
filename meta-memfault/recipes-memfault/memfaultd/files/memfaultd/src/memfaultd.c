@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/param.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
@@ -66,12 +67,15 @@ static sMemfaultd *s_handle;
 #ifndef VERSION
   #define VERSION dev
 #endif
-#ifndef GIT_HASH
-  #define GIT_HASH unknown
+#ifndef GITCOMMIT
+  #define GITCOMMIT unknown
 #endif
 
 #define STRINGIZE(x) #x
 #define STRINGIZE_VALUE_OF(x) STRINGIZE(x)
+
+#define NETWORK_FAILURE_FIRST_BACKOFF_SECONDS 60
+#define NETWORK_FAILURE_BACKOFF_MULTIPLIER 2
 
 /**
  * @brief Displays SDK version information
@@ -79,7 +83,7 @@ static sMemfaultd *s_handle;
  */
 static void prv_memfaultd_version_info(void) {
   printf("VERSION=%s\n", STRINGIZE_VALUE_OF(VERSION));
-  printf("GIT_HASH=%s\n", STRINGIZE_VALUE_OF(GIT_HASH));
+  printf("GIT COMMIT=%s\n", STRINGIZE_VALUE_OF(GITCOMMIT));
 }
 
 /**
@@ -88,13 +92,15 @@ static void prv_memfaultd_version_info(void) {
  */
 static void prv_memfaultd_usage(void) {
   printf("Usage: memfaultd [OPTION]...\n\n");
-  printf("  -c, --config-file <file>      : Configuration file\n");
-  printf("  -d, --daemonize               : Daemonize process\n");
-  printf("  -e, --enable-data-collection  : Enable automatic collection, will restart the main "
+  printf("      --config-file <file>       : Configuration file\n");
+  printf("      --daemonize                : Daemonize process\n");
+  printf("      --enable-data-collection   : Enable data collection, will restart the main "
          "memfaultd service\n");
-  printf("  -h, --help                    : Display this help and exit\n");
-  printf("  -s, --show-settings           : Show settings\n");
-  printf("  -v, --version                 : Show version information\n");
+  printf("      --disable-data-collection  : Disable data collection, will restart the main "
+         "memfaultd service\n");
+  printf("  -h, --help                     : Display this help and exit\n");
+  printf("  -s, --show-settings            : Show settings\n");
+  printf("  -v, --version                  : Show version information\n");
 }
 
 /**
@@ -130,14 +136,15 @@ static void prv_memfaultd_destroy_plugins(void) {
  *
  * @param handle Main memfaultd handle
  */
-static void prv_memfaultd_enable_collection(sMemfaultd *handle) {
-  bool enabled = false;
-  if (memfaultd_get_boolean(handle, "", "enable_data_collection", &enabled) && enabled) {
-    printf("Data collection already enabled\n");
+static void prv_memfaultd_enable_collection(sMemfaultd *handle, bool enable) {
+  bool current_state = false;
+  if (memfaultd_get_boolean(handle, "", "enable_data_collection", &current_state) &&
+      current_state == enable) {
+    printf("Data collection state already set\n");
     return;
   }
-  printf("Enabling data collection\n");
-  memfaultd_set_boolean(handle, "", "enable_data_collection", true);
+  printf("%s data collection\n", enable ? "Enabling" : "Disabling");
+  memfaultd_set_boolean(handle, "", "enable_data_collection", enable);
 
   if (getuid() == 0 && system("/bin/systemctl restart memfaultd.service") != 0) {
     fprintf(stderr, "memfaultd:: Failed to restart memfaultd.\n");
@@ -169,11 +176,13 @@ static const char *prv_endpoint_for_txdata_type(uint8_t type) {
  * @brief Process TX queue and transmit messages
  *
  * @param handle Main memfaultd handle
+ * @return true Successfully processed the queue, sending all valid entries
+ * @return false Failed to process
  */
-static void prv_memfaultd_process_tx_queue(sMemfaultd *handle) {
+static bool prv_memfaultd_process_tx_queue(sMemfaultd *handle) {
   bool allowed;
   if (!memfaultd_get_boolean(handle, NULL, "enable_data_collection", &allowed) || !allowed) {
-    return;
+    return true;
   }
 
   uint32_t payload_size_bytes;
@@ -183,15 +192,20 @@ static void prv_memfaultd_process_tx_queue(sMemfaultd *handle) {
     const char *endpoint = prv_endpoint_for_txdata_type(txdata->type);
     // FIXME: assuming NUL terminated UTF-8 C string -- need to support binary data too:
     const char *request_body = (const char *)txdata->payload;
-    if (endpoint == NULL ||
-        memfaultd_network_post(handle->network, endpoint, request_body, NULL, 0)) {
+    if (endpoint == NULL) {
+      free(payload);
+      memfaultd_queue_complete_read(handle->queue);
+    } else if (memfaultd_network_post(handle->network, endpoint, request_body, NULL, 0)) {
       free(payload);
       memfaultd_queue_complete_read(handle->queue);
     } else {
+      // Network failure
       free(payload);
-      return;
+      return false;
     }
   }
+
+  return true;
 }
 
 /**
@@ -262,17 +276,27 @@ static bool prv_memfaultd_daemonize_process(void) {
  * @param handle Main memfaultd handle
  */
 static void prv_memfaultd_process_loop(sMemfaultd *handle) {
+  time_t next_telemetry_poll = 0;
+  int override_interval = NETWORK_FAILURE_FIRST_BACKOFF_SECONDS;
   while (!handle->terminate) {
     struct timeval last_wakeup;
     gettimeofday(&last_wakeup, NULL);
 
-    prv_memfaultd_process_tx_queue(handle);
+    int interval = 1 * 60 * 60;
+    memfaultd_get_integer(handle, NULL, "refresh_interval_seconds", &interval);
 
-    int interval;
-    if (!memfaultd_get_integer(handle, NULL, "refresh_interval_seconds", &interval)) {
-      interval = 60 * 60;
-      fprintf(stderr, "memfaultd:: No network update interval defined, defaulting to %u.\n",
-              interval);
+    if (next_telemetry_poll + interval >= last_wakeup.tv_sec) {
+      next_telemetry_poll = last_wakeup.tv_sec + interval;
+      // Unimplemented: Perform data collection calls
+    }
+
+    if (prv_memfaultd_process_tx_queue(handle)) {
+      // Reset override in preparation of next failure
+      override_interval = NETWORK_FAILURE_FIRST_BACKOFF_SECONDS;
+    } else {
+      // call failed, back off up to the entire update interval
+      interval = MIN(override_interval, interval);
+      override_interval *= NETWORK_FAILURE_BACKOFF_MULTIPLIER;
     }
 
     struct timeval now;
@@ -290,6 +314,9 @@ static void memfaultd_dump_config(sMemfaultd *handle, const char *config_file) {
   printf("Device configuration from memfault-device-info:\n");
   printf("  MEMFAULT_DEVICE_ID=%s\n", handle->settings->device_id);
   printf("  MEMFAULT_HARDWARE_VERSION=%s\n", handle->settings->hardware_version);
+  printf("\n");
+
+  prv_memfaultd_version_info();
   printf("\n");
 
   printf("Plugin enabled:\n");
@@ -324,31 +351,34 @@ static void memfaultd_create_data_dir(sMemfaultd *handle) {
  */
 int main(int argc, char *argv[]) {
   bool daemonize = false;
-  bool enable = false;
+  bool enable_comms = false;
+  bool disable_comms = false;
   bool display_config = false;
 
   s_handle = calloc(sizeof(sMemfaultd), 1);
   const char *config_file = CONFIG_FILE;
 
-  static struct option sMemfaultdLongOptions[] = {{"config-file", required_argument, NULL, 'c'},
-                                                  {"daemonize", no_argument, NULL, 'd'},
-                                                  {"enable-collection", no_argument, NULL, 'e'},
-                                                  {"help", no_argument, NULL, 'h'},
-                                                  {"show-settings", no_argument, NULL, 's'},
-                                                  {"version", no_argument, NULL, 'v'},
-                                                  {NULL, 0, NULL, 0}};
+  static struct option sMemfaultdLongOptions[] = {
+    {"config-file", required_argument, NULL, 'c'},
+    {"disable-data-collection", no_argument, NULL, 'd'},
+    {"enable-data-collection", no_argument, NULL, 'e'},
+    {"help", no_argument, NULL, 'h'},
+    {"show-settings", no_argument, NULL, 's'},
+    {"version", no_argument, NULL, 'v'},
+    {"daemonize", no_argument, NULL, 'Z'},
+    {NULL, 0, NULL, 0}};
 
   int opt;
-  while ((opt = getopt_long(argc, argv, "c:dehsv", sMemfaultdLongOptions, NULL)) != -1) {
+  while ((opt = getopt_long(argc, argv, "c:dehsvZ", sMemfaultdLongOptions, NULL)) != -1) {
     switch (opt) {
       case 'c':
         config_file = optarg;
         break;
       case 'd':
-        daemonize = true;
+        disable_comms = true;
         break;
       case 'e':
-        enable = true;
+        enable_comms = true;
         break;
       case 'h':
         prv_memfaultd_usage();
@@ -359,6 +389,9 @@ int main(int argc, char *argv[]) {
       case 'v':
         prv_memfaultd_version_info();
         exit(EXIT_SUCCESS);
+      case 'Z':
+        daemonize = true;
+        break;
       default:
         exit(EXIT_FAILURE);
     }
@@ -371,14 +404,13 @@ int main(int argc, char *argv[]) {
 
   memfaultd_create_data_dir(s_handle);
 
-  if (enable) {
-    prv_memfaultd_enable_collection(s_handle);
+  if (enable_comms || disable_comms) {
+    if (enable_comms && disable_comms) {
+      fprintf(stderr, "memfaultd:: Unable to enable and disable comms simultaneously\n");
+      exit(EXIT_FAILURE);
+    }
+    prv_memfaultd_enable_collection(s_handle, enable_comms);
     exit(EXIT_SUCCESS);
-  }
-
-  if (!daemonize && prv_memfaultd_check_for_pid_file()) {
-    fprintf(stderr, "memfaultd:: memfaultd already running, pidfile: '%s'.\n", PID_FILE);
-    exit(EXIT_FAILURE);
   }
 
   if (!(s_handle->settings = memfaultd_device_settings_init())) {
@@ -390,6 +422,11 @@ int main(int argc, char *argv[]) {
   if (display_config) {
     /* Already reported above, just exit */
     exit(EXIT_SUCCESS);
+  }
+
+  if (!daemonize && prv_memfaultd_check_for_pid_file()) {
+    fprintf(stderr, "memfaultd:: memfaultd already running, pidfile: '%s'.\n", PID_FILE);
+    exit(EXIT_FAILURE);
   }
 
   signal(SIGTERM, prv_memfaultd_sig_handler);
@@ -486,18 +523,6 @@ const sMemfaultdDeviceSettings *memfaultd_get_device_settings(sMemfaultd *memfau
   return memfaultd->settings;
 }
 
-char *memfaultd_generate_rw_filename(sMemfaultd *memfaultd, const char *filename) {
-  const char *data_dir;
-  char *file = NULL;
-  if (memfaultd_get_string(memfaultd, "", "data_dir", &data_dir) && strlen(data_dir) != 0) {
-    file = malloc(strlen(data_dir) + strlen(filename) + 1 + 1);
-    if (!file) {
-      return NULL;
-    }
-    strcpy(file, data_dir);
-    strcat(file, "/");
-    strcat(file, filename);
-  }
-
-  return file;
+char *memfaultd_generate_rw_filename(sMemfaultd *handle, const char *filename) {
+  return memfaultd_config_generate_rw_filename(handle->config, filename);
 }

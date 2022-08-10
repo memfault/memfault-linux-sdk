@@ -1,12 +1,12 @@
 [Unit]
 Description=memfaultd daemon
-After=local-fs.target
-Before=swupdate.service systemd-pstore.service
+After=local-fs.target network.target
+Before=swupdate.service
 
 [Service]
 Type=forking
 PIDFile=/run/memfaultd.pid
-ExecStart=/usr/bin/memfaultd -d
+ExecStart=/usr/bin/memfaultd --daemonize
 Restart=on-failure
 
 [Install]

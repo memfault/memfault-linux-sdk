@@ -13,11 +13,17 @@ def test_start():
     qemu.child().sendline("root")
     qemu.child().expect("#")
 
-    qemu.child().sendline("memfaultd -e")
+    qemu.child().sendline("memfaultd --enable-data-collection")
     qemu.child().expect("Enabling data collection")
 
-    qemu.child().sendline("memfaultd -e")
-    qemu.child().expect("Data collection already enabled")
+    qemu.child().sendline("memfaultd --enable-data-collection")
+    qemu.child().expect("Data collection state already set")
+
+    qemu.child().sendline("memfaultd --disable-data-collection")
+    qemu.child().expect("Disabling data collection")
+
+    qemu.child().sendline("memfaultd --disable-data-collection")
+    qemu.child().expect("Data collection state already set")
 
     # Check that the service restarted:
     qemu.child().sendline("journalctl -u memfaultd.service")

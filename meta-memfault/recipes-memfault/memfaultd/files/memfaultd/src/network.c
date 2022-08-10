@@ -17,6 +17,7 @@
 
 struct MemfaultdNetwork {
   sMemfaultd *memfaultd;
+  bool during_network_failure;
   CURL *curl;
 };
 
@@ -66,6 +67,7 @@ sMemfaultdNetwork *memfaultd_network_init(sMemfaultd *memfaultd) {
   sMemfaultdNetwork *handle = calloc(sizeof(sMemfaultdNetwork), 1);
 
   handle->memfaultd = memfaultd;
+  handle->during_network_failure = false;
 
   if (!(handle->curl = curl_easy_init())) {
     fprintf(stderr, "network:: Failed to initialise CURL.\n");
@@ -126,11 +128,18 @@ bool memfaultd_network_get(sMemfaultdNetwork *handle, const char *endpoint, char
   curl_easy_reset(handle->curl);
 
   if (res != CURLE_OK) {
-    fprintf(stderr, "network:: Failed to GET message from %s, %u, %s.\n", url, res,
-            curl_easy_strerror(res));
+    if (!handle->during_network_failure) {
+      fprintf(stderr, "network:: Failed to perform GET request from %s, %u, %s.\n", url, res,
+              curl_easy_strerror(res));
+      handle->during_network_failure = true;
+    }
     free(url);
     free(recv_buf.buf);
     return false;
+  } else if (handle->during_network_failure) {
+    fprintf(stderr, "network:: Network recovered, successfully performed GET request from %s.\n",
+            url);
+    handle->during_network_failure = false;
   }
 
   free(url);
@@ -194,13 +203,20 @@ bool memfaultd_network_post(sMemfaultdNetwork *handle, const char *endpoint, con
   curl_slist_free_all(headers);
 
   if (res != CURLE_OK) {
-    fprintf(stderr, "network:: Failed to POST message to %s, %u, %s.\n", url, res,
-            curl_easy_strerror(res));
+    if (!handle->during_network_failure) {
+      fprintf(stderr, "network:: Failed to POST request to %s, %u, %s.\n", url, res,
+              curl_easy_strerror(res));
+      handle->during_network_failure = true;
+    }
     free(url);
     if (data) {
       free(recv_buf.buf);
     }
     return false;
+  } else if (handle->during_network_failure) {
+    fprintf(stderr, "network:: Network recovered, successfully performed POST request to %s.\n",
+            url);
+    handle->during_network_failure = false;
   }
 
   free(url);

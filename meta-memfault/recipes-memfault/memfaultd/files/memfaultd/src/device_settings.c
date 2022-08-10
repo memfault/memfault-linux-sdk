@@ -54,8 +54,16 @@ sMemfaultdDeviceSettings *memfaultd_device_settings_init(void) {
     char *val = strtok(NULL, "\n");
 
     if (strcmp(name, "MEMFAULT_DEVICE_ID") == 0) {
+      if (!val || strlen(val) == 0) {
+        fprintf(stderr, "device_settings:: Invalid MEMFAULT_DEVICE_ID setting\n");
+        continue;
+      }
       handle->device_id = strdup(val);
     } else if (strcmp(name, "MEMFAULT_HARDWARE_VERSION") == 0) {
+      if (!val || strlen(val) == 0) {
+        fprintf(stderr, "device_settings:: Invalid MEMFAULT_HARDWARE_VERSION setting\n");
+        continue;
+      }
       handle->hardware_version = strdup(val);
     } else {
       fprintf(stderr, "device_settings:: Unknown option in %s : '%s'\n", INFO_BINARY, name);

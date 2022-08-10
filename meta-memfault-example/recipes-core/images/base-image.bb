@@ -7,11 +7,8 @@ LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda
 
 IMAGE_INSTALL:append = " \
     cifs-utils \
-    collectd-sampleplugin-python \
     kernel-modules \
     memfault-device-info \
-    statsd-sampleapp-python \
-    statsd-sampleapp-c \
     u-boot-env \
     u-boot-fw-utils \
 "
