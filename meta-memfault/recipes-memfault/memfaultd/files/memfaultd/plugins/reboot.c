@@ -132,8 +132,10 @@ static int prv_reboot_read_and_clear_reboot_reason(sMemfaultdPlugin *handle) {
     return REBOOTREASON_UNKNOWN;
   }
 
-  int reboot_reason = REBOOTREASON_UNKNOWN;
-  fscanf(fd, "%d", &reboot_reason);
+  int reboot_reason;
+  if (fscanf(fd, "%d", &reboot_reason) != 1) {
+    reboot_reason = REBOOTREASON_UNKNOWN;
+  }
 
   fclose(fd);
 

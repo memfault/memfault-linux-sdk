@@ -3,12 +3,9 @@ if(ENABLE_PLUGINS)
         list(APPEND plugin_src reboot.c)
         set(local_plugin_defines "${local_plugin_defines};-DPLUGIN_REBOOT")
 
-        include(FindPkgConfig)
-        pkg_check_modules(SDBUS REQUIRED libsystemd)
-
         find_package(libuboot)
 
-        list(APPEND plugin_libraries ${SDBUS_LIBRARIES} ${libuboot_LIBRARIES})
+        list(APPEND plugin_libraries ${libuboot_LIBRARIES})
     endif()
 
     if(PLUGIN_SWUPDATE)
@@ -16,10 +13,14 @@ if(ENABLE_PLUGINS)
         set(local_plugin_defines "${local_plugin_defines};-DPLUGIN_SWUPDATE")
 
         include(FindPkgConfig)
-        pkg_check_modules(SDBUS REQUIRED libsystemd)
         pkg_check_modules(LIBCONFIG REQUIRED libconfig)
 
-        list(APPEND plugin_libraries ${SDBUS_LIBRARIES} ${LIBCONFIG_LIBRARIES})
+        list(APPEND plugin_libraries ${LIBCONFIG_LIBRARIES})
+    endif()
+
+    if(PLUGIN_COLLECTD)
+        list(APPEND plugin_src collectd.c)
+        set(local_plugin_defines "${local_plugin_defines};-DPLUGIN_COLLECTD")
     endif()
 
     if(plugin_src)

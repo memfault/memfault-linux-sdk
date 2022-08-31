@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.18)
 
 pkg_check_modules(CPPUTEST REQUIRED cpputest)
+pkg_check_modules(SDBUS REQUIRED libsystemd)
 
 add_library(cpputest_runner AllTests.cpp)
 target_link_libraries(cpputest_runner PUBLIC ${CPPUTEST_LIBRARIES})
@@ -18,6 +19,7 @@ function(add_cpputest_target NAME)
         # cpputest_runner has to come before CPPUTEST_LIBRARIES!!!
         cpputest_runner
         ${CPPUTEST_LIBRARIES}
+        ${SDBUS_LIBRARIES}
         )
     target_compile_options(${NAME} PRIVATE
         -Wall

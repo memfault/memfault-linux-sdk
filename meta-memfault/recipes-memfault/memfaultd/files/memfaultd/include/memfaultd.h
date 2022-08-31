@@ -52,8 +52,7 @@ typedef struct {
   } value;
 } sMemfaultdConfigObject;
 
-typedef const bool (*memfaultd_plugin_init)(sMemfaultd *memfaultd,
-                                            sMemfaultdPluginCallbackFns **fns);
+typedef bool (*memfaultd_plugin_init)(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns **fns);
 
 typedef enum {
   kMemfaultdTxDataType_RebootEvent = 'R',

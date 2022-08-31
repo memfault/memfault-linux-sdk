@@ -1,5 +1,8 @@
 FROM ubuntu:latest
 
+# **NOTE: DO NOT PUT ANYTHING SECRET / CONFIDENTIAL IN THE DOCKER IMAGE** The
+# image is publically published.
+
 ENV DEBIAN_FRONTEND noninteractive
 
 RUN apt-get update && apt-get -y upgrade
@@ -13,8 +16,11 @@ RUN apt-get install -y chrpath cpio diffstat gawk file lz4 python3-distutils wge
 # Yocto QEMU dependencies
 RUN apt-get install -y samba
 
-# Testing dependencies
-RUN apt-get install -y python3-pytest python3-pexpect
+# Yocto wic dependencies
+RUN apt-get install -y parted
+
+# Install pip for python testing dependencies
+RUN apt-get install -y python3-pip
 
 # CppUnit testing dependencies for memfaultd's unit tests
 RUN apt-get install -y \
@@ -36,6 +42,18 @@ RUN sed -i -e 's/^# en_US.UTF-8 UTF-8$/en_US.UTF-8 UTF-8/' /etc/locale.gen && ec
 
 USER build
 WORKDIR /home/build
+
+RUN echo " \
+    alias q='runqemu qemuarm64 slirp nographic'\n\
+    alias b='bitbake memfault-image'\n\
+    alias cc='rm -rf /home/build/yocto/build/conf'\n\
+    alias ct='rm -rf /home/build/yocto/build/tmp'\n\
+" >> /home/build/.bashrc
+
+# Install python testing dependencies
+COPY requirements.txt /home/
+RUN echo 'PATH=$HOME/.local/bin:$PATH' >> $HOME/.bashrc
+RUN pip3 install --no-warn-script-location -r /home/requirements.txt
 
 # Setup volume mounts
 RUN mkdir -p /home/build/yocto/build

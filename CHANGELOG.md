@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2022-08-31
+
+### Added
+
+- Initial support for collecting metrics using [collectd]. Check out the
+  [docs on Metrics for Linux](https://mflt.io/linux-metrics) for more
+  information.
+
+[collectd]: https://collectd.org/
+
 ## [0.2.0] - 2022-08-10
 
 This is our first public release. Head over to [our Linux
@@ -57,3 +67,4 @@ package][nginx-pid-report] for a discussion on the topic.
 
 [0.1.0]: https://github.com/memfault/memfault-linux-sdk/releases/tag/0.1.0
 [0.2.0]: https://github.com/memfault/memfault-linux-sdk/releases/tag/0.2.0
+[0.3.0]: https://github.com/memfault/memfault-linux-sdk/releases/tag/0.3.0

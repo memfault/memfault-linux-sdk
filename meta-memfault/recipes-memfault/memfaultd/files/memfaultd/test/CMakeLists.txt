@@ -28,3 +28,8 @@ add_memfaultd_cpputest_target(test_reboot
     reboot.test.cpp
     ${PLUGINS_DIR}/reboot.c
 )
+
+add_memfaultd_cpputest_target(test_collectd
+    collectd.test.cpp
+    ${PLUGINS_DIR}/collectd.c
+)
