@@ -80,7 +80,7 @@ _Static_assert(sizeof(sMemfaultQueueMsgHeader) == 12, "MemfaultQueueMsgHeader si
 
 #define END_POINTER 0x5aa55aa5
 
-#define QUEUE_SIZE_MIN (sizeof(sMemfaultQueueMsgHeader) + 4)
+#define QUEUE_SIZE_MIN (int)(sizeof(sMemfaultQueueMsgHeader) + 4)
 #define QUEUE_SIZE_MAX (1024 * 1024 * 1024)
 #define QUEUE_SIZE_ALIGNMENT 4
 
@@ -94,9 +94,9 @@ _Static_assert(sizeof(sMemfaultQueueMsgHeader) == 12, "MemfaultQueueMsgHeader si
 static uint8_t prv_queue_crc8(const void *data, uint32_t len) {
   const uint8_t *ptr = data;
   uint8_t crc = 0x00;
-  for (int i = 0; i < len; ++i) {
+  for (uint32_t i = 0; i < len; ++i) {
     crc ^= ptr[i];
-    for (int j = 0; j < 8; ++j) {
+    for (uint32_t j = 0; j < 8; ++j) {
       if (crc & 1) {
         crc ^= 0x91;
       }
@@ -258,7 +258,7 @@ static bool prv_check_queue_size(int *queue_size) {
   }
   if (*queue_size < QUEUE_SIZE_MIN) {
     fprintf(stderr,
-            "queue:: queue_size (%i) too small, minimum size is %lu. Falling back to default "
+            "queue:: queue_size (%i) too small, minimum size is %i. Falling back to default "
             "size.\n",
             *queue_size, QUEUE_SIZE_MIN);
     return false;

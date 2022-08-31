@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "device_settings.h"
+#include "memfaultd_utils.h"
 #include "network.h"
 #include "queue.h"
 
@@ -46,11 +47,13 @@ typedef struct {
 } sMemfaultdPluginDef;
 
 #ifdef PLUGIN_REBOOT
-const bool memfaultd_reboot_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns **fns);
+bool memfaultd_reboot_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns **fns);
 #endif
-
 #ifdef PLUGIN_SWUPDATE
-const bool memfaultd_swupdate_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns **fns);
+bool memfaultd_swupdate_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns **fns);
+#endif
+#ifdef PLUGIN_COLLECTD
+bool memfaultd_collectd_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns **fns);
 #endif
 
 static sMemfaultdPluginDef s_plugins[] = {
@@ -60,7 +63,10 @@ static sMemfaultdPluginDef s_plugins[] = {
 #ifdef PLUGIN_SWUPDATE
   {.name = "swupdate", .init = memfaultd_swupdate_init},
 #endif
-};
+#ifdef PLUGIN_COLLECTD
+  {.name = "collectd", .init = memfaultd_collectd_init},
+#endif
+  {NULL}};
 
 static sMemfaultd *s_handle;
 
@@ -109,13 +115,11 @@ static void prv_memfaultd_usage(void) {
  * @param handle Main memfaultd handle
  */
 static void prv_memfaultd_load_plugins(sMemfaultd *handle) {
-  for (int i = 0; i < sizeof(s_plugins) / sizeof(sMemfaultdPluginDef); ++i) {
-    if (!s_plugins[i].init(handle, &s_plugins[i].fns)) {
+  for (unsigned int i = 0; i < sizeof(s_plugins) / sizeof(sMemfaultdPluginDef); ++i) {
+    if (s_plugins[i].init != NULL && !s_plugins[i].init(handle, &s_plugins[i].fns)) {
       fprintf(stderr, "memfaultd:: Failed to initialize %s plugin, destroying.\n",
               s_plugins[i].name);
-      if (s_plugins[i].fns->plugin_destroy) {
-        s_plugins[i].fns->plugin_destroy(s_plugins[i].fns->handle);
-      }
+      s_plugins[i].fns = NULL;
     }
   }
 }
@@ -124,7 +128,7 @@ static void prv_memfaultd_load_plugins(sMemfaultd *handle) {
  * @brief Call the destroy function of all defined plugins
  */
 static void prv_memfaultd_destroy_plugins(void) {
-  for (int i = 0; i < sizeof(s_plugins) / sizeof(sMemfaultdPluginDef); ++i) {
+  for (unsigned int i = 0; i < sizeof(s_plugins) / sizeof(sMemfaultdPluginDef); ++i) {
     if (s_plugins[i].fns != NULL && s_plugins[i].fns->plugin_destroy) {
       s_plugins[i].fns->plugin_destroy(s_plugins[i].fns->handle);
     }
@@ -146,7 +150,8 @@ static void prv_memfaultd_enable_collection(sMemfaultd *handle, bool enable) {
   printf("%s data collection\n", enable ? "Enabling" : "Disabling");
   memfaultd_set_boolean(handle, "", "enable_data_collection", enable);
 
-  if (getuid() == 0 && system("/bin/systemctl restart memfaultd.service") != 0) {
+  if (getuid() == 0 &&
+      !memfaultd_utils_restart_service_if_running("memfaultd", "memfaultd.service")) {
     fprintf(stderr, "memfaultd:: Failed to restart memfaultd.\n");
   }
 }
@@ -156,7 +161,10 @@ static void prv_memfaultd_enable_collection(sMemfaultd *handle, bool enable) {
  *
  * @param sig Signal number
  */
-static void prv_memfaultd_sig_handler(int sig) { s_handle->terminate = true; }
+static void prv_memfaultd_sig_handler(int sig) {
+  fprintf(stderr, "memfaultd:: Received signal %u, shutting down.\n", sig);
+  s_handle->terminate = true;
+}
 
 /**
  * @brief Looks up the HTTP API path given a eMemfaultdTxDataType.
@@ -320,8 +328,10 @@ static void memfaultd_dump_config(sMemfaultd *handle, const char *config_file) {
   printf("\n");
 
   printf("Plugin enabled:\n");
-  for (int i = 0; i < sizeof(s_plugins) / sizeof(sMemfaultdPluginDef); ++i) {
-    printf("  %s\n", s_plugins[i].name);
+  for (unsigned int i = 0; i < sizeof(s_plugins) / sizeof(sMemfaultdPluginDef); ++i) {
+    if (s_plugins[i].name != NULL) {
+      printf("  %s\n", s_plugins[i].name);
+    }
   }
 }
 
@@ -456,6 +466,9 @@ int main(int argc, char *argv[]) {
   if (daemonize && !prv_memfaultd_daemonize_process()) {
     exit(EXIT_FAILURE);
   }
+
+  // Ensure startup scroll is pushed to journal
+  fflush(stdout);
 
   prv_memfaultd_process_loop(s_handle);
 

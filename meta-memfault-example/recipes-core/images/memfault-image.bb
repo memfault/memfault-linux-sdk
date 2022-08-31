@@ -24,3 +24,10 @@ do_swupdate_update_swdescription() {
     sed -i -e "s%__MEMFAULT_SOFTWARE_VERSION%${MEMFAULT_SOFTWARE_VERSION}%" ${WORKDIR}/sw-description
 }
 addtask do_swupdate_update_swdescription before do_swuimage after do_unpack do_prepare_recipe_sysroot
+
+# Create a copy of the .wic image. This is used as the "pristine" image by the E2E test scripts.
+do_copy_wic_image() {
+    cp -f ${DEPLOY_DIR_IMAGE}/base-image-${MACHINE}.wic ${DEPLOY_DIR_IMAGE}/ci-test-image.wic
+}
+do_copy_wic_image[depends] = "${IMAGE_DEPENDS}:do_build"
+addtask do_copy_wic_image before do_swuimage after do_unpack do_prepare_recipe_sysroot

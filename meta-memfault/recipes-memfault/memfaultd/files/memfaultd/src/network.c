@@ -104,8 +104,6 @@ void memfaultd_network_destroy(sMemfaultdNetwork *handle) {
  */
 bool memfaultd_network_get(sMemfaultdNetwork *handle, const char *endpoint, char **data,
                            size_t *len) {
-  const sMemfaultdDeviceSettings *settings = memfaultd_get_device_settings(handle->memfaultd);
-
   const char *base_url;
   if (!memfaultd_get_string(handle->memfaultd, "", "base_url", &base_url)) {
     return false;
@@ -162,8 +160,6 @@ bool memfaultd_network_get(sMemfaultdNetwork *handle, const char *endpoint, char
  */
 bool memfaultd_network_post(sMemfaultdNetwork *handle, const char *endpoint, const char *payload,
                             char **data, size_t *len) {
-  const sMemfaultdDeviceSettings *settings = memfaultd_get_device_settings(handle->memfaultd);
-
   const char *base_url;
   if (!memfaultd_get_string(handle->memfaultd, "", "base_url", &base_url)) {
     return false;

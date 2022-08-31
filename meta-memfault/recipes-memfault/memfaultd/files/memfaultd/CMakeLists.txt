@@ -8,6 +8,7 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 include(FindPkgConfig)
 
+pkg_check_modules(SDBUS REQUIRED libsystemd)
 pkg_check_modules(CURL REQUIRED libcurl)
 pkg_check_modules(JSON-C REQUIRED json-c)
 
@@ -20,7 +21,15 @@ add_custom_command(
     DEPENDS builtin.conf
 )
 
-add_executable(memfaultd ${CMAKE_CURRENT_BINARY_DIR}/builtin_conf.h src/config.c src/device_settings.c src/memfaultd.c src/network.c src/queue.c)
+add_executable(memfaultd
+    ${CMAKE_CURRENT_BINARY_DIR}/builtin_conf.h
+    src/config.c
+    src/device_settings.c
+    src/memfaultd.c
+    src/memfaultd_utils.c
+    src/network.c
+    src/queue.c
+)
 
 if(ENABLE_PLUGINS)
     add_subdirectory(plugins)
@@ -29,7 +38,8 @@ endif()
 
 add_definitions(${plugin_defines})
 
-target_link_libraries(memfaultd PUBLIC ${CURL_LIBRARIES} ${JSON-C_LIBRARIES})
+target_link_libraries(memfaultd PUBLIC ${CURL_LIBRARIES} ${SDBUS_LIBRARIES} ${JSON-C_LIBRARIES})
+target_compile_options(memfaultd PRIVATE -Wall -Wpedantic -Wextra -Werror)
 
 install(TARGETS memfaultd RUNTIME)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/memfaultd.conf TYPE SYSCONF)

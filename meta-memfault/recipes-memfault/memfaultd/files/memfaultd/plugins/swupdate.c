@@ -13,6 +13,7 @@
 #include <systemd/sd-bus.h>
 
 #include "memfaultd.h"
+#include "memfaultd_utils.h"
 
 #define DEFAULT_INPUT_FILE "/etc/swupdate.cfg"
 #define DEFAULT_OUTPUT_FILE "/tmp/swupdate.cfg"
@@ -200,41 +201,6 @@ static bool prv_swupdate_add_identify(sMemfaultdPlugin *handle, config_t *config
 static bool prv_swupdate_add_runtime(sMemfaultdPlugin *handle, config_t *config) { return true; }
 
 /**
- * @brief Restart swupdate service using systemd dbus API
- *
- * @return true Successfully restarted swupdate service
- * @return false Failed to restart service
- */
-static bool prv_swupdate_restart_swupdate(void) {
-  sd_bus *bus;
-  sd_bus_error error = SD_BUS_ERROR_NULL;
-
-  const char *service = "org.freedesktop.systemd1";
-  const char *path = "/org/freedesktop/systemd1";
-  const char *interface = "org.freedesktop.systemd1.Manager";
-  const char *member = "RestartUnit";
-  sd_bus_message *msg = NULL;
-
-  if (sd_bus_default_system(&bus) < 0) {
-    fprintf(stderr, "swupdate:: Failed to find systemd system bus\n");
-    return false;
-  }
-
-  if (sd_bus_call_method(bus, service, path, interface, member, &error, &msg, "ss",
-                         "swupdate.service", "replace") < 0) {
-    fprintf(stderr,
-            "swupdate:: Failed to restart "
-            "swupdate.service: %s\n",
-            error.name);
-    sd_bus_error_free(&error);
-    sd_bus_message_unref(msg);
-    return false;
-  }
-  sd_bus_message_unref(msg);
-  return true;
-}
-
-/**
  * @brief Generate new swupdate.cfg file from config
  *
  * @param handle swupdate plugin handle
@@ -318,10 +284,11 @@ static bool prv_swupdate_reload(sMemfaultdPlugin *handle) {
     fprintf(stderr, "swupdate:: Failed to generate config file\n");
     return false;
   }
-  if (!prv_swupdate_restart_swupdate()) {
+  if (!memfaultd_utils_restart_service_if_running("swupdate", "swupdate.service")) {
     fprintf(stderr, "swupdate:: Failed to restart swupdate\n");
     return false;
   }
+
   return true;
 }
 
@@ -338,15 +305,19 @@ static sMemfaultdPluginCallbackFns s_fns = {
  */
 bool memfaultd_swupdate_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns **fns) {
   sMemfaultdPlugin *handle = calloc(sizeof(sMemfaultdPlugin), 1);
-  handle->memfaultd = memfaultd;
-
-  if (!prv_swupdate_generate_config(handle)) {
-    fprintf(stderr, "swupdate:: Failed to generate config file\n");
+  if (!handle) {
+    fprintf(stderr, "swupdate:: Failed to allocate plugin handle\n");
     return false;
   }
 
+  handle->memfaultd = memfaultd;
   *fns = &s_fns;
   (*fns)->handle = handle;
+
+  // Ignore failures after this point as we still want setting changes to attempt to reload the
+  // config
+
+  prv_swupdate_reload(handle);
 
   return true;
 }
