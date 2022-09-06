@@ -1,0 +1,11 @@
+--- a/Makefile	2022-05-05 16:29:08.473607751 +0100
++++ b/Makefile	2022-05-05 16:42:23.075536000 +0100
+@@ -22,7 +22,7 @@
+ else
+     UNAME_S := $(shell uname -s)
+     ifeq ($(UNAME_S),Linux)
+-        CCFLAGS += -D LINUX
++        CCFLAGS += -D LINUX -Wl,-soname=$(LIBNAME).$(major_version)
+     endif
+     ifeq ($(UNAME_S),Darwin)
+         CCFLAGS += -install_name $(LIBNAME) -D OSX

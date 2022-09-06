@@ -1,0 +1,11 @@
+.DS_Store
+
+*.pyc
+__pycache__
+.mypy_cache/
+
+.idea/
+
+cmake-build-*/
+
+/build

@@ -1,0 +1,19 @@
+diff -Naur a/common/board_r.c b/common/board_r.c
+--- a/common/board_r.c	2022-08-31 12:10:07.169978844 +0100
++++ b/common/board_r.c	2022-08-31 12:15:33.922686994 +0100
+@@ -749,7 +749,6 @@
+ #ifdef CONFIG_MMC
+ 	initr_mmc,
+ #endif
+-	initr_env,
+ #ifdef CONFIG_SYS_BOOTPARAMS_LEN
+ 	initr_malloc_bootparams,
+ #endif
+@@ -838,6 +837,7 @@
+ #if defined(CONFIG_PRAM)
+ 	initr_mem,
+ #endif
++	initr_env,
+ 	run_main_loop,
+ };
+ 
