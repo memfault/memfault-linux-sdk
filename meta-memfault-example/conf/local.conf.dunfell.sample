@@ -1,0 +1,58 @@
+MACHINE ?= "qemuarm64"
+
+DISTRO = "poky"
+PACKAGE_CLASSES = "package_deb"
+USER_CLASSES = "buildstats"
+PATCHRESOLVE = "noop"
+
+IMAGE_FSTYPES_append = " ext4.gz"
+
+EXTRA_IMAGE_FEATURES ?= "debug-tweaks"
+
+# Licensing
+LICENSE_FLAGS_WHITELIST = "commercial_memfaultd"
+
+# Wic file support
+IMAGE_FSTYPES_append = " wic wic.bmap"
+WKS_FILE = "memfault.wks"
+MACHINE_ESSENTIAL_EXTRA_RDEPENDS += "kernel-image"
+do_image_wic[depends] += "mtools-native:do_populate_sysroot dosfstools-native:do_populate_sysroot virtual/bootloader:do_deploy"
+
+# Kernel configuration
+KERNEL_FEATURES_append = " cfg/fs/vfat.scc"
+
+# Bootloader
+UBOOT_MACHINE ?= "qemu_arm64_defconfig"
+EXTRA_IMAGEDEPENDS_append = " virtual/bootloader"
+PREFERRED_PROVIDER_virtual/bootloader = "u-boot"
+IMAGE_BOOT_FILES = "u-boot.bin boot.scr"
+
+# SystemD system manager
+DISTRO_FEATURES_append = " systemd"
+DISTRO_FEATURES_remove = "sysvinit"
+VIRTUAL-RUNTIME_init_manager = "systemd"
+DISTRO_FEATURES_BACKFILL_CONSIDERED_append = "sysvinit"
+VIRTUAL-RUNTIME_initscripts = ""
+
+# Versioning env variables
+MEMFAULT_BASE_URL_pn-memfaultd := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_BASE_URL')}"
+MEMFAULT_PROJECT_KEY_pn-memfaultd := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_PROJECT_KEY')}"
+MEMFAULT_SOFTWARE_TYPE_pn-memfaultd := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_SOFTWARE_TYPE')}"
+MEMFAULT_SOFTWARE_VERSION_pn-memfaultd := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_SOFTWARE_VERSION')}"
+
+MEMFAULT_SOFTWARE_VERSION_pn-memfault-image := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_SOFTWARE_VERSION')}"
+
+MEMFAULT_DEVICE_ID_pn-memfault-device-info := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_DEVICE_ID')}"
+MEMFAULT_HARDWARE_VERSION_pn-memfault-device-info := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_HARDWARE_VERSION')}"
+
+
+# Support runqemu script
+QB_DEFAULT_FSTYPE = "wic"
+QB_DRIVE_TYPE = "/dev/vdb"
+QB_SYSTEM_NAME = "qemu-system-arm"
+QB_DEFAULT_BIOS = "u-boot.bin"
+
+# For debugging memfaultd -- uncomment to add gdb and debug symbols to the image:
+# EXTRA_IMAGE_FEATURES += "tools-debug"
+# INHIBIT_PACKAGE_STRIP_pn-memfaultd = "1"
+# INHIBIT_PACKAGE_DEBUG_SPLIT_pn-memfaultd = "1"

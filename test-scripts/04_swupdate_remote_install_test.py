@@ -16,10 +16,6 @@ def qemu_device_id() -> str:
 #   or whatever the underlying QEMU instance points at.
 # - The project has a valid Release and OTA payload available for the machine.
 def test_start(qemu: QEMU):
-    qemu.child().expect(" login:")
-    qemu.child().sendline("root")
-    qemu.child().expect("#")
-
     # update will install in the background. we can monitor it!
     qemu.child().sendline("journalctl -u swupdate.service -f")
     qemu.child().expect("Installation in progress", timeout=120)

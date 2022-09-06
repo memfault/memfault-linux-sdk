@@ -1,7 +1,12 @@
 #!/bin/sh -e
 
+# NB: YOCTO_RELEASE is searched and replaced by linux_sdk_release.py during archival.
+# Treat is as generated code, or update linux_sdk_release.py accordingly.
+YOCTO_RELEASE="kirkstone"
+
 command=""
-while getopts "bv:c:e:" options; do
+
+while getopts "bv:c:e:r:" options; do
     case "${options}" in
     b)
         docker build --tag yocto .
@@ -12,14 +17,17 @@ while getopts "bv:c:e:" options; do
     e)
         entrypoint="--entrypoint ${OPTARG}"
         ;;
+    r)
+        YOCTO_RELEASE="${OPTARG}"
+        ;;
     *) exit 1;;
     esac
 done
 
 metamount="--mount type=bind,source=${PWD}/..,target=/home/build/yocto/sources/memfault-linux-sdk"
 
-buildmount="--mount type=volume,source=yocto-build,target=/home/build/yocto/build"
-sourcesmount="--mount type=volume,source=yocto-sources,target=/home/build/yocto/sources"
+buildmount="--mount type=volume,source=yocto-build-${YOCTO_RELEASE},target=/home/build/yocto/build"
+sourcesmount="--mount type=volume,source=yocto-sources-${YOCTO_RELEASE},target=/home/build/yocto/sources"
 
 # vars are overridden from the local environment, falling back to env.list
 env_vars="
@@ -50,6 +58,7 @@ docker run \
     ${metamount} \
     ${env_vars} \
     ${e2e_test_env_vars} \
+    --env YOCTO_RELEASE="${YOCTO_RELEASE}" \
     ${entrypoint} \
     yocto \
     ${command}

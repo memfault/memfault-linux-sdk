@@ -13,9 +13,6 @@ from qemu import QEMU
 def test_start(
     qemu: QEMU, memfault_service_tester: MemfaultServiceTester, qemu_device_id: str
 ):
-    qemu.child().expect(" login:")
-    qemu.child().sendline("root")
-
     # enable data collection, so that the reboot event can get captured
     qemu.exec_cmd("memfaultd --enable-data-collection")
 

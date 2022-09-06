@@ -9,7 +9,7 @@ SRC_URI = " \
 
 S = "${WORKDIR}/git"
 
-TARGET_CC_ARCH += "${LDFLAGS}"
+TARGET_CC_ARCH = "${LDFLAGS}"
 
 do_install() {
     install -d ${D}${libdir}

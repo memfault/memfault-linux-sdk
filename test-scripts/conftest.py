@@ -10,6 +10,7 @@ import uuid
 from typing import Iterable
 
 import pytest
+import runqemu
 
 # Ensure pytest rewrites asserts for better debuggability.
 # https://docs.pytest.org/en/stable/writing_plugins.html#assertion-rewriting
@@ -51,32 +52,32 @@ def memfault_device_info(tmpdir, qemu_device_id, qemu_hardware_version) -> pathl
     return fn
 
 
+CI_IMAGE_FILENAME = "ci-test-image.wic"
+
+
 @pytest.fixture()
 def qemu_image_wic_path(tmpdir, memfault_device_info) -> pathlib.Path:
-    bitbake_path = os.getenv("BUILDDIR")
-    assert bitbake_path, "Missing BUILDDIR environment variable"
-
-    src_wic = (
-        pathlib.Path(bitbake_path)
-        / "tmp"
-        / "deploy"
-        / "images"
-        / "qemuarm64"
-        / "ci-test-image.wic"
-    )
+    src_wic = runqemu.qemu_get_image_wic_path(CI_IMAGE_FILENAME)
     dest_wic = tmpdir / "ci-test-image.copy.wic"
 
     shutil.copyfile(src_wic, dest_wic)
 
     partition_num = 2
+
     # Remove /usr/bin/memfault-device-info:
     subprocess.check_output(
         ["wic", "rm", f"{dest_wic}:{partition_num}/usr/bin/memfault-device-info"]
     )
     # Copy in the new /usr/bin/memfault-device-info:
     subprocess.check_output(
-        ["wic", "cp", memfault_device_info, f"{dest_wic}:{partition_num}/usr/bin/"]
+        [
+            "wic",
+            "cp",
+            memfault_device_info,
+            f"{dest_wic}:{partition_num}/usr/bin/",
+        ]
     )
+
     return dest_wic
 
 

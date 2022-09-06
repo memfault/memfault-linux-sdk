@@ -1,4 +1,4 @@
-CFLAGS = -Wall -Werror
+CFLAGS = -Wall -Werror -O3
 LDFLAGS = -lstatsdclient
 TARGET = statsd-sampleapp-c
 SOURCES = main.c

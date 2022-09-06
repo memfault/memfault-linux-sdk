@@ -7,6 +7,7 @@
 //! memfaultd helper util function implementation
 
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <systemd/sd-bus.h>
 

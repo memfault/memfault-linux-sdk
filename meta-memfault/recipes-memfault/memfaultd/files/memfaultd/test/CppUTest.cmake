@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.16)
 
 pkg_check_modules(CPPUTEST REQUIRED cpputest)
 pkg_check_modules(SDBUS REQUIRED libsystemd)

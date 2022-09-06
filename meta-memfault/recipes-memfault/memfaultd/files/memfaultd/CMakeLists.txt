@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.16)
 
 project(memfaultd)
 
@@ -39,7 +39,7 @@ endif()
 add_definitions(${plugin_defines})
 
 target_link_libraries(memfaultd PUBLIC ${CURL_LIBRARIES} ${SDBUS_LIBRARIES} ${JSON-C_LIBRARIES})
-target_compile_options(memfaultd PRIVATE -Wall -Wpedantic -Wextra -Werror)
+target_compile_options(memfaultd PRIVATE -O3 -Wall -Wpedantic -Wextra -Werror)
 
 install(TARGETS memfaultd RUNTIME)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/memfaultd.conf TYPE SYSCONF)

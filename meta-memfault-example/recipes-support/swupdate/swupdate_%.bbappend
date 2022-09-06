@@ -1,6 +1,4 @@
-FILESEXTRAPATHS:append := "${THISDIR}/files:"
-
-PACKAGECONFIG_CONFARGS = ""
+FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 
 SRC_URI:append = " \
     file://09-swupdate-args \

@@ -1,6 +1,8 @@
 #
 # Copyright (c) Memfault, Inc.
 # See License.txt for details
+import time
+
 from memfault_service_tester import MemfaultServiceTester
 from qemu import QEMU
 
@@ -13,14 +15,14 @@ from qemu import QEMU
 def test(
     qemu: QEMU, memfault_service_tester: MemfaultServiceTester, qemu_device_id: str
 ):
-    qemu.child().expect(" login:")
-    qemu.child().sendline("root")
-
     # enable data collection, so that the reboot event can get captured
     qemu.exec_cmd("memfaultd --enable-data-collection")
 
     qemu.systemd_wait_for_service_state("memfaultd.service", "active")
     qemu.systemd_wait_for_service_state("collectd.service", "active")
+
+    # Wait a bit for some of the plugins to have written data to the collectd cache:
+    time.sleep(1)
 
     # SIGUSR1 triggers a force-flush and as a result, an HTTP request is made:
     # Note it's not possible to force-read all plugins (https://github.com/collectd/collectd/issues/4039),

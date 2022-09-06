@@ -3,7 +3,7 @@ LICENSE = "Proprietary"
 LICENSE_FLAGS = "commercial"
 LIC_FILES_CHKSUM = "file://${FILE_DIRNAME}/../../../License.txt;md5=56e72796d5838e30cf6671385527172c"
 
-FILESEXTRAPATHS:append := "${FILE_DIRNAME}/../../:"
+FILESEXTRAPATHS:prepend := "${FILE_DIRNAME}/../../:"
 
 SRC_URI = " \
     file://memfaultd \
@@ -48,11 +48,11 @@ def get_cflags(d):
                 ret.append(" -D" + line.strip().replace(" ", "").replace(":", "="))
     return ''.join(ret)
 
-CFLAGS += " ${@get_cflags(d)}"
+CFLAGS = "${@get_cflags(d)}"
 
 EXTRA_OECMAKE = "-DTESTS=0"
 
-do_install:append () {
+do_install:append() {
     install -d ${D}/${systemd_unitdir}/system
     install -m 0644 ${WORKDIR}/memfaultd.service ${D}/${systemd_unitdir}/system
 }

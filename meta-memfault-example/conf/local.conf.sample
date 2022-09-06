@@ -4,7 +4,6 @@ DISTRO = "poky"
 PACKAGE_CLASSES = "package_deb"
 USER_CLASSES = "buildstats"
 PATCHRESOLVE = "noop"
-CONF_VERSION = "2"
 
 IMAGE_FSTYPES:append = " ext4.gz"
 

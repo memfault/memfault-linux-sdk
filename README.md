@@ -29,7 +29,7 @@ well-established, battle-tested open-source software. The daemon `memfaultd`
 implements Memfault-specific features and also acts as a configuration agent.
 
 [source-memfaultd]:
-  https://github.com/memfault/memfault-linux-sdk/tree/master/meta-memfault/recipes-memfault/memfaultd/files/memfaultd
+  https://github.com/memfault/memfault-linux-sdk/blob/-/meta-memfault/recipes-memfault/memfaultd/files/memfaultd
 
 ## Prerequisites
 
@@ -37,7 +37,7 @@ Even though support for a broader diversity of setups is planned, this first
 versions of our SDK makes the following assumptions:
 
 - Your project uses [Yocto][yocto-homepage] as a build system.
-- It uses [`systemd`][systemd-homepage] as an init system.
+- It uses [SystemD][systemd-homepage] as an init system.
 - It uses [SWUpdate][swupdate-homepage] for OTA (optional if you don't plan to
   integrate with OTA).
 
@@ -48,20 +48,19 @@ touch][get-in-touch]. It will likely still work without major changes.
 
 ## Getting Started
 
-Take a look at our [getting-started guide][docs-getting-started] to set up your
-integration.
+Take a look at our [getting-started guide][docs-linux-getting-started] to set up
+your integration.
 
 OTA/Release Management is currently fully supported through an off-the-shelf
 integration with the SWUpdate agent. Read more about it in the [OTA integration
-guide][docs-ota].
+guide][docs-linux-ota].
+
+Metrics are also supported through [CollectD][collectd-homepage]. Read more
+about it in the [Linux Metrics integration guide][docs-linux-metrics].
 
 [systemd-homepage]: https://systemd.io/
 [swupdate-homepage]: https://swupdate.org/
 [yocto-homepage]: https://www.yoctoproject.org/
-[docs-getting-started]:
-  https://docs.memfault.com/docs/linux/linux-getting-started-guide
-[docs-ota]:
-  https://docs.memfault.com/docs/linux/linux-releases-integration-guide
 
 ## Documentation and Features
 
@@ -73,8 +72,7 @@ guide][docs-ota].
 
 [docs-platform]: https://docs.memfault.com/docs/platform/introduction/
 [docs-linux-introduction]: https://docs.memfault.com/docs/linux/introduction
-[docs-linux-getting-started]:
-  https://docs.memfault.com/docs/linux/linux-getting-started-guide
+[docs-linux-getting-started]: https://mflt.io/linux-getting-started
 
 An integration example can be found under
 [`/meta-memfault-example`](/meta-memfault-example). The central part of the SDK
@@ -87,16 +85,22 @@ with the [hawkBit DDI API][hawkbit-ddi]. Various clients are available, but
 `memfaultd` supports [SWUpdate][swupdate-homepage] out of the box and is able to
 configure it to talk to our hawkBit DDI-compatible endpoint.
 
+Read more about [Linux OTA management using Memfault][docs-linux-ota].
+
+[docs-linux-ota]: https://mflt.io/linux-ota-integration-guide
 [hawkbit-homepage]: https://www.eclipse.org/hawkbit/
 [hawkbit-ddi]: https://www.eclipse.org/hawkbit/apis/ddi_api/
 [swupdate-homepage]: https://swupdate.org/
 
-### Metrics (available with next release)
+### Metrics
 
-The Memfault Linux SDK relies on [`collectd`][collectd-homepage] for the
+The Memfault Linux SDK relies on [CollectD][collectd-homepage] for the
 collection and transmission of metrics. Application metrics can be sent to
-`collectd` by means of [`statsd`][statsd-homepage].
+CollectD by means of [`statsd`][statsd-homepage].
 
+Read more about [Linux metrics using Memfault][docs-linux-metrics].
+
+[docs-linux-metrics]: https://mflt.io/linux-metrics
 [collectd-homepage]: https://collectd.org/
 [statsd-homepage]: https://github.com/statsd/statsd
 

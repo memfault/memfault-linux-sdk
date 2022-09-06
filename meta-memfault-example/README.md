@@ -7,8 +7,51 @@ Useful links:
 
 - [Introduction to Memfault for Linux][docs-linux-introduction]: a high-level
   introduction.
-- [Getting started with Memfault on Linux][docs-linux-introduction]: our
+- [Getting started with Memfault on Linux][docs-linux-getting-started]: our
   integration guide.
+- [Linux OTA Management][docs-linux-ota]: integrate with our over-the-air
+  updates (OTA) system.
+- [Linux Metrics][docs-linux-metrics]: integrate with our Metrics system.
+
+## Contents
+
+While following [the getting-started guide][docs-linux-getting-started], you'll
+find these the most interesting:
+
+- [`recipes-memfault/memfaultd`](recipes-memfault/memfaultd): shows a way to
+  include a custom `/etc/memfaultd.conf` file.
+- [`recipes-memfault/memfault-device-info`](recipes-memfault/memfault-device-info):
+  an example `memfault-device-info` script. Note that your own implementation is
+  likely to result in something more complex, since you'll need to output (e.g.)
+  a device ID from your actual target devices.
+
+If you're [integrating with OTA][docs-linux-ota], check out these:
+
+- [`recipes-support/swupdate`](recipes-support/swupdate) contains an example
+  `swupdate.cfg` file as well as a `defconfig` file with which to build SWUpdate
+  so that hawkBit DDI API support is enabled. It also contains an include file
+  `09-swupdate-args` which points SWUpdate at the Memfault-generated config.
+- Other directories form a basic dual-copy SWUpdate setup. Your project will
+  most likely differ from this, but nevertheless they are the following:
+  - [`recipes-core/images`](recipes-core/images) contains a base image and an
+    update image (`.swu`) which extends the base image, and is used as an OTA
+    payload in the Memfault Web App.
+  - [`recipes-core/images/files/sw-description.in`](recipes-core/images/files/sw-description.in)
+    , [`wic` configuration](wic) and
+    [`u-boot` configuration](recipes-bsp/u-boot) are all aligned, expecting a
+    certain partition layout and configuring the update image to use it.
+
+While [integrating with Metrics][docs-linux-metrics], you'll want to read the
+following:
+
+- [`recipes-extended/collectd`](recipes-extended/collectd) contains our
+  recommended `/etc/collectd.conf` file, including a set of standard plugins
+  that enjoy special support on the Memfault platform.
+- Sample apps using a StatsD client that sends application metrics to CollectD:
+  - In C:
+    [`recipes-memfault/statsd-sampleapp-c`](recipes-memfault/statsd-sampleapp-c)
+  - In Python:
+    [`recipes-memfault/statsd-sampleapp-python`](recipes-memfault/statsd-sampleapp-python)
 
 ## Quick Start
 
@@ -44,8 +87,7 @@ Note that building the image for the first time will take around two hours.
 ### Run the image on QEMU
 
 ```shell
-## Run image in QEMU
-$ runqemu qemuarm64 slirp nographic
+$ q # Run image in QEMU
 login: root
 ```
 
@@ -93,20 +135,16 @@ This wic partition table is defined in `wic/memfault.wks`
 ## QEMU
 
 QEMU is built as part of Yocto and doesn't require any additional packages to be
-installed in the host Docker container. Yocto provides a convenient wrapper
-script around QEMU called `runqemu`, in addition to this we need to set some
-additional options:
+installed in the host Docker container. We provide a convenient wrapper script
+around QEMU in [`test-scripts/runqemu.py`](/test-scripts/runqemu.py). You can
+run that script directly or invoke it using our alias:
 
-```console
-$ runqemu qemuarm64 slirp nographic
+```
+$ q
 ```
 
-- `slirp` - Allows for user networking for the virtual machine
-- `nographic` - Causes QEMU to run directly in the console window, without
-  creating an additional window / VNC endpoint Experimental options:
-- `qemuparams="-net nic -net user,smb=/home/build/yocto/build"` - This makes an
-  SMB mountpoint of `/home/build/yocto/build` available to the virtual machine
-  (seems to be failing 50% of the time, temporarily replaced by `tftp`)
+Note that the Yocto built-in `runqemu` is not compatible with our example
+SWUpdate dual-copy setup in versions older than 4.0 'kirkstone'.
 
 Login information for the QEMU environment:
 
@@ -114,5 +152,6 @@ Login information for the QEMU environment:
 - Password: _not required_
 
 [docs-linux-introduction]: https://docs.memfault.com/docs/linux/introduction
-[docs-linux-getting-started]:
-  https://docs.memfault.com/docs/linux/linux-getting-started-guide
+[docs-linux-getting-started]: https://mflt.io/linux-getting-started
+[docs-linux-metrics]: https://mflt.io/linux-metrics
+[docs-linux-ota]: https://mflt.io/linux-ota-integration-guide

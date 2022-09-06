@@ -6,9 +6,6 @@ from qemu import QEMU
 
 
 def test_start(qemu: QEMU):
-    qemu.child().expect(" login:")
-    qemu.child().sendline("root")
-
     qemu.exec_cmd("memfaultd --enable-data-collection")
     qemu.child().expect("Enabling data collection")
     qemu.systemd_wait_for_service_state("memfaultd.service", "active")

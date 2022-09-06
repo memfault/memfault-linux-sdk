@@ -7,7 +7,7 @@ be configured. To see how the environment is built, read [`qemu.py`](./qemu.py).
 To run a specific test:
 
 ```console
-# pytest ~/yocto/sources/memfault-linux-sdk/test-scripts/01_qemu_boot_test.py
+# pytest ~/yocto/sources/memfault-linux-sdk/test-scripts/01_memfaultd_service_test.py
 ```
 
 To run all tests:

@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2022-09-05
+
+### Added
+
+- Support for Yocto version 3.1 (code name "Dunfell"). See the
+  [`dunfell` branch](https://github.com/memfault/memfault-linux-sdk/tree/dunfell)
+  of the repository.
+
+### Changed
+
+- The SDK repository no longer has a `main` branch. The variant of the SDK that
+  supports Yocto 4.0 ("Kirkstone") can be found on the
+  [branch named `kirkstone`](https://github.com/memfault/memfault-linux-sdk/tree/kirkstone).
+  Likewise, the variant of the SDK that supports Yocto 3.1 ("Dunfell) can be
+  found on
+  [the branch called `dunfell`](https://github.com/memfault/memfault-linux-sdk/tree/dunfell).
+
 ## [0.3.0] - 2022-08-31
 
 ### Added
@@ -68,3 +85,5 @@ package][nginx-pid-report] for a discussion on the topic.
 [0.1.0]: https://github.com/memfault/memfault-linux-sdk/releases/tag/0.1.0
 [0.2.0]: https://github.com/memfault/memfault-linux-sdk/releases/tag/0.2.0
 [0.3.0]: https://github.com/memfault/memfault-linux-sdk/releases/tag/0.3.0
+[0.3.1]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/0.3.1-kirkstone

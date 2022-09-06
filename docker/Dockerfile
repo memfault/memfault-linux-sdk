@@ -4,6 +4,7 @@ FROM ubuntu:latest
 # image is publically published.
 
 ENV DEBIAN_FRONTEND noninteractive
+ENV YOCTO_RELEASE ${YOCTO_RELEASE}
 
 RUN apt-get update && apt-get -y upgrade
 
@@ -44,7 +45,7 @@ USER build
 WORKDIR /home/build
 
 RUN echo " \
-    alias q='runqemu qemuarm64 slirp nographic'\n\
+    alias q='/home/build/yocto/sources/memfault-linux-sdk/test-scripts/runqemu.py'\n\
     alias b='bitbake memfault-image'\n\
     alias cc='rm -rf /home/build/yocto/build/conf'\n\
     alias ct='rm -rf /home/build/yocto/build/tmp'\n\
