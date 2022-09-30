@@ -37,7 +37,7 @@ Even though support for a broader diversity of setups is planned, this first
 versions of our SDK makes the following assumptions:
 
 - Your project uses [Yocto][yocto-homepage] as a build system.
-- It uses [SystemD][systemd-homepage] as an init system.
+- It uses [systemd][systemd-homepage] as an init system.
 - It uses [SWUpdate][swupdate-homepage] for OTA (optional if you don't plan to
   integrate with OTA).
 
@@ -55,7 +55,7 @@ OTA/Release Management is currently fully supported through an off-the-shelf
 integration with the SWUpdate agent. Read more about it in the [OTA integration
 guide][docs-linux-ota].
 
-Metrics are also supported through [CollectD][collectd-homepage]. Read more
+Metrics are also supported through [collectd][collectd-homepage]. Read more
 about it in the [Linux Metrics integration guide][docs-linux-metrics].
 
 [systemd-homepage]: https://systemd.io/
@@ -94,9 +94,9 @@ Read more about [Linux OTA management using Memfault][docs-linux-ota].
 
 ### Metrics
 
-The Memfault Linux SDK relies on [CollectD][collectd-homepage] for the
+The Memfault Linux SDK relies on [collectd][collectd-homepage] for the
 collection and transmission of metrics. Application metrics can be sent to
-CollectD by means of [`statsd`][statsd-homepage].
+collectd by means of [`statsd`][statsd-homepage].
 
 Read more about [Linux metrics using Memfault][docs-linux-metrics].
 
@@ -104,7 +104,18 @@ Read more about [Linux metrics using Memfault][docs-linux-metrics].
 [collectd-homepage]: https://collectd.org/
 [statsd-homepage]: https://github.com/statsd/statsd
 
-### Reboot Reason Tracking, Crash Reports and Logs
+### Crash Reports
 
-These features are fully in the domain of `memfaultd`. Note that crash reports
-and logs are upcoming features, while reboot reason tracking is supported today.
+To collect and upload user-land coredumps, the Memfault Linux SDK relies the
+standard kernel [coredump][man-core] feature, and so does not need to make use
+of any additional dependencies. Read more about [coredumps using the Memfault
+Linux SDK][docs-linux-coredumps].
+
+[docs-linux-coredumps]: https://mflt.io/linux-coredumps
+[man-core]: https://man7.org/linux/man-pages/man5/core.5.html
+
+### Reboot Reason Tracking and Logs
+
+These features are fully in the domain of `memfaultd`. Note that logs are an
+upcoming feature, while reboot reason tracking and crash reports are supported
+today.

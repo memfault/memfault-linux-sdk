@@ -1,10 +1,9 @@
 #
 # Copyright (c) Memfault, Inc.
 # See License.txt for details
-import time
-
 from memfault_service_tester import MemfaultServiceTester
 from qemu import QEMU
+import time
 
 
 # Assumptions:
@@ -21,7 +20,8 @@ def test(
     qemu.systemd_wait_for_service_state("memfaultd.service", "active")
     qemu.systemd_wait_for_service_state("collectd.service", "active")
 
-    # Wait a bit for some of the plugins to have written data to the collectd cache:
+    # Send metric via statsd
+    qemu.exec_cmd('echo "ci-test:25|g" | nc -c -w 1 -u localhost 8125')
     time.sleep(1)
 
     # SIGUSR1 triggers a force-flush and as a result, an HTTP request is made:

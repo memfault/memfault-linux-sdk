@@ -10,7 +10,7 @@ IMAGE_FSTYPES_append = " ext4.gz"
 EXTRA_IMAGE_FEATURES ?= "debug-tweaks"
 
 # Licensing
-LICENSE_FLAGS_WHITELIST = "commercial_memfaultd"
+LICENSE_FLAGS_WHITELIST = "commercial_memfaultd commercial_memfault-core-handler"
 
 # Wic file support
 IMAGE_FSTYPES_append = " wic wic.bmap"
@@ -27,7 +27,7 @@ EXTRA_IMAGEDEPENDS_append = " virtual/bootloader"
 PREFERRED_PROVIDER_virtual/bootloader = "u-boot"
 IMAGE_BOOT_FILES = "u-boot.bin boot.scr"
 
-# SystemD system manager
+# systemd system manager
 DISTRO_FEATURES_append = " systemd"
 DISTRO_FEATURES_remove = "sysvinit"
 VIRTUAL-RUNTIME_init_manager = "systemd"
@@ -51,8 +51,3 @@ QB_DEFAULT_FSTYPE = "wic"
 QB_DRIVE_TYPE = "/dev/vdb"
 QB_SYSTEM_NAME = "qemu-system-arm"
 QB_DEFAULT_BIOS = "u-boot.bin"
-
-# For debugging memfaultd -- uncomment to add gdb and debug symbols to the image:
-# EXTRA_IMAGE_FEATURES += "tools-debug"
-# INHIBIT_PACKAGE_STRIP_pn-memfaultd = "1"
-# INHIBIT_PACKAGE_DEBUG_SPLIT_pn-memfaultd = "1"

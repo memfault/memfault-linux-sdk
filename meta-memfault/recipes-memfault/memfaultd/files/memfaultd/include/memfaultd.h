@@ -16,12 +16,15 @@ extern "C" {
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/socket.h>
 
 typedef struct Memfaultd sMemfaultd;
 typedef struct MemfaultdPlugin sMemfaultdPlugin;
 
 typedef bool (*memfaultd_plugin_reload)(sMemfaultdPlugin *plugin);
 typedef void (*memfaultd_plugin_destroy)(sMemfaultdPlugin *plugin);
+typedef bool (*memfaultd_plugin_ipc_msg_handler)(sMemfaultdPlugin *handle, int socket_fd,
+                                                 struct msghdr *msg, size_t received_size);
 
 typedef enum {
   kMemfaultdConfigTypeUnknown,
@@ -35,6 +38,7 @@ typedef struct {
   sMemfaultdPlugin *handle;
   memfaultd_plugin_reload plugin_reload;
   memfaultd_plugin_destroy plugin_destroy;
+  memfaultd_plugin_ipc_msg_handler plugin_ipc_msg_handler;
 } sMemfaultdPluginCallbackFns;
 
 typedef struct {
@@ -56,12 +60,15 @@ typedef bool (*memfaultd_plugin_init)(sMemfaultd *memfaultd, sMemfaultdPluginCal
 
 typedef enum {
   kMemfaultdTxDataType_RebootEvent = 'R',
+  kMemfaultdTxDataType_CoreUpload = 'C',
 } eMemfaultdTxDataType;
 
 typedef struct __attribute__((__packed__)) MemfaultdTxData {
   uint8_t type;  // eMemfaultdTxDataType
   uint8_t payload[];
 } sMemfaultdTxData;
+
+extern const char memfaultd_sdk_version[];
 
 bool memfaultd_txdata(sMemfaultd *memfaultd, const sMemfaultdTxData *data, uint32_t payload_size);
 

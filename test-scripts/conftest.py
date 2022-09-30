@@ -87,6 +87,20 @@ def qemu(qemu_image_wic_path) -> QEMU:
 
 
 @pytest.fixture()
+def swupdate_enabled() -> bool:
+    return False
+
+
+@pytest.fixture(autouse=True)
+def disable_swupdate_if_needed(swupdate_enabled, qemu):
+    if swupdate_enabled:
+        return
+
+    qemu.exec_cmd("systemctl stop swupdate")
+    qemu.exec_cmd("systemctl disable swupdate")
+
+
+@pytest.fixture()
 def memfault_service_tester() -> Iterable[MemfaultServiceTester]:
     st = MemfaultServiceTester(
         base_url=os.environ["MEMFAULT_E2E_API_BASE_URL"],

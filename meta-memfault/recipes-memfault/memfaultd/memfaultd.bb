@@ -20,10 +20,18 @@ SYSTEMD_SERVICE:${PN} = "memfaultd.service"
 
 DEPENDS = "curl json-c systemd vim-native"
 
-PACKAGECONFIG ??= "plugin_collectd plugin_reboot plugin_swupdate"
+PACKAGECONFIG ??= "plugin_coredump plugin_collectd plugin_reboot plugin_swupdate"
+PACKAGECONFIG[plugin_coredump] = "-DENABLE_PLUGINS=1 -DPLUGIN_COREDUMP=1"
 PACKAGECONFIG[plugin_collectd] = "-DENABLE_PLUGINS=1 -DPLUGIN_COLLECTD=1"
 PACKAGECONFIG[plugin_reboot] = "-DENABLE_PLUGINS=1 -DPLUGIN_REBOOT=1"
 PACKAGECONFIG[plugin_swupdate] = "-DENABLE_PLUGINS=1 -DPLUGIN_SWUPDATE=1"
+
+RDEPENDS:append:${PN} = " \
+    ${@bb.utils.contains('PACKAGECONFIG', 'plugin_coredump', \
+        'util-linux-libuuid', \
+        '', \
+    d)} \
+"
 
 DEPENDS:append = " \
     ${@bb.utils.contains('PACKAGECONFIG', 'plugin_reboot', \

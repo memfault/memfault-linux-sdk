@@ -73,7 +73,8 @@ bool memfaultd_get_string(sMemfaultd *handle, const char *parent_key, const char
 TEST_BASE(MemfaultdCollectdUtest) {
   sMemfaultdPluginCallbackFns *fns = NULL;
   bool comms_enabled = false;
-  char *output_file = NULL;
+  char *header_include_output_file = NULL;
+  char *footer_include_output_file = NULL;
 
   char device_id[32] = "device_id";
   char hardware_version[32] = "hw_version";
@@ -89,23 +90,28 @@ TEST_BASE(MemfaultdCollectdUtest) {
   char *non_memfaultd_chain = NULL;
 
   char tmp_dir[PATH_MAX] = {0};
-  char tmp_output_file[4200] = {0};
+  char tmp_header_include_output_file[4200] = {0};
+  char tmp_footer_include_output_file[4200] = {0};
 
   void setup() override {
     strcpy(tmp_dir, "/tmp/memfaultd.XXXXXX");
     mkdtemp(tmp_dir);
-    sprintf(tmp_output_file, "%s/collectd.conf", tmp_dir);
+    sprintf(tmp_header_include_output_file, "%s/collectd-header-include.conf", tmp_dir);
+    sprintf(tmp_footer_include_output_file, "%s/collectd-footer-include.conf", tmp_dir);
   }
 
   void teardown() override {
-    unlink(tmp_output_file);
+    unlink(tmp_header_include_output_file);
+    unlink(tmp_footer_include_output_file);
     rmdir(tmp_dir);
-    free(output_file);
+    free(header_include_output_file);
+    free(footer_include_output_file);
     free(base_url);
     free(software_type);
     free(software_version);
     free(project_key);
     free(non_memfaultd_chain);
+    mock().checkExpectations();
     mock().clear();
   }
 
@@ -131,13 +137,25 @@ TEST_BASE(MemfaultdCollectdUtest) {
       .andReturnValue(true);
   }
 
-  void expect_collectd_output_file_get_string_call(const char *val) {
-    output_file = strdup(val);
+  void expect_collectd_header_include_output_file_get_string_call(const char *val) {
+    header_include_output_file = strdup(val);
     mock()
       .expectOneCall("memfaultd_get_string")
       .withStringParameter("parent_key", "collectd_plugin")
-      .withStringParameter("key", "output_file")
-      .withOutputParameterReturning("val", &output_file, sizeof(output_file))
+      .withStringParameter("key", "header_include_output_file")
+      .withOutputParameterReturning("val", &header_include_output_file,
+                                    sizeof(header_include_output_file))
+      .andReturnValue(true);
+  }
+
+  void expect_collectd_footer_include_output_file_get_string_call(const char *val) {
+    footer_include_output_file = strdup(val);
+    mock()
+      .expectOneCall("memfaultd_get_string")
+      .withStringParameter("parent_key", "collectd_plugin")
+      .withStringParameter("key", "footer_include_output_file")
+      .withOutputParameterReturning("val", &footer_include_output_file,
+                                    sizeof(footer_include_output_file))
       .andReturnValue(true);
   }
 
@@ -185,19 +203,19 @@ TEST_BASE(MemfaultdCollectdUtest) {
     non_memfaultd_chain = strdup("");
     mock()
       .expectNCalls(2, "memfaultd_get_integer")
-      .withStringParameter("parent_key", "collectd")
+      .withStringParameter("parent_key", "collectd_plugin")
       .withStringParameter("key", "interval_seconds")
       .withOutputParameterReturning("val", &interval_seconds, sizeof(interval_seconds))
       .andReturnValue(true);
     mock()
       .expectOneCall("memfaultd_get_integer")
-      .withStringParameter("parent_key", "collectd")
+      .withStringParameter("parent_key", "collectd_plugin")
       .withStringParameter("key", "write_http_buffer_size_kib")
       .withOutputParameterReturning("val", &write_http_buf_size, sizeof(write_http_buf_size))
       .andReturnValue(true);
     mock()
       .expectOneCall("memfaultd_get_string")
-      .withStringParameter("parent_key", "collectd")
+      .withStringParameter("parent_key", "collectd_plugin")
       .withStringParameter("key", "non_memfaultd_chain")
       .withOutputParameterReturning("val", &non_memfaultd_chain, sizeof(non_memfaultd_chain))
       .andReturnValue(true);
@@ -208,9 +226,12 @@ TEST_GROUP_BASE(TestGroup_Startup, MemfaultdCollectdUtest){};
 
 /* comms disabled; init succeeds, empty config file */
 TEST(TestGroup_Startup, Test_DataCommsDisabled) {
-  expect_enable_data_collection_get_boolean_call(false);         // startup collection enabled state
-  expect_enable_data_collection_get_boolean_call(false);         // current collection enabled state
-  expect_collectd_output_file_get_string_call(tmp_output_file);  // output filename
+  expect_enable_data_collection_get_boolean_call(false);  // startup collection enabled state
+  expect_enable_data_collection_get_boolean_call(false);  // current collection enabled state
+  expect_collectd_header_include_output_file_get_string_call(
+    tmp_header_include_output_file);  // header include filename
+  expect_collectd_footer_include_output_file_get_string_call(
+    tmp_footer_include_output_file);  // footer include filename
 
   bool success = memfaultd_collectd_init(g_stub_memfaultd, &fns);
 
@@ -218,16 +239,18 @@ TEST(TestGroup_Startup, Test_DataCommsDisabled) {
   CHECK(fns);
   CHECK(fns->handle);
   CHECK(fns->plugin_destroy);
-  CHECK_EQUAL(get_file_size(tmp_output_file), 0);
+  CHECK_EQUAL(0, get_file_size(tmp_header_include_output_file));
+  CHECK_EQUAL(0, get_file_size(tmp_footer_include_output_file));
 
   free(fns->handle);
 }
 
 /* comms enabled; init succeeds, populated config file */
 TEST(TestGroup_Startup, Test_DataCommsEnabled) {
-  const char *expected_conf_file =
-    "Interval 3600\n"
-    "\n"
+  const char *expected_header_include_file = "Interval 3600\n"
+                                             "\n";
+
+  const char *expected_footer_include_file =
     "<LoadPlugin write_http>\n"
     "  FlushInterval 3600\n"
     "</LoadPlugin>\n"
@@ -261,9 +284,12 @@ TEST(TestGroup_Startup, Test_DataCommsEnabled) {
     "  Target \"write\"\n"
     "</Chain>\n\n";
 
-  expect_enable_data_collection_get_boolean_call(true);          // startup collection enabled state
-  expect_enable_data_collection_get_boolean_call(true);          // current collection enabled state
-  expect_collectd_output_file_get_string_call(tmp_output_file);  // output filename
+  expect_enable_data_collection_get_boolean_call(true);  // startup collection enabled state
+  expect_enable_data_collection_get_boolean_call(true);  // current collection enabled state
+  expect_collectd_header_include_output_file_get_string_call(
+    tmp_header_include_output_file);  // header include filename
+  expect_collectd_footer_include_output_file_get_string_call(
+    tmp_footer_include_output_file);  // footer include filename
 
   expect_get_all_device_settings();  // For URL creation
   expect_get_all_collectd_settings();
@@ -276,10 +302,15 @@ TEST(TestGroup_Startup, Test_DataCommsEnabled) {
   CHECK(fns->handle);
   CHECK(fns->plugin_destroy);
 
-  CHECK(get_file_size(tmp_output_file) != 0);
-  char *payload = get_file_content(tmp_output_file);
-  STRCMP_EQUAL(expected_conf_file, payload);
-  free(payload);
+  CHECK(get_file_size(tmp_header_include_output_file) != 0);
+  char *header_payload = get_file_content(tmp_header_include_output_file);
+  STRCMP_EQUAL(expected_header_include_file, header_payload);
+  free(header_payload);
+
+  CHECK(get_file_size(tmp_footer_include_output_file) != 0);
+  char *footer_payload = get_file_content(tmp_footer_include_output_file);
+  STRCMP_EQUAL(expected_footer_include_file, footer_payload);
+  free(footer_payload);
 
   free(fns->handle);
 }

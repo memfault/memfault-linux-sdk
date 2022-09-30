@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 #
 # Copyright 2022 Memfault, Inc
 #
@@ -12,7 +13,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#!/usr/bin/env python3
 
 import time
 from random import random

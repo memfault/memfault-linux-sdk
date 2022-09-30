@@ -136,6 +136,7 @@ TEST_BASE(MemfaultdRebootUtest) {
     }
     unlink(tmp_reboot_file);
     rmdir(tmp_dir);
+    mock().checkExpectations();
     mock().clear();
   }
 

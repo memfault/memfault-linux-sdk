@@ -34,4 +34,4 @@ def test_start(qemu: QEMU):
             output += qemu.child().read_nonblocking(size=1024, timeout=0.5)
         except pexpect.TIMEOUT:
             break
-    assert b"memfaultd.service: Failed" not in output
+    assert b"memfaultd.service: Scheduled restart job" not in output

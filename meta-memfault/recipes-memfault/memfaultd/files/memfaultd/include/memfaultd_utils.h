@@ -1,3 +1,5 @@
+#pragma once
+
 //! @file
 //!
 //! Copyright (c) Memfault, Inc.
@@ -5,8 +7,6 @@
 //!
 //! @brief
 //! memfaultd helper util function definitions
-
-#pragma once
 
 #include <stdbool.h>
 

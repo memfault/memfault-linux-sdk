@@ -49,6 +49,7 @@ RUN echo " \
     alias b='bitbake memfault-image'\n\
     alias cc='rm -rf /home/build/yocto/build/conf'\n\
     alias ct='rm -rf /home/build/yocto/build/tmp'\n\
+    alias build-memfault-cli-local='pip3 install /home/build/memfault-cli-dist/memfault-cli-*.tar.gz'\n\
 " >> /home/build/.bashrc
 
 # Install python testing dependencies
@@ -61,6 +62,7 @@ RUN mkdir -p /home/build/yocto/build
 VOLUME /home/build/yocto/build
 RUN mkdir -p /home/build/yocto/sources
 VOLUME /home/build/yocto/sources
+VOLUME /home/build/memfault-cli-dist
 
 EXPOSE 5900
 

@@ -110,3 +110,32 @@ class MemfaultServiceTester:
             num_reports = len(reports)
             time.sleep(0.5)
         return reports
+
+    def list_elf_coredumps(
+        self,
+        params: Optional[dict] = None,
+        expect_status: int = 200,
+        ignore_errors: bool = False,
+    ):
+        rv = self.session.get(f"{self._project_url}/elf_coredumps", params=params)
+        assert rv.status_code == expect_status or ignore_errors
+        return rv.json()["data"] if rv.status_code == 200 else []
+
+    def poll_elf_coredumps_until_count(
+        self,
+        count: int,
+        device_serial: Optional[str] = None,
+        params: Optional[dict] = None,
+        timeout_secs: int = 10,
+    ) -> Any:
+        if not params:
+            params = {}
+        if device_serial:
+            params = {"device": device_serial, **params}
+
+        def _check():
+            elf_coredumps = self.list_elf_coredumps(params=params, expect_status=ANY)
+            assert len(elf_coredumps) >= count
+            return elf_coredumps
+
+        return self.poll_until_not_raising(_check, timeout_seconds=timeout_secs)

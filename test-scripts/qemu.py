@@ -39,13 +39,14 @@ class QEMU:
         # Setting this environment variable to an empty string or the value "cat" is equivalent to passing --no-pager.
         # A pager (e.g. "less") could prevent E2E tests that check on journalctl output from passing.
         self.exec_cmd("export PAGER=cat")
-        # Similarly, use "cat" as a pager for other programs that may honor $PAGER (e.g. SystemD does).
+        # Similarly, use "cat" as a pager for other programs that may honor $PAGER (e.g. systemd does).
         self.exec_cmd("export SYSTEMD_PAGER=cat")
 
     def child(self):
         return self.pid
 
     def exec_cmd(self, cmd):
+        self.pid.sendline("")
         self.pid.expect("#")
         self.pid.sendline(cmd)
         self.pid.expect("\n")

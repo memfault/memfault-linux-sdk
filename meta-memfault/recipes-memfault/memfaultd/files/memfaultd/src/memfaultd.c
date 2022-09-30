@@ -11,24 +11,30 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
-#include <json-c/json.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/param.h>
+#include <sys/prctl.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 #include "config.h"
 #include "device_settings.h"
+#include "memfault/util/disk.h"
 #include "memfaultd_utils.h"
 #include "network.h"
 #include "queue.h"
 
+#define SOCKET_PATH "/tmp/memfault-ipc.sock"
+#define RX_BUFFER_SIZE 1024
 #define PID_FILE "/var/run/memfaultd.pid"
 #define CONFIG_FILE "/etc/memfaultd.conf"
 
@@ -38,12 +44,16 @@ struct Memfaultd {
   sMemfaultdConfig *config;
   sMemfaultdDeviceSettings *settings;
   bool terminate;
+  pthread_t ipc_thread_id;
+  int ipc_socket_fd;
+  char ipc_rx_buffer[RX_BUFFER_SIZE];
 };
 
 typedef struct {
   memfaultd_plugin_init init;
   sMemfaultdPluginCallbackFns *fns;
   const char name[32];
+  const char ipc_name[32];
 } sMemfaultdPluginDef;
 
 #ifdef PLUGIN_REBOOT
@@ -54,6 +64,9 @@ bool memfaultd_swupdate_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns 
 #endif
 #ifdef PLUGIN_COLLECTD
 bool memfaultd_collectd_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns **fns);
+#endif
+#ifdef PLUGIN_COREDUMP
+bool memfaultd_coredump_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns **fns);
 #endif
 
 static sMemfaultdPluginDef s_plugins[] = {
@@ -66,7 +79,10 @@ static sMemfaultdPluginDef s_plugins[] = {
 #ifdef PLUGIN_COLLECTD
   {.name = "collectd", .init = memfaultd_collectd_init},
 #endif
-  {NULL}};
+#ifdef PLUGIN_COREDUMP
+  {.name = "coredump", .init = memfaultd_coredump_init, .ipc_name = "CORE"},
+#endif
+  {NULL, NULL, "", ""}};
 
 static sMemfaultd *s_handle;
 
@@ -82,6 +98,8 @@ static sMemfaultd *s_handle;
 
 #define NETWORK_FAILURE_FIRST_BACKOFF_SECONDS 60
 #define NETWORK_FAILURE_BACKOFF_MULTIPLIER 2
+
+const char memfaultd_sdk_version[] = STRINGIZE_VALUE_OF(VERSION);
 
 /**
  * @brief Displays SDK version information
@@ -162,8 +180,17 @@ static void prv_memfaultd_enable_collection(sMemfaultd *handle, bool enable) {
  * @param sig Signal number
  */
 static void prv_memfaultd_sig_handler(int sig) {
+  if (sig == SIGUSR1) {
+    // Used to service the TX queue
+    // The signal has already woken up the main thread from its sleep(), can simply exit here
+    return;
+  }
+
   fprintf(stderr, "memfaultd:: Received signal %u, shutting down.\n", sig);
   s_handle->terminate = true;
+
+  // shutdown() the read-side of the socket to abort any in-progress recv() calls
+  shutdown(s_handle->ipc_socket_fd, SHUT_RD);
 }
 
 /**
@@ -175,7 +202,10 @@ static const char *prv_endpoint_for_txdata_type(uint8_t type) {
   switch (type) {
     case kMemfaultdTxDataType_RebootEvent:
       return "/api/v0/events";
+    case kMemfaultdTxDataType_CoreUpload:
+      return "/api/v0/upload/elf_coredump";
     default:
+      fprintf(stderr, "memfaultd:: Unrecognised queue type '%d'\n", type);
       return NULL;
   }
 }
@@ -193,22 +223,34 @@ static bool prv_memfaultd_process_tx_queue(sMemfaultd *handle) {
     return true;
   }
 
-  uint32_t payload_size_bytes;
-  uint8_t *payload;
-  while ((payload = memfaultd_queue_read_head(handle->queue, &payload_size_bytes))) {
-    const sMemfaultdTxData *txdata = (const sMemfaultdTxData *)payload;
+  uint32_t queue_entry_size_bytes;
+  uint8_t *queue_entry;
+  while ((queue_entry = memfaultd_queue_read_head(handle->queue, &queue_entry_size_bytes))) {
+    const sMemfaultdTxData *txdata = (const sMemfaultdTxData *)queue_entry;
     const char *endpoint = prv_endpoint_for_txdata_type(txdata->type);
     // FIXME: assuming NUL terminated UTF-8 C string -- need to support binary data too:
-    const char *request_body = (const char *)txdata->payload;
+    const char *payload = (const char *)txdata->payload;
     if (endpoint == NULL) {
-      free(payload);
+      free(queue_entry);
       memfaultd_queue_complete_read(handle->queue);
-    } else if (memfaultd_network_post(handle->network, endpoint, request_body, NULL, 0)) {
-      free(payload);
+      continue;
+    }
+
+    eMemfaultdNetworkResult rc = kMemfaultdNetworkResult_ErrorNoRetry;
+    switch (txdata->type) {
+      case kMemfaultdTxDataType_RebootEvent:
+        rc = memfaultd_network_post(handle->network, endpoint, payload, NULL, 0);
+        break;
+      case kMemfaultdTxDataType_CoreUpload:
+        rc = memfaultd_network_file_upload(handle->network, endpoint, payload);
+        break;
+    }
+
+    free(queue_entry);
+    if (rc == kMemfaultdNetworkResult_OK || rc == kMemfaultdNetworkResult_ErrorNoRetry) {
       memfaultd_queue_complete_read(handle->queue);
     } else {
-      // Network failure
-      free(payload);
+      // Retry-able error
       return false;
     }
   }
@@ -329,7 +371,7 @@ static void memfaultd_dump_config(sMemfaultd *handle, const char *config_file) {
 
   printf("Plugin enabled:\n");
   for (unsigned int i = 0; i < sizeof(s_plugins) / sizeof(sMemfaultdPluginDef); ++i) {
-    if (s_plugins[i].name != NULL) {
+    if (strlen(s_plugins[i].name) != 0) {
       printf("  %s\n", s_plugins[i].name);
     }
   }
@@ -350,6 +392,80 @@ static void memfaultd_create_data_dir(sMemfaultd *handle) {
     fprintf(stderr, "memfault:: Failed to create memfault base_dir '%s'\n", data_dir);
     return;
   }
+}
+
+static void *prv_ipc_process_thread(void *arg) {
+  sMemfaultd *handle = arg;
+
+  if ((handle->ipc_socket_fd = socket(AF_UNIX, SOCK_DGRAM, 0)) == -1) {
+    fprintf(stderr, "memfault:: Failed to create listening socket : %s\n", strerror(errno));
+    goto cleanup;
+  }
+
+  struct sockaddr_un addr = {.sun_family = AF_UNIX};
+  strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
+  if (unlink(SOCKET_PATH) == -1 && errno != ENOENT) {
+    fprintf(stderr, "memfault:: Failed to remove IPC socket file '%s' : %s\n", SOCKET_PATH,
+            strerror(errno));
+    goto cleanup;
+  }
+
+  if (bind(handle->ipc_socket_fd, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
+    fprintf(stderr, "memfault:: Failed to bind to listener address() : %s\n", strerror(errno));
+    goto cleanup;
+  }
+
+  while (!handle->terminate) {
+    char ctrl_buf[CMSG_SPACE(sizeof(int))] = {'\0'};
+
+    struct iovec iov[1] = {{.iov_base = handle->ipc_rx_buffer, .iov_len = RX_BUFFER_SIZE}};
+
+    struct sockaddr_un src_addr = {0};
+
+    struct msghdr msg = {
+      .msg_name = (struct sockaddr *)&src_addr,
+      .msg_namelen = sizeof(src_addr),
+      .msg_iov = iov,
+      .msg_iovlen = 1,
+      .msg_control = ctrl_buf,
+      .msg_controllen = sizeof(ctrl_buf),
+    };
+
+    size_t received_size;
+    if ((received_size = recvmsg(handle->ipc_socket_fd, &msg, 0)) <= 0 || msg.msg_iovlen != 1) {
+      continue;
+    }
+
+    for (unsigned int i = 0; i < sizeof(s_plugins) / sizeof(sMemfaultdPluginDef); ++i) {
+      if (strcmp(s_plugins[i].ipc_name, "") == 0 || !s_plugins[i].fns ||
+          !s_plugins[i].fns->plugin_ipc_msg_handler) {
+        // Plugin doesn't process IPC messages
+        continue;
+      }
+
+      if (received_size <= strlen(s_plugins[i].ipc_name) ||
+          strcmp(s_plugins[i].ipc_name, msg.msg_iov[0].iov_base) != 0) {
+        // Plugin doesn't match IPC signature
+        continue;
+      }
+
+      if (!s_plugins[i].fns->plugin_ipc_msg_handler(s_plugins[i].fns->handle, handle->ipc_socket_fd,
+                                                    &msg, received_size)) {
+        fprintf(stderr, "memfault:: '%s' plugin matched IPC message, but failed to process\n",
+                s_plugins[i].name);
+      }
+      break;
+    }
+  }
+
+cleanup:
+  close(handle->ipc_socket_fd);
+  if (unlink(SOCKET_PATH) == -1 && errno != ENOENT) {
+    fprintf(stderr, "memfault:: Failed to remove IPC socket file '%s' : %s\n", SOCKET_PATH,
+            strerror(errno));
+  }
+
+  return (void *)NULL;
 }
 
 /**
@@ -439,9 +555,13 @@ int main(int argc, char *argv[]) {
     exit(EXIT_FAILURE);
   }
 
+  //! Disable coredumping of this process
+  prctl(PR_SET_DUMPABLE, 0, 0, 0);
+
   signal(SIGTERM, prv_memfaultd_sig_handler);
   signal(SIGHUP, prv_memfaultd_sig_handler);
   signal(SIGINT, prv_memfaultd_sig_handler);
+  signal(SIGUSR1, prv_memfaultd_sig_handler);
 
   int queue_size = 0;
   memfaultd_get_integer(s_handle, NULL, "queue_size_kib", &queue_size);
@@ -470,7 +590,14 @@ int main(int argc, char *argv[]) {
   // Ensure startup scroll is pushed to journal
   fflush(stdout);
 
+  if (pthread_create(&s_handle->ipc_thread_id, NULL, prv_ipc_process_thread, s_handle) != 0) {
+    fprintf(stderr, "ipc:: Failed to create handler thread\n");
+    exit(EXIT_FAILURE);
+  }
+
   prv_memfaultd_process_loop(s_handle);
+
+  pthread_join(s_handle->ipc_thread_id, NULL);
 
   prv_memfaultd_destroy_plugins();
 

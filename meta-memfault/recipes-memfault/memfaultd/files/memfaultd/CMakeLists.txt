@@ -21,7 +21,11 @@ add_custom_command(
     DEPENDS builtin.conf
 )
 
-add_executable(memfaultd
+if(ENABLE_PLUGINS)
+    include(plugins/plugins.cmake)
+endif()
+
+list(APPEND sources
     ${CMAKE_CURRENT_BINARY_DIR}/builtin_conf.h
     src/config.c
     src/device_settings.c
@@ -29,17 +33,19 @@ add_executable(memfaultd
     src/memfaultd_utils.c
     src/network.c
     src/queue.c
+    src/util/cbor.c
+    src/util/disk.c
+    src/util/string.c
+    src/util/rate_limiter.c
+    ${plugin_src}
 )
 
-if(ENABLE_PLUGINS)
-    add_subdirectory(plugins)
-    target_link_libraries(memfaultd PRIVATE plugins)
-endif()
+add_executable(memfaultd ${sources})
 
-add_definitions(${plugin_defines})
+add_definitions("-D_DEFAULT_SOURCE=1")
 
-target_link_libraries(memfaultd PUBLIC ${CURL_LIBRARIES} ${SDBUS_LIBRARIES} ${JSON-C_LIBRARIES})
-target_compile_options(memfaultd PRIVATE -O3 -Wall -Wpedantic -Wextra -Werror)
+target_link_libraries(memfaultd PUBLIC ${CURL_LIBRARIES} ${SDBUS_LIBRARIES} ${JSON-C_LIBRARIES} pthread ${plugin_libraries})
+target_compile_options(memfaultd PRIVATE -O3 -Wall -Wpedantic -Wextra -Werror -std=c11)
 
 install(TARGETS memfaultd RUNTIME)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/memfaultd.conf TYPE SYSCONF)

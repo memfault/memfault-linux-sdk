@@ -1,7 +1,7 @@
+#!/usr/bin/python3
 #
 # Copyright (c) Memfault, Inc.
 # See License.txt for details
-#!/usr/bin/python3
 
 import os
 import pathlib
@@ -39,8 +39,7 @@ def qemu_build_command(
         + "/tmp/work/x86_64-linux/qemu-helper-native/1.0-r1/recipe-sysroot-native/usr/bin/qemu-system-aarch64"
     )
     command_parts.append(
-        "-device virtio-net-pci,netdev=net0,mac=52:54:00:12:35:02 -netdev user,id=net0,hostfwd=tcp::2222-:22,hostfwd=tcp::2323-:23,tftp="
-        + build_output_path
+        "-device virtio-net-pci,netdev=net0,mac=52:54:00:12:35:02 -netdev user,id=net0"
     )
     command_parts.append(
         "-object rng-random,filename=/dev/urandom,id=rng0 -device virtio-rng-pci,rng=rng0"
