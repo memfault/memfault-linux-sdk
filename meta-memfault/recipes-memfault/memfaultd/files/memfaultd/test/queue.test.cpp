@@ -50,6 +50,7 @@ TEST_BASE(MemfaultdQueueUtest) {
   void teardown() override {
     unlink(tmp_queue_file);
     rmdir(tmp_dir);
+    mock().checkExpectations();
     mock().clear();
   }
 
@@ -71,7 +72,7 @@ TEST_BASE(MemfaultdQueueUtest) {
     uint8_t *const expected_contents = memfault_hex2bin(hex_contents, &expected_size);
     const int fd = open(tmp_queue_file, O_RDONLY);
     uint8_t *actual_contents = (uint8_t *)malloc(expected_size);
-    CHECK_EQUAL(expected_size, read(fd, actual_contents, expected_size));
+    CHECK_EQUAL(expected_size, (size_t)read(fd, actual_contents, expected_size));
     MEMCMP_EQUAL(expected_contents, actual_contents, expected_size);
     CHECK_TRUE_TEXT(0 == read(fd, actual_contents, 1),
                     "Queue file contained more data than expected");

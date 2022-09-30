@@ -6,6 +6,7 @@
 //! @brief
 //! memfault collectd plugin implementation
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,10 +14,14 @@
 #include <systemd/sd-bus.h>
 #include <unistd.h>
 
+#include "memfault/core/math.h"
+#include "memfault/util/string.h"
 #include "memfaultd.h"
 #include "memfaultd_utils.h"
 
-#define DEFAULT_OUTPUT_FILE "/tmp/collectd.conf"
+#define DEFAULT_HEADER_INCLUDE_OUTPUT_FILE "/tmp/collectd-header-include.conf"
+#define DEFAULT_FOOTER_INCLUDE_OUTPUT_FILE "/tmp/collectd-footer-include.conf"
+#define DEFAULT_INTERVAL_SECS 3600
 
 #define COLLECTD_PATH "/api/v0/collectd"
 #define MEMFAULT_HEADER "Memfault-Project-Key"
@@ -24,27 +29,48 @@
 struct MemfaultdPlugin {
   sMemfaultd *memfaultd;
   bool was_enabled;
+  const char *header_include_output_file;
+  const char *footer_include_output_file;
 };
 
-char *prv_generate_globals(sMemfaultdPlugin *handle) {
-  char *globals = NULL;
-  int interval_seconds = 0;
-  memfaultd_get_integer(handle->memfaultd, "collectd", "interval_seconds", &interval_seconds);
+/**
+ * @brief Generate new collectd-header-include.conf file from config
+ *
+ * @param handle collectd plugin handle
+ * @return true Successfully generated new config
+ * @return false Failed to generate
+ */
+bool prv_generate_header_include(sMemfaultdPlugin *handle) {
+  bool result = true;
+  FILE *fd = NULL;
 
-  int len;
-  char *globals_fmt = "Interval %d\n\n";
-  len = snprintf(NULL, 0, globals_fmt, interval_seconds);
-  if (!(globals = malloc(len + 1))) {
-    fprintf(stderr, "collectd:: Failed to create write_http buffer\n");
+  int interval_seconds = DEFAULT_INTERVAL_SECS;
+  memfaultd_get_integer(handle->memfaultd, "collectd_plugin", "interval_seconds",
+                        &interval_seconds);
+
+  fd = fopen(handle->header_include_output_file, "w+");
+  if (!fd) {
+    fprintf(stderr, "collectd:: Failed to open output file: %s\n",
+            handle->header_include_output_file);
+    result = false;
     goto cleanup;
   }
-  sprintf(globals, globals_fmt, interval_seconds);
+
+  char *globals_fmt = "Interval %d\n\n";
+  if (fprintf(fd, globals_fmt, interval_seconds) == -1) {
+    fprintf(stderr, "collectd:: Failed to write Interval\n");
+    result = false;
+    goto cleanup;
+  }
 
 cleanup:
-  return globals;
+  if (fd != NULL) {
+    fclose(fd);
+  }
+  return result;
 }
 
-char *prv_generate_write_http(sMemfaultdPlugin *handle) {
+bool prv_generate_write_http(sMemfaultdPlugin *handle, FILE *fd) {
   const sMemfaultdDeviceSettings *settings = memfaultd_get_device_settings(handle->memfaultd);
 
   const char *base_url, *software_type, *software_version, *project_key;
@@ -61,14 +87,16 @@ char *prv_generate_write_http(sMemfaultdPlugin *handle) {
     return false;
   }
   int interval_seconds = 0;
-  memfaultd_get_integer(handle->memfaultd, "collectd", "interval_seconds", &interval_seconds);
+  memfaultd_get_integer(handle->memfaultd, "collectd_plugin", "interval_seconds",
+                        &interval_seconds);
 
+  bool result = true;
   char *url = NULL;
   char *add_header = NULL;
-  char *write_http = NULL;
 
   int buffer_size = 64;
-  memfaultd_get_integer(handle->memfaultd, "collectd", "write_http_buffer_size_kib", &buffer_size);
+  memfaultd_get_integer(handle->memfaultd, "collectd_plugin", "write_http_buffer_size_kib",
+                        &buffer_size);
   buffer_size *= 1024;
 
   // Future: read from remote Memfault device config.
@@ -76,24 +104,20 @@ char *prv_generate_write_http(sMemfaultdPlugin *handle) {
   int low_speed_limit = 0;
   int timeout = 0;
 
-  int len;
   char *url_fmt = "%s%s/%s/%s/%s/%s";
-  len = snprintf(NULL, 0, url_fmt, base_url, COLLECTD_PATH, settings->device_id,
-                 settings->hardware_version, software_type, software_version);
-  if (!(url = malloc(len + 1))) {
+  if (memfault_asprintf(&url, url_fmt, base_url, COLLECTD_PATH, settings->device_id,
+                        settings->hardware_version, software_type, software_version) == -1) {
     fprintf(stderr, "collectd:: Failed to create url buffer\n");
+    result = false;
     goto cleanup;
   }
-  sprintf(url, url_fmt, base_url, COLLECTD_PATH, settings->device_id, settings->hardware_version,
-          software_type, software_version);
 
   char *add_header_fmt = "%s: %s";
-  len = snprintf(NULL, 0, add_header_fmt, MEMFAULT_HEADER, project_key);
-  if (!(add_header = malloc(len + 1))) {
+  if (memfault_asprintf(&add_header, add_header_fmt, MEMFAULT_HEADER, project_key) == -1) {
     fprintf(stderr, "collectd:: Failed to create additional headers buffer\n");
+    result = false;
     goto cleanup;
   }
-  sprintf(add_header, add_header_fmt, MEMFAULT_HEADER, project_key);
 
   char *write_http_fmt = "<LoadPlugin write_http>\n"
                          "  FlushInterval %d\n"
@@ -113,31 +137,27 @@ char *prv_generate_write_http(sMemfaultdPlugin *handle) {
                          "    Timeout %d\n"
                          "  </Node>\n"
                          "</Plugin>\n\n";
-  len = snprintf(NULL, 0, write_http_fmt, interval_seconds, url, add_header,
-                 store_rates ? "true" : "false", buffer_size, low_speed_limit, timeout);
-  if (!(write_http = malloc(len + 1))) {
-    fprintf(stderr, "collectd:: Failed to create write_http buffer\n");
+  if (fprintf(fd, write_http_fmt, interval_seconds, url, add_header, store_rates ? "true" : "false",
+              buffer_size, low_speed_limit, timeout) == -1) {
+    fprintf(stderr, "collectd:: Failed to write write_http statement\n");
+    result = false;
     goto cleanup;
   }
-  sprintf(write_http, write_http_fmt, interval_seconds, url, add_header,
-          store_rates ? "true" : "false", buffer_size, low_speed_limit, timeout);
 
 cleanup:
   free(url);
   free(add_header);
 
-  return write_http;
+  return result;
 }
 
-char *prv_generate_chain(sMemfaultdPlugin *handle) {
+bool prv_generate_chain(sMemfaultdPlugin *handle, FILE *fd) {
   // TODO: Add filtering once structure has been agreed on
-
+  bool result = true;
   const char *non_memfault_chain;
   char *target = NULL;
-  char *chain = NULL;
-  int len;
 
-  if (!memfaultd_get_string(handle->memfaultd, "collectd", "non_memfaultd_chain",
+  if (!memfaultd_get_string(handle->memfaultd, "collectd_plugin", "non_memfaultd_chain",
                             &non_memfault_chain) ||
       strlen(non_memfault_chain) == 0) {
     target = strdup("    Target \"stop\"\n");
@@ -145,12 +165,11 @@ char *prv_generate_chain(sMemfaultdPlugin *handle) {
     char *target_fmt = "    <Target \"jump\">\n"
                        "      Chain \"%s\"\n"
                        "    </Target>";
-    len = snprintf(NULL, 0, target_fmt, non_memfault_chain);
-    if (!(target = malloc(len + 1))) {
+    if (memfault_asprintf(&target, target_fmt, non_memfault_chain) == -1) {
       fprintf(stderr, "collectd:: Failed to create target buffer\n");
+      result = false;
       goto cleanup;
     }
-    sprintf(target, target_fmt, non_memfault_chain);
   }
 
   char *chain_fmt = "LoadPlugin match_regex\n"
@@ -165,73 +184,50 @@ char *prv_generate_chain(sMemfaultdPlugin *handle) {
                     "  </Rule>\n"
                     "  Target \"write\"\n"
                     "</Chain>\n\n";
-  len = snprintf(NULL, 0, chain_fmt, target);
-  if (!(chain = malloc(len + 1))) {
+  if (fprintf(fd, chain_fmt, target) == -1) {
     fprintf(stderr, "collectd:: Failed to create chain buffer\n");
+    result = false;
     goto cleanup;
   }
-  sprintf(chain, chain_fmt, target, target);
 
 cleanup:
   free(target);
 
-  return chain;
+  return result;
 }
 
 /**
- * @brief Generate new collectd.conf file from config
+ * @brief Generate new collectd-postamble.conf file from config
  *
  * @param handle collectd plugin handle
  * @return true Successfully generated new config
  * @return false Failed to generate
  */
-static bool prv_generate_config(sMemfaultdPlugin *handle) {
-  char *globals = NULL;
-  char *write_http = NULL;
-  char *chain = NULL;
+static bool prv_generate_footer_include(sMemfaultdPlugin *handle) {
   bool result = true;
 
-  globals = prv_generate_globals(handle);
-  if (!globals) {
-    result = false;
-    goto cleanup;
-  }
-
-  write_http = prv_generate_write_http(handle);
-  if (!write_http) {
-    result = false;
-    goto cleanup;
-  }
-
-  chain = prv_generate_chain(handle);
-  if (!chain) {
-    result = false;
-    goto cleanup;
-  }
-
-  const char *output_file;
-  if (!memfaultd_get_string(handle->memfaultd, "collectd_plugin", "output_file", &output_file)) {
-    output_file = DEFAULT_OUTPUT_FILE;
-  }
-
-  FILE *fd = fopen(output_file, "w+");
+  FILE *fd = fopen(handle->footer_include_output_file, "w+");
   if (!fd) {
-    fprintf(stderr, "collectd:: Failed to open output file\n");
+    fprintf(stderr, "collectd:: Failed to open output file: %s\n",
+            handle->footer_include_output_file);
     result = false;
     goto cleanup;
   }
 
-  fputs(globals, fd);
-  fputs(write_http, fd);
-  fputs(chain, fd);
+  if (!prv_generate_write_http(handle, fd)) {
+    result = false;
+    goto cleanup;
+  }
 
-  fclose(fd);
+  if (!prv_generate_chain(handle, fd)) {
+    result = false;
+    goto cleanup;
+  }
 
 cleanup:
-  free(write_http);
-  free(chain);
-  free(globals);
-
+  if (fd != NULL) {
+    fclose(fd);
+  }
   return result;
 }
 
@@ -244,6 +240,57 @@ static void prv_destroy(sMemfaultdPlugin *handle) {
   if (handle) {
     free(handle);
   }
+}
+
+/**
+ * @brief Gets the size of the file for the given file path.
+ * @param file_path The file path.
+ * @return Size of the file or -errno in case of an error.
+ */
+static ssize_t prv_get_file_size(const char *file_path) {
+  if (access(file_path, F_OK) != 0) {
+    return -errno;
+  }
+  struct stat st;
+  stat(file_path, &st);
+  return st.st_size;
+}
+
+/**
+ * @brief Empties the given file for the given file path.
+ * @param file_path The file path.
+ */
+static bool prv_write_empty_file(const char *file_path) {
+  FILE *fd = fopen(file_path, "w+");
+  if (!fd) {
+    fprintf(stderr, "collectd:: Failed to open output file: %s\n", file_path);
+    return false;
+  }
+  fclose(fd);
+  return true;
+}
+
+/**
+ * Clears the config files, but only if they are not already cleared.
+ * @param handle collectd plugin handle
+ * @return True if one or more files were cleared, or false if all files had already been cleared,
+ * or the files did not exist before.
+ */
+static bool prv_clear_config_files_if_not_already_cleared(sMemfaultdPlugin *handle) {
+  bool did_clear = false;
+  const char *output_files[] = {
+    handle->header_include_output_file,
+    handle->footer_include_output_file,
+  };
+  for (size_t i = 0; i < MEMFAULT_ARRAY_SIZE(output_files); ++i) {
+    const ssize_t rv = prv_get_file_size(output_files[i]);
+    const size_t should_clear = rv > 0;
+    if (should_clear || rv == -ENOENT /* file does not exist yet */) {
+      prv_write_empty_file(output_files[i]);
+    }
+    did_clear |= should_clear != 0;
+  }
+  return did_clear;
 }
 
 /**
@@ -264,28 +311,9 @@ static bool prv_reload(sMemfaultdPlugin *handle) {
     // Data collection is disabled
     fprintf(stderr, "collectd:: Data collection is off, plugin disabled.\n");
 
-    const char *output_file;
-    if (!memfaultd_get_string(handle->memfaultd, "collectd_plugin", "output_file", &output_file)) {
-      output_file = DEFAULT_OUTPUT_FILE;
-    }
+    const bool needs_restart = prv_clear_config_files_if_not_already_cleared(handle);
 
-    int old_file_size = 0;
-    if (access(output_file, F_OK) == 0) {
-      struct stat st;
-
-      stat(output_file, &st);
-      old_file_size = st.st_size;
-    }
-
-    // Create empty config fragment
-    FILE *fd = fopen(output_file, "w+");
-    if (!fd) {
-      return false;
-    } else {
-      fclose(fd);
-    }
-
-    if (handle->was_enabled || old_file_size != 0) {
+    if (handle->was_enabled || needs_restart) {
       // Data collection only just disabled
 
       if (!memfaultd_utils_restart_service_if_running("collectd", "collectd.service")) {
@@ -297,8 +325,12 @@ static bool prv_reload(sMemfaultdPlugin *handle) {
     }
   } else {
     // Data collection enabled
-    if (!prv_generate_config(handle)) {
-      fprintf(stderr, "collectd:: Failed to generate updated config file\n");
+    if (!prv_generate_header_include(handle)) {
+      fprintf(stderr, "collectd:: Failed to generate updated header config file\n");
+      return false;
+    }
+    if (!prv_generate_footer_include(handle)) {
+      fprintf(stderr, "collectd:: Failed to generate updated footer config file\n");
       return false;
     }
 
@@ -335,6 +367,16 @@ bool memfaultd_collectd_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns 
   (*fns)->handle = handle;
 
   memfaultd_get_boolean(handle->memfaultd, "", "enable_data_collection", &handle->was_enabled);
+
+  if (!memfaultd_get_string(handle->memfaultd, "collectd_plugin", "header_include_output_file",
+                            &handle->header_include_output_file)) {
+    handle->header_include_output_file = DEFAULT_HEADER_INCLUDE_OUTPUT_FILE;
+  }
+
+  if (!memfaultd_get_string(handle->memfaultd, "collectd_plugin", "footer_include_output_file",
+                            &handle->footer_include_output_file)) {
+    handle->footer_include_output_file = DEFAULT_FOOTER_INCLUDE_OUTPUT_FILE;
+  }
 
   // Ignore failures after this point as we still want setting changes to attempt to reload the
   // config

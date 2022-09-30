@@ -34,7 +34,7 @@ struct MemfaultdPlugin {
  * @return true Successfully added global options to config
  * @return false Failed to add
  */
-static bool prv_swupdate_add_globals(sMemfaultdPlugin *handle, config_t *config) {
+static bool prv_swupdate_add_globals(config_t *config) {
   if (!config_lookup(config, "globals")) {
     if (!config_setting_add(config_root_setting(config), "globals", CONFIG_TYPE_GROUP)) {
       fprintf(stderr, "swupdate:: Failed to add globals setting group\n");
@@ -198,7 +198,7 @@ static bool prv_swupdate_add_identify(sMemfaultdPlugin *handle, config_t *config
  * @return true Successfully added runtime.cfg options
  * @return false Failed to add
  */
-static bool prv_swupdate_add_runtime(sMemfaultdPlugin *handle, config_t *config) { return true; }
+static bool prv_swupdate_add_runtime() { return true; }
 
 /**
  * @brief Generate new swupdate.cfg file from config
@@ -223,7 +223,7 @@ static bool prv_swupdate_generate_config(sMemfaultdPlugin *handle) {
             input_file);
   }
 
-  if (!prv_swupdate_add_globals(handle, &config)) {
+  if (!prv_swupdate_add_globals(&config)) {
     fprintf(stderr, "swupdate:: Failed to add global options to config\n");
     config_destroy(&config);
     return false;
@@ -238,7 +238,7 @@ static bool prv_swupdate_generate_config(sMemfaultdPlugin *handle) {
     config_destroy(&config);
     return false;
   }
-  if (!prv_swupdate_add_runtime(handle, &config)) {
+  if (!prv_swupdate_add_runtime()) {
     fprintf(stderr, "swupdate:: Failed to add runtime override options "
                     "to config\n");
     config_destroy(&config);

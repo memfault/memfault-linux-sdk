@@ -23,8 +23,11 @@ function(add_cpputest_target NAME)
         )
     target_compile_options(${NAME} PRIVATE
         -Wall
+        -Wextra
         -Werror
         -Wno-unused-private-field
+        -Wno-unused-parameter
+        -Wno-missing-field-initializers
         -DCPPUTEST_USE_EXTENSIONS=1
         -DCPPUTEST_USE_MEM_LEAK_DETECTION=1
         -DCPPUTEST_SANITIZE_ADDRESS=1

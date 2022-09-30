@@ -78,7 +78,7 @@ static sMemfaultdTxData *prv_reboot_build_event(sMemfaultdPlugin *handle, const 
                            "]",
                            software_type, software_version, settings->device_id,
                            settings->hardware_version, val, userinfo ? userinfo : "");
-  if (ret >= max_event_size || ret < 0) {
+  if (ret >= (int)max_event_size || ret < 0) {
     fprintf(stderr, "reboot:: Failed to build event structure %d\n", ret);
     free(data);
     return NULL;
@@ -154,7 +154,7 @@ static int prv_reboot_read_and_clear_reboot_reason(sMemfaultdPlugin *handle) {
  * @return true Machine is in requested state
  * @return false Machine is not
  */
-static bool prv_reboot_is_systemd_state(sMemfaultdPlugin *handle, const char *state) {
+static bool prv_reboot_is_systemd_state(const char *state) {
   sd_bus *bus;
   sd_bus_error error = SD_BUS_ERROR_NULL;
   char *cur_state;
@@ -244,7 +244,7 @@ static bool prv_reboot_is_upgrade(sMemfaultdPlugin *handle) {
  */
 static void prv_reboot_destroy(sMemfaultdPlugin *handle) {
   if (handle) {
-    if (prv_reboot_is_systemd_state(handle, "stopping")) {
+    if (prv_reboot_is_systemd_state("stopping")) {
       if (prv_reboot_is_upgrade(handle)) {
         prv_reboot_write_reboot_reason(handle, REBOOTREASON_SOFTWAREUPDATE);
       } else {
@@ -281,7 +281,7 @@ bool memfaultd_reboot_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns **
   if (reboot_reason == REBOOTREASON_UNKNOWN) {
     if (access(PSTORE_FILE, F_OK) == 0) {
       reboot_reason = REBOOTREASON_KERNELPANIC;
-    } else if (prv_reboot_is_systemd_state(handle, "starting")) {
+    } else if (prv_reboot_is_systemd_state("starting")) {
       reboot_reason = REBOOTREASON_LOWPOWER;
     }
   }

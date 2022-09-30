@@ -1,3 +1,5 @@
+#pragma once
+
 //! @file
 //!
 //! Copyright (c) Memfault, Inc.
@@ -6,8 +8,6 @@
 //! @brief
 //! Testing utilities to convert hex to binary data
 //!
-
-#pragma once
 
 #ifdef __cplusplus
 extern "C" {

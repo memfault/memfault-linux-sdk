@@ -23,7 +23,7 @@
 
 #include "memfaultd.h"
 
-typedef struct MemfaultdQueue {
+struct MemfaultdQueue {
   sMemfaultd *memfaultd;
   //! @brief True if the buf memory is backed by a memory mapped file, false if it is backed by
   //! a heap-allocated buffer.
@@ -46,7 +46,7 @@ typedef struct MemfaultdQueue {
   //! before the memfaultd_queue_complete_read(), the flag will be set to false.
   bool can_complete_read;
   pthread_mutex_t lock;
-} sMemfaultdQueue;
+};
 
 /**
  * Message format, packed structure containing:

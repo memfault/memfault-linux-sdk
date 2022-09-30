@@ -12,6 +12,8 @@ Useful links:
 - [Linux OTA Management][docs-linux-ota]: integrate with our over-the-air
   updates (OTA) system.
 - [Linux Metrics][docs-linux-metrics]: integrate with our Metrics system.
+- [Crash Reports][docs-linux-coredumps]: collect user-land coredumps and analyze
+  them on Memfault.
 
 ## Contents
 
@@ -47,7 +49,7 @@ following:
 - [`recipes-extended/collectd`](recipes-extended/collectd) contains our
   recommended `/etc/collectd.conf` file, including a set of standard plugins
   that enjoy special support on the Memfault platform.
-- Sample apps using a StatsD client that sends application metrics to CollectD:
+- Sample apps using a StatsD client that sends application metrics to collectd:
   - In C:
     [`recipes-memfault/statsd-sampleapp-c`](recipes-memfault/statsd-sampleapp-c)
   - In Python:
@@ -155,3 +157,4 @@ Login information for the QEMU environment:
 [docs-linux-getting-started]: https://mflt.io/linux-getting-started
 [docs-linux-metrics]: https://mflt.io/linux-metrics
 [docs-linux-ota]: https://mflt.io/linux-ota-integration-guide
+[docs-linux-coredumps]: https://mflt.io/linux-coredumps

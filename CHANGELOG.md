@@ -6,6 +6,64 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2022-09-28
+
+### Added
+
+- This release is the first one including support for collecting and uploading
+  user-land coredumps to the Memfault platform. The coredump plugin is enabled
+  by default. Alongside this SDK release, an accompanying [Memfault
+  CLI][docs-cli] version 0.11.0 aids in uploading symbol files to Memfault from
+  Yocto builds to facilitate making use of the new functionality. Uploading
+  symbols is a necessary step in order to use Memfault for coredumps. [Read more
+  about coredump support in the Memfault Linux SDK][docs-coredumps].
+
+[docs-coredumps]: https://mflt.io/linux-coredumps
+[docs-cli]: https://mflt.io/memfault-cli
+
+### Changed
+
+- Breaking changes in the format of `/etc/memfaultd.conf` (see [the updated
+  reference][docs-reference-memfaultd-conf]):
+  - The `collectd` top-level key was merged into the `collectd_plugin` top-level
+    key. The fields previously in `collectd` that have been moved to
+    `collectd_plugin` are:
+    - `interval_seconds`
+    - `non_memfaultd_chain`
+    - `write_http_buffer_size_kib`
+  - The `collectd_plugin.output_file` key has been replaced by two new keys:
+    - `collectd_plugin.header_include_output_file`: the value of which should be
+      included as the first statement in your `/etc/collectd.conf` file, and
+    - `collectd_plugin.footer_include_output_file`: to be included as the last
+      statement of your `/etc/collectd.conf` file.
+
+[docs-reference-memfaultd-conf]:
+  https://docs.memfault.com/docs/linux/reference-memfaultd-configuration/
+
+### Fixed
+
+- A misconfiguration bug whereby setting `collectd.interval_seconds` (now
+  `collectd_plugin.interval_seconds`, see the "Changed" section of this release)
+  would have no effect if our include file was at the bottom of
+  `/etc/collectd.conf`. It happened due to the fact that collectd `Interval`
+  statements are evaluated as they appear in source code (see [the author's
+  statement][collectd-interval-eval]), only affecting the plugin statements that
+  come after it.
+
+[collectd-interval-eval]:
+  https://github.com/collectd/collectd/issues/2444#issuecomment-331804766
+
+### Known Issues
+
+Temporarily, our backend processing pipeline is unable to process coredumps that
+link to shared objects in a specific style. This affects, in particular,
+coredumps coming from devices on the Dunfell release of Yocto.
+
+A backend fix has already been identified and should be released in the next few
+business days. Once released, any previously collected coredumps that are
+affected will be reprocessed server-side to address this issue. This will
+**not** require any action from your team.
+
 ## [0.3.1] - 2022-09-05
 
 ### Added
@@ -87,3 +145,5 @@ package][nginx-pid-report] for a discussion on the topic.
 [0.3.0]: https://github.com/memfault/memfault-linux-sdk/releases/tag/0.3.0
 [0.3.1]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/0.3.1-kirkstone
+[1.0.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.0.0-kirkstone
