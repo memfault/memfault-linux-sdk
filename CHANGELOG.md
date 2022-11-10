@@ -6,6 +6,79 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2022-11-10
+
+### Added
+
+- [memfaultd] A new `last_reboot_reason_file` API has been added to enable
+  extending the reboot reason determination subsystem. More information can be
+  found in [the documentation of this feature][docs-reboots].
+- [memfaultd] `memfaultd` will now take care of cleaning up `/sys/fs/pstore`
+  after a reboot of the system (but only if the reboot reason tracking plugin,
+  `plugin_reboot`, is enabled). Often, [systemd-pstore.service] is configured to
+  carry out this task. This would conflict with `memfaultd` performing this
+  task. Therefore, [systemd-pstore.service] is automatically excluded when
+  including the `meta-memfault` layer. Note that `memfaultd` does not provide
+  functionality (yet) to archive pstore files (like [systemd-pstore.service]
+  can). If this is necessary for you, the work-around is to create a service
+  that performs the archiving and runs before `memfaultd.service` starts up.
+
+### Changed
+
+- [memfaultd] When `memfaultd` would fail to determine the reason for a reboot,
+  it would assume that "low power" was reason for the reboot. This makes little
+  sense because there are many resets for which `memfaultd` is not able to
+  determine a reason. This fallback is now changed to use "unspecified" in case
+  the reason could not be determined (either from the built-in detection or
+  externally, via the new `last_reboot_reason_file` API). Read the [new
+  `last_reboot_reason_file` API][docs-reboots] for more information.
+- Various improvements to the QEMU example integration:
+  - It can now also be built for `qemuarm` (previously, only `qemuarm64` was
+    working).
+  - Linux pstore/ramoops subsystems are now correctly configured for the QEMU
+    example integration, making it possible to test out the tracking of kernel
+    panic reboot reasons using the QEMU device.
+- [memfaultd] The unit test set up is now run on `x86_64` as well as `i386` to
+  get coverage on a 64-bit architecture as wel as a 32-bit one.
+
+### Fixed
+
+- [memfaultd] Building the SDK on 32-bit systems would fail due to compilation
+  errors. These are now fixed.
+- [collectd] In the example, the statsd plugin would be listening on all network
+  interfaces. This is narrowed to only listen on localhost (127.0.0.1).
+- [memfaultd] Many improvements to reboot reason tracking:
+  - Intermittently, a reboot would erroneously be attributed to "low power".
+  - Kernel panics would show up in the application as "brown out reset".
+  - Sometimes, multiple reboot events for a single Linux reboot would get
+    emitted. The root causes have been found and fixed. Logic has been added
+    that tracks the Linux `boot_id` to ensure that at most one reboot reason
+    gets emitted per Linux boot.
+  - When using the example integration, the reboot reason "firmware update"
+    would not be detected after SWUpdate had installed an OTA update. This was
+    caused by a mismatch of the `defconfig` file in the example integration and
+    the version of SWUpdate that was being compiled. This is now corrected.
+- [memfaultd] Fixed a bug in queue.c where an out-of-memory situation could lead
+  to the queue's mutex not getting released.
+- Improved the reliability of some of the E2E test scripts.
+
+### Known Issues
+
+- When `memfaultd --enable-data-collection` is run and data collection had not
+  yet been enabled, it will regenerate the SWUpdate configuration and restart
+  the `swupdate.service`. This restart can cause SWUpdate to get into a bad
+  state and fail to install OTA updates. This is not a new issue and was already
+  present in previous releases. We are investigating this issue. As a
+  work-around, the device can be rebooted immediately after running
+  `memfaultd --enable-data-collection`.
+- The [systemd-pstore.service] gets disabled when including `meta-memfault`,
+  even if `plugin_reboot` is disabled. As a work-around, if you need to keep
+  [systemd-pstore.service], remove the `systemd_%.bbappend` file from the SDK.
+
+[systemd-pstore.service]:
+  https://www.freedesktop.org/software/systemd/man/systemd-pstore.service.html
+[docs-reboots]: https://mflt.io/linux-reboots
+
 ## [1.0.0] - 2022-09-28
 
 ### Added
@@ -55,14 +128,16 @@ and this project adheres to
 
 ### Known Issues
 
-Temporarily, our backend processing pipeline is unable to process coredumps that
-link to shared objects in a specific style. This affects, in particular,
-coredumps coming from devices on the Dunfell release of Yocto.
+The server-side issue mentioned below has been resolved in the meantime.
 
-A backend fix has already been identified and should be released in the next few
-business days. Once released, any previously collected coredumps that are
+~~Temporarily, our backend processing pipeline is unable to process coredumps
+that link to shared objects in a specific style. This affects, in particular,
+coredumps coming from devices on the Dunfell release of Yocto.~~
+
+~~A backend fix has already been identified and should be released in the next
+few business days. Once released, any previously collected coredumps that are
 affected will be reprocessed server-side to address this issue. This will
-**not** require any action from your team.
+**not** require any action from your team.~~
 
 ## [0.3.1] - 2022-09-05
 

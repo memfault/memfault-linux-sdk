@@ -13,7 +13,7 @@ DEPENDS = " \
 
 S = "${WORKDIR}"
 
-TARGET_CC_ARCH = "${LDFLAGS}"
+TARGET_CC_ARCH = "${LDFLAGS} ${TUNE_CCARGS}"
 
 do_install () {
     install -d ${D}/usr/bin

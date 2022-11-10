@@ -15,9 +15,6 @@ from qemu import QEMU
 def test(
     qemu: QEMU, memfault_service_tester: MemfaultServiceTester, qemu_device_id: str
 ):
-    # Stream memfaultd's log
-    qemu.child().sendline("journalctl --follow --unit=memfaultd.service &")
-
     # Enable data collection, activating the coredump functionality
     qemu.exec_cmd("memfaultd --enable-data-collection")
     qemu.systemd_wait_for_service_state("memfaultd.service", "active")
@@ -25,9 +22,18 @@ def test(
     # Give memfaultd a moment to start the socket thread
     time.sleep(1)
 
+    # Stream memfaultd's log
+    qemu.exec_cmd("journalctl --follow --unit=memfaultd.service &")
+
     # Generate corefile from killing 'sleep' process
     qemu.exec_cmd("sleep 5s &")
-    qemu.exec_cmd("kill -SIGQUIT $!")
+    qemu.exec_cmd("SLEEP_PID=$!")
+
+    # Give the sleep program a bit of time to start and run:
+    qemu.exec_cmd("sleep 0.1s")
+
+    # Now send SIGQUIT to trigger a coredump!
+    qemu.exec_cmd("kill -SIGQUIT $SLEEP_PID")
 
     # Ensure memfaultd has received the core
     qemu.child().expect("coredump:: Received corefile for PID")
@@ -42,7 +48,7 @@ def test(
 
     # Check that the backend created the coredump:
     memfault_service_tester.poll_elf_coredumps_until_count(
-        1, device_serial=qemu_device_id, timeout_secs=30
+        1, device_serial=qemu_device_id, timeout_secs=60
     )
 
     # TODO: upload symbol files, so we can assert that the processing was w/o errors here and an issue got created.

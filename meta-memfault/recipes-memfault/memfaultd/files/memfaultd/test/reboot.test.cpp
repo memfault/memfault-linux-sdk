@@ -9,9 +9,7 @@
 
 #include <CppUTest/TestHarness.h>
 #include <CppUTestExt/MockSupport.h>
-#include <fcntl.h>
 #include <json-c/json.h>
-#include <libuboot.h>
 #include <systemd/sd-bus.h>
 #include <unistd.h>
 
@@ -19,13 +17,23 @@
 #include <iostream>
 #include <sstream>
 
+#include "memfault/util/linux_boot_id.h"
 #include "memfaultd.h"
+#include "reboot/reboot_last_boot_id.h"
+#include "reboot/reboot_process_pstore.h"
+
+extern "C" {
+#include <libuboot.h>
+}
 
 static sMemfaultd *g_stub_memfaultd = (sMemfaultd *)~0;
 static sMemfaultdTxData *g_stub_txdata = NULL;
 
 extern "C" {
 bool memfaultd_reboot_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns **fns);
+void memfaultd_reboot_data_collection_enabled(sMemfaultd *memfaultd, bool data_collection_enabled);
+int __wrap_access(const char *pathname, int mode);
+extern int __real_access(const char *pathname, int mode);
 }
 
 char *memfaultd_generate_rw_filename(sMemfaultd *memfaultd, const char *filename) {
@@ -56,7 +64,23 @@ bool memfaultd_get_string(sMemfaultd *handle, const char *parent_key, const char
     .returnBoolValue();
 }
 
-int access(const char *pathname, int mode) { return mock().actualCall("access").returnIntValue(); }
+bool memfault_reboot_is_untracked_boot_id(const char *last_tracked_boot_id_file,
+                                          const char *current_boot_id) {
+  return mock().actualCall("memfault_reboot_is_untracked_boot_id").returnBoolValue();
+}
+
+void memfault_reboot_process_pstore_files(char *pstore_dir) {
+  mock().actualCall("memfault_reboot_process_pstore_files");
+}
+
+bool memfault_linux_boot_id_read(char boot_id[UUID_STR_LEN]) {
+  strcpy(boot_id, "12764a0c-f27b-48b3-8fe2-10fa14fa1917");
+  return true;
+}
+
+int __wrap_access(const char *pathname, int mode) {
+  return mock().actualCall("access").returnIntValue();
+}
 
 const sMemfaultdDeviceSettings *memfaultd_get_device_settings(sMemfaultd *memfaultd) {
   return (sMemfaultdDeviceSettings *)mock()
@@ -86,6 +110,8 @@ int sd_bus_get_property_string(sd_bus *bus, const char *destination, const char 
 
 void sd_bus_error_free(sd_bus_error *e) {}
 
+sd_bus *sd_bus_unref(sd_bus *bus) { return bus; }
+
 int libuboot_initialize(struct uboot_ctx **out, struct uboot_env_device *envdevs) {
   return mock().actualCall("libuboot_initialize").returnIntValue();
 }
@@ -109,6 +135,8 @@ void libuboot_exit(struct uboot_ctx *ctx) { mock().actualCall("libuboot_exit"); 
 TEST_BASE(MemfaultdRebootUtest) {
   char tmp_dir[PATH_MAX] = {0};
   char tmp_reboot_file[4200] = {0};
+  char tmp_customer_reboot_file[4200] = {0};
+  const char *tmp_customer_reboot_file_ptr;
 
   sMemfaultdPluginCallbackFns *fns = NULL;
   char device_id[32] = "my_device_id";
@@ -127,6 +155,8 @@ TEST_BASE(MemfaultdRebootUtest) {
     strcpy(tmp_dir, "/tmp/memfaultd.XXXXXX");
     mkdtemp(tmp_dir);
     sprintf(tmp_reboot_file, "%s/lastrebootreason", tmp_dir);
+    sprintf(tmp_customer_reboot_file, "%s/customer_last_reboot_reason", tmp_dir);
+    tmp_customer_reboot_file_ptr = tmp_customer_reboot_file;
   }
 
   void teardown() override {
@@ -134,6 +164,8 @@ TEST_BASE(MemfaultdRebootUtest) {
       free(g_stub_txdata);
       g_stub_txdata = NULL;
     }
+    tmp_customer_reboot_file_ptr = nullptr;
+    unlink(tmp_customer_reboot_file);
     unlink(tmp_reboot_file);
     rmdir(tmp_dir);
     mock().checkExpectations();
@@ -170,12 +202,34 @@ TEST_BASE(MemfaultdRebootUtest) {
       .andReturnValue(true);
   }
 
+  void expect_customer_reboot_reason_file_get_string_call() {
+    mock()
+      .expectOneCall("memfaultd_get_string")
+      .withStringParameter("parent_key", "reboot_plugin")
+      .withStringParameter("key", "last_reboot_reason_file")
+      .withOutputParameterReturning("val", &tmp_customer_reboot_file_ptr,
+                                    sizeof(tmp_customer_reboot_file_ptr))
+      .andReturnValue(true);
+  }
+
   void expect_lastrebootreason_file_generate_call(const char *path) {
     mock()
       .expectOneCall("memfaultd_generate_rw_filename")
       .withPointerParameter("memfaultd", g_stub_memfaultd)
       .withStringParameter("filename", "lastrebootreason")
       .andReturnValue(tmp_reboot_file);
+  }
+
+  void expect_last_tracked_boot_id_file_generate_call() {
+    mock()
+      .expectOneCall("memfaultd_generate_rw_filename")
+      .withPointerParameter("memfaultd", g_stub_memfaultd)
+      .withStringParameter("filename", "last_tracked_boot_id")
+      .andReturnValue("/last_tracked_boot_id");
+  }
+
+  void expect_memfault_reboot_is_untracked_boot_id(bool is_untracked) {
+    mock().expectOneCall("memfault_reboot_is_untracked_boot_id").andReturnValue(is_untracked);
   }
 
   void expect_get_device_settings_call() {
@@ -187,6 +241,10 @@ TEST_BASE(MemfaultdRebootUtest) {
   }
 
   void expect_access_call(int val) { mock().expectOneCall("access").andReturnValue(val); }
+
+  void expect_memfault_reboot_process_pstore_files_call(void) {
+    mock().expectOneCall("memfault_reboot_process_pstore_files");
+  }
 
   void expect_sd_bus_get_property_string_call(const char *val) {
     system_state = strdup(val);
@@ -214,8 +272,48 @@ TEST_BASE(MemfaultdRebootUtest) {
     mock().expectOneCall("libuboot_exit").andReturnValue(0);
   }
 
+  void expect_tx_unknown_reboot_reason() {
+    expect_get_device_settings_call();                         // get device info (hw version etc)
+    expect_software_type_get_string_call("my_software_type");  // get software_type
+    expect_software_version_get_string_call("my_software_version");  // get software_version
+    expect_memfaultd_txdata_call();                                  // tx data call
+  }
+
+  static void check_last_txdata_has_reboot_reason(int reboot_reason) {
+    // Check object is valid
+    json_object *payload, *object;
+    CHECK_EQUAL(g_stub_txdata->type, kMemfaultdTxDataType_RebootEvent);
+    payload = json_tokener_parse((const char *)g_stub_txdata->payload);
+    CHECK(payload);
+
+    // Object is an array or length 1, get first entry
+    CHECK_EQUAL(json_object_get_type(payload), json_type_array);
+    CHECK_EQUAL(json_object_array_length(payload), 1);
+    object = json_object_array_get_idx(payload, 0);
+    CHECK(object);
+
+    // Get reboot reason
+    CHECK(json_object_object_get_ex(object, "event_info", &object));
+    CHECK_EQUAL(json_object_get_type(object), json_type_object);
+    CHECK(json_object_object_get_ex(object, "reason", &object));
+    CHECK_EQUAL(json_object_get_type(object), json_type_int);
+    CHECK_EQUAL(json_object_get_int(object), reboot_reason);
+
+    json_object_put(payload);
+  }
+
+  static void check_file_does_not_exist(const char *path) {
+    CHECK_EQUAL(-1, __real_access(path, F_OK));
+    CHECK_EQUAL(ENOENT, errno);
+  }
+
   void write_lastrebootreason_file(const char *val) {
     std::ofstream fd(tmp_reboot_file);
+    fd << val;
+  }
+
+  void write_customer_last_reboot_reason_file(const char *val) {
+    std::ofstream fd(tmp_customer_reboot_file);
     fd << val;
   }
 
@@ -232,66 +330,95 @@ TEST_GROUP_BASE(TestGroup_Startup, MemfaultdRebootUtest){};
 /* comms disabled; init returns true with empty function table */
 TEST(TestGroup_Startup, Test_DataCommsDisabled) {
   expect_enable_data_collection_get_boolean_call(false);  // collection disabled
+  expect_last_tracked_boot_id_file_generate_call();
+  expect_memfault_reboot_is_untracked_boot_id(true);
+  expect_memfault_reboot_process_pstore_files_call();
 
   bool success = memfaultd_reboot_init(g_stub_memfaultd, &fns);
   CHECK_EQUAL(success, true);
   CHECK(!fns);
+  CHECK_TRUE(g_stub_txdata == nullptr);
 }
 
 /* comms enabled, no reboot reason file; init returns true with destroy function and
- * valid handle, no txdata */
+ * valid handle, txdata */
 TEST(TestGroup_Startup, Test_DataCommsEnabled) {
   expect_enable_data_collection_get_boolean_call(true);  // collection enabled
+  expect_last_tracked_boot_id_file_generate_call();
+  expect_memfault_reboot_is_untracked_boot_id(true);
+  expect_customer_reboot_reason_file_get_string_call();
   expect_lastrebootreason_file_generate_call(
-    "lastrebootreason");                              // read missing reboot reason file
-  expect_access_call(-1);                             // no pstore file
-  expect_sd_bus_get_property_string_call("running");  // systemd in running state
+    "lastrebootreason");   // read missing reboot reason file
+  expect_access_call(-1);  // no pstore file
+  expect_tx_unknown_reboot_reason();
 
   bool success = memfaultd_reboot_init(g_stub_memfaultd, &fns);
   CHECK_EQUAL(success, true);
   CHECK(fns);
   CHECK(fns->handle);
   CHECK(fns->plugin_destroy);
+
+  check_last_txdata_has_reboot_reason(0);  // kMfltRebootReason_Unknown
+
   free(fns->handle);
 }
 
-/* empty reboot reason file; no txdata, init successful */
+/* empty reboot reason file; txdata, init successful */
 TEST(TestGroup_Startup, Test_EmptyRebootReasonFile) {
-  expect_enable_data_collection_get_boolean_call(true);            // collection enabled
+  expect_enable_data_collection_get_boolean_call(true);  // collection enabled
+  expect_last_tracked_boot_id_file_generate_call();
+  expect_memfault_reboot_is_untracked_boot_id(true);
+  expect_customer_reboot_reason_file_get_string_call();
   write_lastrebootreason_file("");                                 // write empty reboot reason file
   expect_lastrebootreason_file_generate_call("lastrebootreason");  // read reboot reason file
   expect_access_call(-1);                                          // no pstore file
-  expect_sd_bus_get_property_string_call("running");               // systemd in running state
+  expect_tx_unknown_reboot_reason();
 
   bool success = memfaultd_reboot_init(g_stub_memfaultd, &fns);
   CHECK_EQUAL(success, true);
   CHECK(fns);
   CHECK(fns->handle);
   CHECK(fns->plugin_destroy);
+
+  check_last_txdata_has_reboot_reason(0);      // kMfltRebootReason_Unknown
+  check_file_does_not_exist(tmp_reboot_file);  // File is deleted after having been read
+
   free(fns->handle);
 }
 
-/* invalid reboot reason file; no txdata, init successful */
+/* invalid reboot reason file; txdata, init successful */
 TEST(TestGroup_Startup, Test_InvalidRebootReasonFile) {
   expect_enable_data_collection_get_boolean_call(true);  // collection enabled
-  write_lastrebootreason_file("notANumber");             // write invalid reboot reason file
+  expect_last_tracked_boot_id_file_generate_call();
+  expect_memfault_reboot_is_untracked_boot_id(true);
+  expect_customer_reboot_reason_file_get_string_call();
+  write_lastrebootreason_file("notANumber");  // write invalid reboot reason file
   expect_lastrebootreason_file_generate_call("lastrebootreason");  // read reboot reason file
   expect_access_call(-1);                                          // no pstore file
-  expect_sd_bus_get_property_string_call("running");               // systemd in running state
+
+  expect_tx_unknown_reboot_reason();
 
   bool success = memfaultd_reboot_init(g_stub_memfaultd, &fns);
   CHECK_EQUAL(success, true);
   CHECK(fns);
   CHECK(fns->handle);
   CHECK(fns->plugin_destroy);
+
+  check_last_txdata_has_reboot_reason(0);      // kMfltRebootReason_Unknown
+  check_file_does_not_exist(tmp_reboot_file);  // File is deleted after having been read
+
   free(fns->handle);
 }
 
-/* valid reboot reason file; txdata, init successful */
+/* valid internal reboot reason file; txdata, init successful */
 TEST(TestGroup_Startup, Test_ValidRebootReasonFile) {
   expect_enable_data_collection_get_boolean_call(true);  // collection enabled
+  expect_last_tracked_boot_id_file_generate_call();
+  expect_memfault_reboot_is_untracked_boot_id(true);
+  expect_customer_reboot_reason_file_get_string_call();
   write_lastrebootreason_file("2");  // write valid reboot reason file (2=user reset)
   expect_lastrebootreason_file_generate_call("lastrebootreason");  // read reboot reason file
+  expect_access_call(-1);                                          // no pstore file
 
   // Additional calls expected as tx'ing data
   expect_get_device_settings_call();                         // get device info (hw version etc)
@@ -305,34 +432,60 @@ TEST(TestGroup_Startup, Test_ValidRebootReasonFile) {
   CHECK(fns->handle);
   CHECK(fns->plugin_destroy);
 
-  // Check object is valid
-  json_object *payload, *object;
-  CHECK_EQUAL(g_stub_txdata->type, kMemfaultdTxDataType_RebootEvent);
-  payload = json_tokener_parse((const char *)g_stub_txdata->payload);
-  CHECK(payload);
+  check_last_txdata_has_reboot_reason(2);      // kMfltRebootReason_UserReset
+  check_file_does_not_exist(tmp_reboot_file);  // File is deleted after having been read
 
-  // Object is an array or length 1, get first entry
-  CHECK_EQUAL(json_object_get_type(payload), json_type_array);
-  CHECK_EQUAL(json_object_array_length(payload), 1);
-  object = json_object_array_get_idx(payload, 0);
-  CHECK(object);
+  free(fns->handle);
+}
 
-  // Get reboot reason
-  CHECK(json_object_object_get_ex(object, "event_info", &object));
-  CHECK_EQUAL(json_object_get_type(object), json_type_object);
-  CHECK(json_object_object_get_ex(object, "reason", &object));
-  CHECK_EQUAL(json_object_get_type(object), json_type_int);
-  CHECK_EQUAL(json_object_get_int(object), 2);
+/* valid customer reboot reason file; txdata, init successful */
+TEST(TestGroup_Startup, Test_ValidCustomerRebootReasonFile) {
+  expect_enable_data_collection_get_boolean_call(true);  // collection enabled
+  expect_last_tracked_boot_id_file_generate_call();
+  expect_memfault_reboot_is_untracked_boot_id(true);
+  expect_customer_reboot_reason_file_get_string_call();
+  expect_lastrebootreason_file_generate_call("lastrebootreason");  // read reboot reason file
+  expect_access_call(-1);                                          // no pstore file
 
-  json_object_put(payload);
+  write_customer_last_reboot_reason_file(
+    "0");  // write valid customer reboot reason file (0=unknown)
+
+  // Customer reboot reason file trumps the internal reboot reason file:
+  write_lastrebootreason_file("2");  // write valid reboot reason file (2=user reset)
+
+  // Additional calls expected as tx'ing data
+  expect_get_device_settings_call();                         // get device info (hw version etc)
+  expect_software_type_get_string_call("my_software_type");  // get software_type
+  expect_software_version_get_string_call("my_software_version");  // get software_version
+  expect_memfaultd_txdata_call();                                  // tx data call
+
+  bool success = memfaultd_reboot_init(g_stub_memfaultd, &fns);
+  CHECK_EQUAL(success, true);
+  CHECK(fns);
+  CHECK(fns->handle);
+  CHECK(fns->plugin_destroy);
+
+  check_last_txdata_has_reboot_reason(0);               // kMfltRebootReason_Unknown
+  check_file_does_not_exist(tmp_reboot_file);           // File is deleted after having been read
+  check_file_does_not_exist(tmp_customer_reboot_file);  // File is deleted after having been read
+
   free(fns->handle);
 }
 
 /* pstore panic file found; txdata, init successful */
 TEST(TestGroup_Startup, Test_PstorePanic) {
-  expect_enable_data_collection_get_boolean_call(true);            // collection enabled
+  expect_enable_data_collection_get_boolean_call(true);  // collection enabled
+  expect_last_tracked_boot_id_file_generate_call();
+  expect_memfault_reboot_is_untracked_boot_id(true);
+  expect_customer_reboot_reason_file_get_string_call();
   expect_lastrebootreason_file_generate_call("lastrebootreason");  // read reboot reason file
   expect_access_call(0);                                           // pstore file found
+  expect_memfault_reboot_process_pstore_files_call();
+
+  // Pstore/kernel panic reboot reason trumps the internal and customer reboot reason files:
+  write_lastrebootreason_file("3");  // write valid reboot reason file (3=firmware update)
+  write_customer_last_reboot_reason_file(
+    "4");  // write valid customer reboot reason file (4=low power)
 
   // Additional calls expected as tx'ing data
   expect_get_device_settings_call();                         // get device info (hw version etc)
@@ -346,50 +499,22 @@ TEST(TestGroup_Startup, Test_PstorePanic) {
   CHECK(fns->handle);
   CHECK(fns->plugin_destroy);
 
-  // Check object is valid
-  json_object *payload, *object;
-  CHECK_EQUAL(g_stub_txdata->type, kMemfaultdTxDataType_RebootEvent);
-  payload = json_tokener_parse((const char *)g_stub_txdata->payload);
-  CHECK(payload);
+  check_last_txdata_has_reboot_reason(0x8008);  // kMfltRebootReason_KernelPanic
 
-  // Object is an array or length 1, get first entry
-  CHECK_EQUAL(json_object_get_type(payload), json_type_array);
-  CHECK_EQUAL(json_object_array_length(payload), 1);
-  object = json_object_array_get_idx(payload, 0);
-  CHECK(object);
+  check_file_does_not_exist(tmp_reboot_file);           // File is deleted after having been read
+  check_file_does_not_exist(tmp_customer_reboot_file);  // File is deleted after having been read
 
-  // Get reboot reason
-  CHECK(json_object_object_get_ex(object, "event_info", &object));
-  CHECK_EQUAL(json_object_get_type(object), json_type_object);
-  CHECK(json_object_object_get_ex(object, "reason", &object));
-  CHECK_EQUAL(json_object_get_type(object), json_type_int);
-  CHECK_EQUAL(json_object_get_int(object), 32771);
-
-  json_object_put(payload);
   free(fns->handle);
 }
 
-/* no pstore panic file, already running; no txdata, successful */
-TEST(TestGroup_Startup, Test_AlreadyRunning) {
-  expect_enable_data_collection_get_boolean_call(true);            // collection enabled
+/* no pstore panic file, no internal file, no customer file; starting; txdata, init successful */
+TEST(TestGroup_Startup, Test_StartupUnknownReason) {
+  expect_enable_data_collection_get_boolean_call(true);  // collection enabled
+  expect_last_tracked_boot_id_file_generate_call();
+  expect_memfault_reboot_is_untracked_boot_id(true);
+  expect_customer_reboot_reason_file_get_string_call();
   expect_lastrebootreason_file_generate_call("lastrebootreason");  // read reboot reason file
   expect_access_call(-1);                                          // no pstore file
-  expect_sd_bus_get_property_string_call("running");               // systemd in running state
-
-  bool success = memfaultd_reboot_init(g_stub_memfaultd, &fns);
-  CHECK_EQUAL(success, true);
-  CHECK(fns);
-  CHECK(fns->handle);
-  CHECK(fns->plugin_destroy);
-  free(fns->handle);
-}
-
-/* no pstore panic file, starting; txdata, init successful */
-TEST(TestGroup_Startup, Test_Startup) {
-  expect_enable_data_collection_get_boolean_call(true);            // collection enabled
-  expect_lastrebootreason_file_generate_call("lastrebootreason");  // read reboot reason file
-  expect_access_call(-1);                                          // no pstore file
-  expect_sd_bus_get_property_string_call("starting");              // systemd in starting state
 
   // Additional calls expected as tx'ing data
   expect_get_device_settings_call();                         // get device info (hw version etc)
@@ -403,26 +528,8 @@ TEST(TestGroup_Startup, Test_Startup) {
   CHECK(fns->handle);
   CHECK(fns->plugin_destroy);
 
-  // Check object is valid
-  json_object *payload, *object;
-  CHECK_EQUAL(g_stub_txdata->type, kMemfaultdTxDataType_RebootEvent);
-  payload = json_tokener_parse((const char *)g_stub_txdata->payload);
-  CHECK(payload);
+  check_last_txdata_has_reboot_reason(0);  // kMfltRebootReason_Unknown
 
-  // Object is an array or length 1, get first entry
-  CHECK_EQUAL(json_object_get_type(payload), json_type_array);
-  CHECK_EQUAL(json_object_array_length(payload), 1);
-  object = json_object_array_get_idx(payload, 0);
-  CHECK(object);
-
-  // Get reboot reason
-  CHECK(json_object_object_get_ex(object, "event_info", &object));
-  CHECK_EQUAL(json_object_get_type(object), json_type_object);
-  CHECK(json_object_object_get_ex(object, "reason", &object));
-  CHECK_EQUAL(json_object_get_type(object), json_type_int);
-  CHECK_EQUAL(json_object_get_int(object), 4);
-
-  json_object_put(payload);
   free(fns->handle);
 }
 
@@ -431,10 +538,13 @@ TEST_GROUP_BASE(TestGroup_Shutdown, MemfaultdRebootUtest){};
 /* not shutting down; no file */
 TEST(TestGroup_Shutdown, Test_StillRunning) {
   // 'Empty' startup
-  expect_enable_data_collection_get_boolean_call(true);            // collection enabled
+  expect_enable_data_collection_get_boolean_call(true);  // collection enabled
+  expect_last_tracked_boot_id_file_generate_call();
+  expect_memfault_reboot_is_untracked_boot_id(true);
+  expect_customer_reboot_reason_file_get_string_call();
   expect_lastrebootreason_file_generate_call("lastrebootreason");  // read reboot reason file
   expect_access_call(-1);                                          // no pstore file
-  expect_sd_bus_get_property_string_call("running");               // systemd in running state
+  expect_tx_unknown_reboot_reason();
 
   memfaultd_reboot_init(g_stub_memfaultd, &fns);
 
@@ -446,10 +556,13 @@ TEST(TestGroup_Shutdown, Test_StillRunning) {
 /* shutting down, not upgrade; "2" in lastrebootreason */
 TEST(TestGroup_Shutdown, Test_Stopping) {
   // 'Empty' startup
-  expect_enable_data_collection_get_boolean_call(true);            // collection enabled
+  expect_enable_data_collection_get_boolean_call(true);  // collection enabled
+  expect_last_tracked_boot_id_file_generate_call();
+  expect_memfault_reboot_is_untracked_boot_id(true);
+  expect_customer_reboot_reason_file_get_string_call();
   expect_lastrebootreason_file_generate_call("lastrebootreason");  // read reboot reason file
   expect_access_call(-1);                                          // no pstore file
-  expect_sd_bus_get_property_string_call("running");               // systemd in running state
+  expect_tx_unknown_reboot_reason();
 
   memfaultd_reboot_init(g_stub_memfaultd, &fns);
 
@@ -467,10 +580,13 @@ TEST(TestGroup_Shutdown, Test_Stopping) {
 /* shutting down, upgrade; "3" in lastrebootreason */
 TEST(TestGroup_Shutdown, Test_Upgrade) {
   // 'Empty' startup
-  expect_enable_data_collection_get_boolean_call(true);            // collection enabled
+  expect_enable_data_collection_get_boolean_call(true);  // collection enabled
+  expect_last_tracked_boot_id_file_generate_call();
+  expect_memfault_reboot_is_untracked_boot_id(true);
+  expect_customer_reboot_reason_file_get_string_call();
   expect_lastrebootreason_file_generate_call("lastrebootreason");  // read reboot reason file
   expect_access_call(-1);                                          // no pstore file
-  expect_sd_bus_get_property_string_call("running");               // systemd in running state
+  expect_tx_unknown_reboot_reason();
 
   memfaultd_reboot_init(g_stub_memfaultd, &fns);
 
@@ -483,4 +599,18 @@ TEST(TestGroup_Shutdown, Test_Upgrade) {
   char *lastrebootreason_str = read_lastrebootreason_file();
   MEMCMP_EQUAL("3", lastrebootreason_str, strlen(lastrebootreason_str));
   free(lastrebootreason_str);
+}
+
+/* boot_id already tracked, the plugin does nothing on init in this case */
+TEST(TestGroup_Startup, Test_BootIdAlreadyTracked) {
+  expect_enable_data_collection_get_boolean_call(true);  // collection enabled
+  expect_last_tracked_boot_id_file_generate_call();
+  expect_memfault_reboot_is_untracked_boot_id(false);
+
+  bool success = memfaultd_reboot_init(g_stub_memfaultd, &fns);
+  CHECK_EQUAL(success, true);
+
+  CHECK_TRUE(g_stub_txdata == nullptr);
+
+  free(fns->handle);
 }

@@ -199,7 +199,8 @@ bool memfault_core_elf_writer_write(sMemfaultCoreElfWriter *writer) {
 
     if (writer->write_offset != wrapper->header.p_offset + wrapper->header.p_filesz) {
       fprintf(stderr, "Written segment data end (0x%lx) did not match planned end (0x%lx)",
-              writer->write_offset, wrapper->header.p_offset + wrapper->header.p_filesz);
+              (unsigned long)writer->write_offset,
+              (unsigned long)wrapper->header.p_offset + wrapper->header.p_filesz);
       result = false;
     }
     if (!result) {

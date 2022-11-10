@@ -13,14 +13,18 @@ SRC_URI = "\
 IMAGE_DEPENDS = "base-image"
 
 # images and files that will be included in the .swu image
-SWUPDATE_IMAGES = "base-image-qemuarm64"
+SWUPDATE_IMAGES = "base-image-${MACHINE}"
 
-SWUPDATE_IMAGES_FSTYPES[base-image-qemuarm64] = ".ext4.gz"
+python() {
+  d.appendVarFlag("SWUPDATE_IMAGES_FSTYPES", f"base-image-{d.getVar('MACHINE')}", ".ext4.gz")
+}
 
 do_swupdate_update_swdescription() {
     # Yocto dependency checking can be broken if we modify the source file
     # directly during the build process, create a 'output' file to modify
     cp ${WORKDIR}/sw-description.in ${WORKDIR}/sw-description
     sed -i -e "s%__MEMFAULT_SOFTWARE_VERSION%${MEMFAULT_SOFTWARE_VERSION}%" ${WORKDIR}/sw-description
+    sed -i -e "s%__MEMFAULT_HARDWARE_VERSION%${MEMFAULT_HARDWARE_VERSION}%" ${WORKDIR}/sw-description
+    sed -i -e "s%__MACHINE%${MACHINE}%" ${WORKDIR}/sw-description
 }
 addtask do_swupdate_update_swdescription before do_swuimage after do_unpack do_prepare_recipe_sysroot

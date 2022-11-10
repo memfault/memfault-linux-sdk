@@ -1,5 +1,9 @@
 if(PLUGIN_REBOOT)
-    list(APPEND plugin_src plugins/reboot.c)
+    list(APPEND plugin_src
+        plugins/reboot/reboot.c
+        plugins/reboot/reboot_last_boot_id.c
+        plugins/reboot/reboot_process_pstore.c
+    )
     add_definitions("-DPLUGIN_REBOOT")
 
     find_package(libuboot)

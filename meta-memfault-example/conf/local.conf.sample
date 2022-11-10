@@ -18,6 +18,9 @@ WKS_FILE = "memfault.wks"
 MACHINE_ESSENTIAL_EXTRA_RDEPENDS += "kernel-image"
 do_image_wic[depends] += "mtools-native:do_populate_sysroot dosfstools-native:do_populate_sysroot virtual/bootloader:do_deploy"
 
+# Kernel configuration
+KERNEL_FEATURES:append = " cgl/features/pstore/pstore.scc cfg/debug/misc/debug-panic-oops.scc"
+
 # Bootloader
 EXTRA_IMAGEDEPENDS:append = " virtual/bootloader"
 PREFERRED_PROVIDER_virtual/bootloader = "u-boot"
@@ -36,10 +39,15 @@ MEMFAULT_PROJECT_KEY:pn-memfaultd := "${@d.getVar('BB_ORIGENV', False).getVar('M
 MEMFAULT_SOFTWARE_TYPE:pn-memfaultd := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_SOFTWARE_TYPE')}"
 MEMFAULT_SOFTWARE_VERSION:pn-memfaultd := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_SOFTWARE_VERSION')}"
 
-MEMFAULT_SOFTWARE_VERSION:pn-memfault-image := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_SOFTWARE_VERSION')}"
-
 MEMFAULT_DEVICE_ID:pn-memfault-device-info := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_DEVICE_ID')}"
 MEMFAULT_HARDWARE_VERSION:pn-memfault-device-info := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_HARDWARE_VERSION')}"
+
+# Used by swupdate package to populate the 09-swupdate-args.in template file:
+MEMFAULT_HARDWARE_VERSION:pn-swupdate := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_HARDWARE_VERSION')}"
+
+# Used by swupdate-image to populate the sw-description.in template file:
+MEMFAULT_SOFTWARE_VERSION:pn-swupdate-image := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_SOFTWARE_VERSION')}"
+MEMFAULT_HARDWARE_VERSION:pn-swupdate-image := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_HARDWARE_VERSION')}"
 
 
 # Support runqemu script
@@ -47,3 +55,4 @@ QB_DEFAULT_FSTYPE = "wic"
 QB_DRIVE_TYPE = "/dev/vdb"
 QB_SYSTEM_NAME = "qemu-system-arm"
 QB_DEFAULT_BIOS = "u-boot.bin"
+QB_MEM = "512M"

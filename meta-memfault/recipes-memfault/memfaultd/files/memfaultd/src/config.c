@@ -218,7 +218,8 @@ sMemfaultdConfig *memfaultd_config_init(sMemfaultd *memfaultd, const char *file)
   } else {
     json_object *object = json_object_from_fd(fd);
     if (!object) {
-      fprintf(stderr, "config:: Unable to parse configuration file  '%s'\n", file);
+      fprintf(stderr, "config:: Unable to parse configuration file  '%s': %s\n",
+              file, json_util_get_last_err());
     } else {
       prv_config_merge_objects(handle->base, object);
       json_object_put(object);

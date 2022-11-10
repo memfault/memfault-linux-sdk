@@ -312,7 +312,7 @@ static bool prv_msg_handler(sMemfaultdPlugin *handle, int socket_fd, struct msgh
     goto cleanup;
   }
 
-  fprintf(stderr, "coredump:: writing coredump with max size: %lu\n", max_size);
+  fprintf(stderr, "coredump:: writing coredump with max size: %lu\n", (long unsigned int)max_size);
   if (!prv_transform_coredump_from_fd_to_file(handle, outfile, file_stream, pid, max_size)) {
     if (unlink(outfile) == -1 && errno != ENOENT) {
       fprintf(stderr, "coredump:: Failed to remove core file '%s' after failure : %s\n", outfile,

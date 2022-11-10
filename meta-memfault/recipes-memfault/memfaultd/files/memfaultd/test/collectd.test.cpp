@@ -9,9 +9,7 @@
 
 #include <CppUTest/TestHarness.h>
 #include <CppUTestExt/MockSupport.h>
-#include <fcntl.h>
 #include <json-c/json.h>
-#include <libuboot.h>
 #include <systemd/sd-bus.h>
 #include <unistd.h>
 

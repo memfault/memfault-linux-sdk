@@ -393,7 +393,7 @@ uint8_t *memfaultd_queue_read_head(sMemfaultdQueue *handle, uint32_t *payload_si
 
   payload = malloc(header->payload_size_bytes);
   if (!payload) {
-    return payload;
+    goto unlock;
   }
   memcpy(payload, header->payload, header->payload_size_bytes);
   *payload_size_bytes = header->payload_size_bytes;
