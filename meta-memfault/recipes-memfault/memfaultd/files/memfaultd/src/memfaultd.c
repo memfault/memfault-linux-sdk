@@ -28,6 +28,7 @@
 
 #include "config.h"
 #include "device_settings.h"
+#include "memfault/core/math.h"
 #include "memfault/util/disk.h"
 #include "memfaultd_utils.h"
 #include "network.h"
@@ -58,6 +59,7 @@ typedef struct {
 
 #ifdef PLUGIN_REBOOT
 bool memfaultd_reboot_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns **fns);
+void memfaultd_reboot_data_collection_enabled(sMemfaultd *memfaultd, bool data_collection_enabled);
 #endif
 #ifdef PLUGIN_SWUPDATE
 bool memfaultd_swupdate_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns **fns);
@@ -133,7 +135,7 @@ static void prv_memfaultd_usage(void) {
  * @param handle Main memfaultd handle
  */
 static void prv_memfaultd_load_plugins(sMemfaultd *handle) {
-  for (unsigned int i = 0; i < sizeof(s_plugins) / sizeof(sMemfaultdPluginDef); ++i) {
+  for (unsigned int i = 0; i < MEMFAULT_ARRAY_SIZE(s_plugins); ++i) {
     if (s_plugins[i].init != NULL && !s_plugins[i].init(handle, &s_plugins[i].fns)) {
       fprintf(stderr, "memfaultd:: Failed to initialize %s plugin, destroying.\n",
               s_plugins[i].name);
@@ -146,7 +148,7 @@ static void prv_memfaultd_load_plugins(sMemfaultd *handle) {
  * @brief Call the destroy function of all defined plugins
  */
 static void prv_memfaultd_destroy_plugins(void) {
-  for (unsigned int i = 0; i < sizeof(s_plugins) / sizeof(sMemfaultdPluginDef); ++i) {
+  for (unsigned int i = 0; i < MEMFAULT_ARRAY_SIZE(s_plugins); ++i) {
     if (s_plugins[i].fns != NULL && s_plugins[i].fns->plugin_destroy) {
       s_plugins[i].fns->plugin_destroy(s_plugins[i].fns->handle);
     }
@@ -370,7 +372,7 @@ static void memfaultd_dump_config(sMemfaultd *handle, const char *config_file) {
   printf("\n");
 
   printf("Plugin enabled:\n");
-  for (unsigned int i = 0; i < sizeof(s_plugins) / sizeof(sMemfaultdPluginDef); ++i) {
+  for (unsigned int i = 0; i < MEMFAULT_ARRAY_SIZE(s_plugins); ++i) {
     if (strlen(s_plugins[i].name) != 0) {
       printf("  %s\n", s_plugins[i].name);
     }
@@ -436,7 +438,7 @@ static void *prv_ipc_process_thread(void *arg) {
       continue;
     }
 
-    for (unsigned int i = 0; i < sizeof(s_plugins) / sizeof(sMemfaultdPluginDef); ++i) {
+    for (unsigned int i = 0; i < MEMFAULT_ARRAY_SIZE(s_plugins); ++i) {
       if (strcmp(s_plugins[i].ipc_name, "") == 0 || !s_plugins[i].fns ||
           !s_plugins[i].fns->plugin_ipc_msg_handler) {
         // Plugin doesn't process IPC messages

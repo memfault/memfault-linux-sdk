@@ -60,7 +60,7 @@ static void prv_process_note_segment(sMemfaultCoreElfReader *reader, const Elf_P
   if (note_buffer == NULL) {
     char *warning = NULL;
     memfault_asprintf(&warning, "Failed to allocate %lu bytes for note buffer",
-                      note_segment_buffer_size);
+                      (unsigned long)note_segment_buffer_size);
     prv_add_warning(transformer, warning);
     return;
   }
@@ -69,8 +69,8 @@ static void prv_process_note_segment(sMemfaultCoreElfReader *reader, const Elf_P
     reader, segment->p_offset, note_buffer, segment->p_filesz);
   if (size_read != segment->p_filesz) {
     char *warning = NULL;
-    memfault_asprintf(&warning, "Failed to read note at %lu (%lu bytes)", segment->p_offset,
-                      note_segment_buffer_size);
+    memfault_asprintf(&warning, "Failed to read note at %lu (%lu bytes)",
+                      (unsigned long)segment->p_offset, (unsigned long)note_segment_buffer_size);
     prv_add_warning(transformer, warning);
     return;
   }
@@ -125,7 +125,8 @@ static void prv_append_memfault_metadata_note(sMemfaultCoreElfTransformer *trans
     memfault_core_elf_metadata_note_calculate_size(transformer->metadata);
   uint8_t *note_buffer = malloc(note_buffer_size);
   if (note_buffer == NULL) {
-    fprintf(stderr, "core_elf_transformer:: allocate note buffer of %lu bytes\n", note_buffer_size);
+    fprintf(stderr, "core_elf_transformer:: allocate note buffer of %lu bytes\n",
+            (unsigned long)note_buffer_size);
     return;
   }
   if (!memfault_core_elf_metadata_note_write(transformer->metadata, note_buffer,

@@ -1,7 +1,13 @@
 [Unit]
 Description=memfaultd daemon
-After=local-fs.target network.target
-Before=swupdate.service collectd.service
+After=\
+local-fs.target \
+network.target \
+dbus.service \
+
+Before=\
+swupdate.service \
+collectd.service \
 
 [Service]
 Type=forking

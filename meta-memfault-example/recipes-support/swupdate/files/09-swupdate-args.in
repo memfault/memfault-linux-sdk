@@ -15,4 +15,4 @@ fi
 
 CFGFILE="/tmp/swupdate.cfg"
 
-SWUPDATE_ARGS="-H qemuarm64:1.0 ${selection} -f ${CFGFILE}"
+SWUPDATE_ARGS="-H __MEMFAULT_HARDWARE_VERSION:1.0 ${selection} -f ${CFGFILE}"

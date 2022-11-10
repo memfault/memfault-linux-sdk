@@ -10,12 +10,6 @@ def swupdate_enabled() -> bool:
     return True
 
 
-@pytest.fixture()
-def qemu_device_id() -> str:
-    # TODO: Remove this fixture once https://memfault.myjetbrains.com/youtrack/issue/MFLT-6943 has been deployed!
-    return "qemu-tester"
-
-
 # Assumptions:
 # - The machine/qemu is built with a valid project key of a project on app.memfault.com,
 #   or whatever the underlying QEMU instance points at.

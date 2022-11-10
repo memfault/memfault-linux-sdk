@@ -11,6 +11,8 @@ include(FindPkgConfig)
 pkg_check_modules(SDBUS REQUIRED libsystemd)
 pkg_check_modules(CURL REQUIRED libcurl)
 pkg_check_modules(JSON-C REQUIRED json-c)
+pkg_check_modules(UBOOTENV REQUIRED libubootenv)
+pkg_check_modules(UUID REQUIRED uuid)
 
 include_directories(include ${CMAKE_CURRENT_BINARY_DIR})
 
@@ -35,6 +37,7 @@ list(APPEND sources
     src/queue.c
     src/util/cbor.c
     src/util/disk.c
+    src/util/linux_boot_id.c
     src/util/string.c
     src/util/rate_limiter.c
     ${plugin_src}
@@ -45,7 +48,15 @@ add_executable(memfaultd ${sources})
 add_definitions("-D_DEFAULT_SOURCE=1")
 
 target_link_libraries(memfaultd PUBLIC ${CURL_LIBRARIES} ${SDBUS_LIBRARIES} ${JSON-C_LIBRARIES} pthread ${plugin_libraries})
-target_compile_options(memfaultd PRIVATE -O3 -Wall -Wpedantic -Wextra -Werror -std=c11)
+target_compile_options(memfaultd PRIVATE
+    -O3
+    -Wall
+    -Wpedantic
+    -Wextra
+    -Werror
+    -Wno-unused-parameter
+    -std=c11
+)
 
 install(TARGETS memfaultd RUNTIME)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/memfaultd.conf TYPE SYSCONF)

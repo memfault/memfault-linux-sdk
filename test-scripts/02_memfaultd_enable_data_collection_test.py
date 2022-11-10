@@ -1,6 +1,8 @@
 #
 # Copyright (c) Memfault, Inc.
 # See License.txt for details
+import time
+
 import pexpect
 from qemu import QEMU
 
@@ -15,6 +17,11 @@ def test_start(qemu: QEMU):
 
     qemu.exec_cmd("memfaultd --disable-data-collection")
     qemu.child().expect("Disabling data collection")
+
+    # Work-around for checking the state in the next line before memfaultd has even restarted:
+    # FIXME: track the journal logs instead of using `systemctl is-active`
+    time.sleep(0.5)
+
     qemu.systemd_wait_for_service_state("memfaultd.service", "active")
 
     qemu.exec_cmd("memfaultd --disable-data-collection")
@@ -23,7 +30,7 @@ def test_start(qemu: QEMU):
     # Check that the service restarted:
     qemu.exec_cmd("journalctl -u memfaultd.service")
     qemu.child().expect("Stopped memfaultd daemon")
-    qemu.child().expect("Started memfaultd daemon")
+    qemu.child().expect("Starting memfaultd daemon")
 
     # Check that the service did not fail:
     # FIXME: pexpect does not have a "not expecting" API :/

@@ -47,6 +47,7 @@ fi
 
 # vars are overridden from the local environment, falling back to env.list
 env_vars="
+--env MACHINE
 --env MEMFAULT_BASE_URL
 --env MEMFAULT_PROJECT_KEY
 --env MEMFAULT_DEVICE_ID

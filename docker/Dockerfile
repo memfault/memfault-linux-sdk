@@ -6,7 +6,9 @@ FROM ubuntu:latest
 ENV DEBIAN_FRONTEND noninteractive
 ENV YOCTO_RELEASE ${YOCTO_RELEASE}
 
-RUN apt-get update && apt-get -y upgrade
+RUN dpkg --add-architecture i386 && \
+    apt-get update && \
+    apt-get -y upgrade
 
 # Core utilities
 RUN apt-get install -y bash build-essential curl git sudo vim
@@ -26,12 +28,28 @@ RUN apt-get install -y python3-pip
 # CppUnit testing dependencies for memfaultd's unit tests
 RUN apt-get install -y \
     cmake \
-    libcpputest-dev \
+    gcc-multilib \
+    g++-multilib \
     libcurl4-openssl-dev \
     libjson-c-dev \
+    libjson-c-dev:i386 \
     libsystemd-dev \
+    libsystemd-dev:i386 \
     libubootenv-dev \
+    uuid-dev \
+    uuid-dev:i386 \
     pkg-config
+
+# Work-around for conflicting binary (32 vs 64 bit) -- we don't use/need it
+RUN rm -rf /usr/bin/curl-config && \
+    apt-get install -y libcurl4-openssl-dev:i386
+
+# Work-around for libubootenv-dev:i386 package not existing -- we only need the header to compiler the unit tests:
+RUN cp /usr/include/x86_64-linux-gnu/libuboot.h /usr/include/i386-linux-gnu/libuboot.h
+
+# CppUnit:
+COPY install-cpputest.sh /
+RUN /install-cpputest.sh && rm -rf /install-cpputest.sh
 
 # Add normal user
 RUN useradd --create-home --gid users --groups sudo --shell /bin/bash build

@@ -3,7 +3,6 @@
 # See License.txt for details
 from memfault_service_tester import MemfaultServiceTester
 from qemu import QEMU
-import time
 
 
 # Assumptions:
@@ -14,25 +13,23 @@ import time
 def test(
     qemu: QEMU, memfault_service_tester: MemfaultServiceTester, qemu_device_id: str
 ):
-    # enable data collection, so that the reboot event can get captured
+    qemu.exec_cmd(
+        'echo \'{"collectd_plugin": {"interval_seconds": 5}}\' > /media/memfault/runtime.conf'
+    )
     qemu.exec_cmd("memfaultd --enable-data-collection")
 
     qemu.systemd_wait_for_service_state("memfaultd.service", "active")
     qemu.systemd_wait_for_service_state("collectd.service", "active")
 
-    # Send metric via statsd
-    qemu.exec_cmd('echo "ci-test:25|g" | nc -c -w 1 -u localhost 8125')
-    time.sleep(1)
+    def _check():
+        reports = memfault_service_tester.list_reports(
+            dict(device_serial=qemu_device_id),
+            ignore_errors=True,
+        )
+        assert reports
+        # Note: sometimes the first heartbeat is an empty dict:
+        assert any((report["metrics"] for report in reports))
 
-    # SIGUSR1 triggers a force-flush and as a result, an HTTP request is made:
-    # Note it's not possible to force-read all plugins (https://github.com/collectd/collectd/issues/4039),
-    # so the HTTP request will only contain a few metrics that happened to have written data to collectd's cache.
-    qemu.exec_cmd(
-        "kill -s SIGUSR1 $(systemctl show --property MainPID --value collectd)"
+    memfault_service_tester.poll_until_not_raising(
+        _check, timeout_seconds=60, poll_interval_seconds=1
     )
-
-    reports = memfault_service_tester.poll_reports_until_count(
-        1, device_serial=qemu_device_id, timeout_secs=30
-    )
-    assert reports
-    assert reports[0]["metrics"]

@@ -27,7 +27,18 @@ add_memfaultd_cpputest_target(test_device_settings
 
 add_memfaultd_cpputest_target(test_reboot
     reboot.test.cpp
-    ${PLUGINS_DIR}/reboot.c
+    ${PLUGINS_DIR}/reboot/reboot.c
+)
+target_link_options(test_reboot PRIVATE -Wl,--wrap=access)
+
+add_memfaultd_cpputest_target(test_reboot_last_boot_id
+    reboot_last_boot_id.test.cpp
+    ${PLUGINS_DIR}/reboot/reboot_last_boot_id.c
+)
+
+add_memfaultd_cpputest_target(test_reboot_process_pstore
+    reboot_process_pstore.test.cpp
+    ${PLUGINS_DIR}/reboot/reboot_process_pstore.c
 )
 
 add_memfaultd_cpputest_target(test_collectd

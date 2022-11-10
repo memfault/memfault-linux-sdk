@@ -3,7 +3,7 @@
 ## Using CLion to work on memfaultd
 
 - Install the library dependencies on your system / environment, i.e.
-  `apt install libjson-c-dev libcurl4-openssl-dev libsystemd-dev libubootenv-dev`.
+  `apt install libjson-c-dev libcurl4-openssl-dev libsystemd-dev libubootenv-dev cpputest`.
 - Add `-DENABLE_PLUGINS=1 -DPLUGIN_REBOOT=1` (and any other plugins you want to
   compile in) to the CMake arguments in Clion's Settings.
 - If you are using a conda env, add

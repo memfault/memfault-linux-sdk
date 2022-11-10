@@ -70,12 +70,12 @@ TEST(TestGroup_ElfWriting, Test_WriteSegmentDataWithBuffer) {
   for (size_t i = 0; i < data_size; ++i) {
     data[i] = 'A' + i;
   }
-  const Elf_Phdr segment = {
+  Elf_Phdr segment = {
     .p_type = PT_LOAD,
-    .p_flags = 0xFF,
     .p_vaddr = 0x12345678,
     .p_filesz = data_size,
   };
+  segment.p_flags = 0xFF;  // work-around for struct fields ordered differently for 64 vs 32-bit
   CHECK_TRUE(memfault_core_elf_writer_add_segment_with_buffer(&writer, &segment, data));
   CHECK_TRUE(memfault_core_elf_writer_write(&writer));
 
@@ -99,12 +99,12 @@ static bool prv_segment_data_callback(void *ctx, const Elf_Phdr *segment) {
 
 TEST(TestGroup_ElfWriting, Test_WriteSegmentDataWithCallback) {
   const size_t data_size = 4;
-  const Elf_Phdr segment = {
+  Elf_Phdr segment = {
     .p_type = PT_LOAD,
-    .p_flags = 0xFF,
     .p_vaddr = 0x12345678,
     .p_filesz = data_size,
   };
+  segment.p_flags = 0xFF;  // work-around for struct fields ordered differently for 64 vs 32-bit
   CHECK_TRUE(memfault_core_elf_writer_add_segment_with_callback(
     &writer, &segment, prv_segment_data_callback, &writer));
   CHECK_TRUE(memfault_core_elf_writer_write(&writer));
@@ -125,13 +125,13 @@ TEST(TestGroup_ElfWriting, Test_WriteSegmentDataRequiringPadding) {
     data[i] = 'A' + i;
   }
   const size_t alignment = 1 << 7;
-  const Elf_Phdr segment = {
+  Elf_Phdr segment = {
     .p_type = PT_LOAD,
-    .p_flags = 0xFF,
     .p_vaddr = 0x12345678,
     .p_filesz = data_size,
     .p_align = alignment,
   };
+  segment.p_flags = 0xFF;  // work-around for struct fields ordered differently for 64 vs 32-bit
   CHECK_TRUE(memfault_core_elf_writer_add_segment_with_buffer(&writer, &segment, data));
   CHECK_TRUE(memfault_core_elf_writer_write(&writer));
 

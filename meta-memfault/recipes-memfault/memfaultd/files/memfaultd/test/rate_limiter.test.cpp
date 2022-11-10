@@ -14,6 +14,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <sstream>
