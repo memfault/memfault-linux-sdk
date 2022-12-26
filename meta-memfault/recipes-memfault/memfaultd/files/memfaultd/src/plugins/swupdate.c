@@ -12,8 +12,8 @@
 #include <string.h>
 #include <systemd/sd-bus.h>
 
+#include "memfault/util/systemd.h"
 #include "memfaultd.h"
-#include "memfaultd_utils.h"
 
 #define DEFAULT_INPUT_FILE "/etc/swupdate.cfg"
 #define DEFAULT_OUTPUT_FILE "/tmp/swupdate.cfg"
@@ -284,8 +284,14 @@ static bool prv_swupdate_reload(sMemfaultdPlugin *handle) {
     fprintf(stderr, "swupdate:: Failed to generate config file\n");
     return false;
   }
-  if (!memfaultd_utils_restart_service_if_running("swupdate", "swupdate.service")) {
+  if (!memfaultd_restart_service_if_running("swupdate.service")) {
     fprintf(stderr, "swupdate:: Failed to restart swupdate\n");
+    return false;
+  }
+  // We need to also reload swupdate.socket otherwise the IPC communication to
+  // swupdate is broken.
+  if (!memfaultd_restart_service_if_running("swupdate.socket")) {
+    fprintf(stderr, "swupdate:: Failed to restart swupdate.socket\n");
     return false;
   }
 

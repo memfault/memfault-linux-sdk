@@ -19,6 +19,7 @@
 
 #define SEGMENTS_REALLOC_STEP_SIZE (32)
 #define PADDING_WRITE_SIZE (4096)
+#define GZIP_COMPRESSION_BUFFER_SIZE (4096)
 
 void memfault_core_elf_writer_init(sMemfaultCoreElfWriter *writer, sMemfaultCoreElfWriteIO *io) {
   *writer = (sMemfaultCoreElfWriter){
@@ -48,12 +49,11 @@ static sMemfaultCoreElfWriterSegment *prv_alloc_next_segment(sMemfaultCoreElfWri
   return &writer->segments[++writer->segments_idx];
 }
 
-static bool prv_write_all(sMemfaultCoreElfWriter *writer, const void *data, size_t size) {
+static bool prv_io_write_all(sMemfaultCoreElfWriteIO *io, const void *data, size_t size) {
   size_t bytes_written = 0;
 
   while (bytes_written < size) {
-    const ssize_t rv =
-      writer->io->write(writer->io, ((const uint8_t *)data) + bytes_written, size - bytes_written);
+    const ssize_t rv = io->write(io, ((const uint8_t *)data) + bytes_written, size - bytes_written);
     if (rv < 0) {
       if (errno == EINTR) {
         continue;
@@ -62,8 +62,15 @@ static bool prv_write_all(sMemfaultCoreElfWriter *writer, const void *data, size
       return false;
     }
     bytes_written += rv;
-    writer->write_offset += rv;
   }
+  return true;
+}
+
+static bool prv_write_all(sMemfaultCoreElfWriter *writer, const void *data, size_t size) {
+  if (!prv_io_write_all(writer->io, data, size)) {
+    return false;
+  }
+  writer->write_offset += size;
   return true;
 }
 
@@ -256,4 +263,89 @@ void memfault_core_elf_write_file_io_init(sMemfaultCoreElfWriteFileIO *fio, int 
     .fd = fd,
     .max_size = max_size,
   };
+}
+
+static ssize_t prv_write(struct MemfaultCoreElfWriteIO *io, const void *data, size_t size) {
+  sMemfaultCoreElfWriteGzipIO *const gzio = (sMemfaultCoreElfWriteGzipIO *)io;
+  gzio->zs.next_in = (unsigned char *)data;
+  gzio->zs.avail_in = size;
+
+  uint8_t buffer[GZIP_COMPRESSION_BUFFER_SIZE];
+  while (gzio->zs.avail_in > 0) {
+    gzio->zs.next_out = buffer;
+    gzio->zs.avail_out = sizeof(buffer);
+    const int rv = deflate(&gzio->zs, Z_NO_FLUSH);
+    if (rv != Z_OK) {
+      fprintf(stderr, "core_elf:: deflate error: %d\n", rv);
+      return -1;
+    }
+    if (!prv_io_write_all(gzio->next, buffer, gzio->zs.next_out - buffer)) {
+      return -1;
+    }
+  }
+  return (ssize_t)size;
+}
+
+static bool prv_sync(const struct MemfaultCoreElfWriteIO *io) {
+  sMemfaultCoreElfWriteGzipIO *const gzio = (sMemfaultCoreElfWriteGzipIO *)io;
+  uint8_t buffer[GZIP_COMPRESSION_BUFFER_SIZE];
+  while (true) {
+    gzio->zs.next_out = buffer;
+    gzio->zs.avail_out = sizeof(buffer);
+    const int rv = deflate(&gzio->zs, Z_FINISH);
+    if (rv != Z_OK && rv != Z_STREAM_END) {
+      fprintf(stderr, "core_elf:: deflate error: %d\n", rv);
+      return false;
+    }
+    if (!prv_io_write_all(gzio->next, buffer, gzio->zs.next_out - buffer)) {
+      return false;
+    }
+    if (rv == Z_STREAM_END) {
+      return true;
+    }
+  }
+}
+
+bool memfault_core_elf_write_gzip_io_init(sMemfaultCoreElfWriteGzipIO *gzio,
+                                          sMemfaultCoreElfWriteIO *next) {
+  *gzio = (sMemfaultCoreElfWriteGzipIO){
+    .io =
+      {
+        .write = prv_write,
+        .sync = prv_sync,
+      },
+    .next = next,
+    .zs =
+      {
+        .next_in = Z_NULL,
+        .zalloc = Z_NULL,
+        .zfree = Z_NULL,
+        .opaque = Z_NULL,
+      },
+  };
+
+  // We'll be using ~256K of memory with the default configuration. As per the zconf.h:
+  // "The memory requirements for deflate are (in bytes)
+  // (1 << (windowBits+2)) +  (1 << (memLevel+9))"
+  const int mem_level = 8;     // default
+  const int window_bits = 15;  // default
+  // "Add 16 to windowBits to write a simple gzip header and trailer around the compressed data
+  // instead of a zlib wrapper":
+  const int gzip_header_inc = 16;
+  const int rv = deflateInit2(&gzio->zs, Z_DEFAULT_COMPRESSION, Z_DEFLATED,
+                              window_bits + gzip_header_inc, mem_level, Z_DEFAULT_STRATEGY);
+  if (rv != Z_OK) {
+    fprintf(stderr, "core_elf:: deflateInit2 error %d\n", rv);
+    return false;
+  }
+  return true;
+}
+
+bool memfault_core_elf_write_gzip_io_deinit(sMemfaultCoreElfWriteGzipIO *gzio) {
+  const int rv = deflateEnd(&gzio->zs);
+  if (rv != Z_OK) {
+    fprintf(stderr, "core_elf:: deflateEnd error: %d\n", rv);
+    return false;
+  }
+  return true;
 }

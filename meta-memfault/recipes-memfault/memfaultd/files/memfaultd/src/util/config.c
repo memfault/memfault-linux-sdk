@@ -6,7 +6,7 @@
 //! @brief
 //! config init and handling implementation
 
-#include "config.h"
+#include "memfault/util/config.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -22,7 +22,6 @@
 #include "memfaultd.h"
 
 struct MemfaultdConfig {
-  sMemfaultd *memfaultd;
   json_object *base;
   json_object *runtime;
 };
@@ -33,7 +32,7 @@ struct MemfaultdConfig {
  * @param handle
  */
 static void prv_config_write_config(sMemfaultdConfig *handle) {
-  char *runtime_path = memfaultd_generate_rw_filename(handle->memfaultd, "runtime.conf");
+  char *runtime_path = memfaultd_config_generate_rw_filename(handle, "runtime.conf");
   if (!runtime_path) {
     return;
   }
@@ -203,8 +202,6 @@ char *memfaultd_config_generate_rw_filename(sMemfaultdConfig *handle, const char
 sMemfaultdConfig *memfaultd_config_init(sMemfaultd *memfaultd, const char *file) {
   sMemfaultdConfig *handle = calloc(sizeof(sMemfaultdConfig), 1);
 
-  handle->memfaultd = memfaultd;
-
   handle->base = json_tokener_parse((char *)builtin_conf);
 
   int fd;
@@ -218,8 +215,8 @@ sMemfaultdConfig *memfaultd_config_init(sMemfaultd *memfaultd, const char *file)
   } else {
     json_object *object = json_object_from_fd(fd);
     if (!object) {
-      fprintf(stderr, "config:: Unable to parse configuration file  '%s': %s\n",
-              file, json_util_get_last_err());
+      fprintf(stderr, "config:: Unable to parse configuration file  '%s': %s\n", file,
+              json_util_get_last_err());
     } else {
       prv_config_merge_objects(handle->base, object);
       json_object_put(object);
@@ -389,10 +386,10 @@ bool memfaultd_config_get_integer(sMemfaultdConfig *handle, const char *parent_k
  *
  * @param handle config object
  * @param parent_key Parent key name, NULL for root object
- * @param key Key name to set
+ * @param key Key name to read
  * @param val Value returned
- * @return true Successfully added boolean to config
- * @return false Failed to add boolean
+ * @return true Successfully read boolean from config.
+ * @return false Failed to read boolean
  */
 bool memfaultd_config_get_boolean(sMemfaultdConfig *handle, const char *parent_key, const char *key,
                                   bool *val) {

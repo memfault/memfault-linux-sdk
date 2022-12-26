@@ -12,6 +12,10 @@
 #include <memfaultd.h>
 #include <stdbool.h>
 
+#define CONFIG_FILE "/etc/memfaultd.conf"
+#define CONFIG_KEY_DEV_MODE "enable_dev_mode"
+#define CONFIG_KEY_DATA_COLLECTION "enable_data_collection"
+
 typedef struct MemfaultdConfig sMemfaultdConfig;
 
 sMemfaultdConfig *memfaultd_config_init(sMemfaultd *memfaultd, const char *file);

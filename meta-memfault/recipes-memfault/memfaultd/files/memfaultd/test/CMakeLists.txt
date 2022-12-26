@@ -2,7 +2,10 @@ cmake_minimum_required(VERSION 3.18)
 include(CppUTest.cmake)
 
 set(SRC_DIR ../src)
-set(PLUGINS_DIR ../plugins)
+set(PLUGINS_DIR ../src/plugins)
+
+pkg_check_modules(SDBUS REQUIRED libsystemd)
+pkg_check_modules(ZLIB REQUIRED zlib)
 
 function(add_memfaultd_cpputest_target NAME)
     add_cpputest_target(${NAME} ${ARGN})
@@ -22,12 +25,13 @@ add_memfaultd_cpputest_target(test_queue
 
 add_memfaultd_cpputest_target(test_device_settings
     device_settings.test.cpp
-    ${SRC_DIR}/device_settings.c
+    ${SRC_DIR}/util/device_settings.c
 )
 
 add_memfaultd_cpputest_target(test_reboot
     reboot.test.cpp
     ${PLUGINS_DIR}/reboot/reboot.c
+    ${SRC_DIR}/util/reboot_reason.c
 )
 target_link_options(test_reboot PRIVATE -Wl,--wrap=access)
 
@@ -43,9 +47,10 @@ add_memfaultd_cpputest_target(test_reboot_process_pstore
 
 add_memfaultd_cpputest_target(test_collectd
     collectd.test.cpp
-    ${PLUGINS_DIR}/collectd.c
+    ${PLUGINS_DIR}/collectd/collectd.c
     ${SRC_DIR}/util/string.c
 )
+target_link_libraries(test_collectd ${SDBUS_LIBRARIES})
 
 add_memfaultd_cpputest_target(test_cbor
     cbor.test.cpp
@@ -78,6 +83,7 @@ add_memfaultd_cpputest_target(test_core_elf_writer
     ${PLUGINS_DIR}/coredump/core_elf_writer.c
     core_elf_memory_io.c
 )
+target_link_libraries(test_core_elf_writer ${ZLIB_LIBRARIES})
 
 add_memfaultd_cpputest_target(test_core_elf_transformer
     core_elf_transformer.test.cpp
@@ -90,8 +96,18 @@ add_memfaultd_cpputest_target(test_core_elf_transformer
     ${SRC_DIR}/util/string.c
     core_elf_memory_io.c
 )
+target_link_libraries(test_core_elf_transformer ${ZLIB_LIBRARIES})
+
+add_memfaultd_cpputest_target(test_coredump_ratelimiter
+    coredump_ratelimiter.test.cpp
+    ${PLUGINS_DIR}/coredump/coredump_ratelimiter.c
+)
 
 add_memfaultd_cpputest_target(test_rate_limiter
     rate_limiter.test.cpp
     ${SRC_DIR}/util/rate_limiter.c
 )
+
+add_memfaultd_cpputest_target(test_parse_attributes
+    parse_attributes.test.cpp
+    ${SRC_DIR}/memfaultctl/parse_attributes.c)

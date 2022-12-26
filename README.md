@@ -118,4 +118,7 @@ Linux SDK][docs-linux-coredumps].
 
 These features are fully in the domain of `memfaultd`. Note that logs are an
 upcoming feature, while reboot reason tracking and crash reports are supported
-today.
+today. Read more about [reboot reason tracking using the Memfault Linux
+SDK][docs-reboots].
+
+[docs-reboots]: https://mflt.io/linux-reboots

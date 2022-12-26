@@ -19,7 +19,6 @@ function(add_cpputest_target NAME)
         # cpputest_runner has to come before CPPUTEST_LIBRARIES!!!
         cpputest_runner
         ${CPPUTEST_LIBRARIES}
-        ${SDBUS_LIBRARIES}
         )
     target_compile_options(${NAME} PRIVATE
         -Wall
@@ -29,7 +28,7 @@ function(add_cpputest_target NAME)
         -Wno-unused-parameter
         -Wno-missing-field-initializers
         -DCPPUTEST_USE_EXTENSIONS=1
-        -DCPPUTEST_USE_MEM_LEAK_DETECTION=1
+        -DCPPUTEST_USE_MEM_LEAK_DETECTION=0  # conflicts with ASAN
         -DCPPUTEST_SANITIZE_ADDRESS=1
         -DMEMFAULT_UNITTEST
         -O0

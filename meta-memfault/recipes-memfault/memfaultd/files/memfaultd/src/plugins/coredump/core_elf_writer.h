@@ -11,6 +11,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <zlib.h>
 
 #include "core_elf.h"
 
@@ -164,6 +165,33 @@ typedef struct MemfaultCoreElfWriteFileIO {
  */
 void memfault_core_elf_write_file_io_init(sMemfaultCoreElfWriteFileIO *fio, int fd,
                                           size_t max_size);
+
+/**
+ * Object that implements the sMemfaultCoreElfWriteIO interface by compressing the data using gzip
+ * and then calling another sMemfaultCoreElfWriteIO interface with the compressed data.
+ */
+typedef struct MemfaultCoreElfWriteGzipIO {
+  sMemfaultCoreElfWriteIO io;
+  sMemfaultCoreElfWriteIO *next;
+  z_stream zs;
+} sMemfaultCoreElfWriteGzipIO;
+
+/**
+ * Initializes a sMemfaultCoreElfWriteGzipIO.
+ * @param gzio The sMemfaultCoreElfWriteGzipIO object to initialize.
+ * @param next The sMemfaultCoreElfWriteIO object that should be called to write out the compressed
+ * data.
+ * @return True if the initialization was successful, or false in case of an error.
+ */
+bool memfault_core_elf_write_gzip_io_init(sMemfaultCoreElfWriteGzipIO *gzio,
+                                          sMemfaultCoreElfWriteIO *next);
+
+/**
+ * De-initializes a sMemfaultCoreElfWriteGzipIO, releasing its resources.
+ * @param gzio The sMemfaultCoreElfWriteGzipIO object to de-initialize.
+ * @return True if the de-initialization was successful, or false in case of an error.
+ */
+bool memfault_core_elf_write_gzip_io_deinit(sMemfaultCoreElfWriteGzipIO *gzio);
 
 #ifdef __cplusplus
 }

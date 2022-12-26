@@ -12,7 +12,6 @@
 #include <fcntl.h>
 #include <getopt.h>
 #include <pthread.h>
-#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,20 +23,26 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/un.h>
+#include <time.h>
 #include <unistd.h>
 
-#include "config.h"
-#include "device_settings.h"
 #include "memfault/core/math.h"
+#include "memfault/util/config.h"
+#include "memfault/util/device_settings.h"
 #include "memfault/util/disk.h"
-#include "memfaultd_utils.h"
+#include "memfault/util/dump_settings.h"
+#include "memfault/util/ipc.h"
+#include "memfault/util/pid.h"
+#include "memfault/util/plugins.h"
+#include "memfault/util/runtime_config.h"
+#include "memfault/util/string.h"
+#include "memfault/util/systemd.h"
+#include "memfault/util/version.h"
 #include "network.h"
 #include "queue.h"
 
-#define SOCKET_PATH "/tmp/memfault-ipc.sock"
 #define RX_BUFFER_SIZE 1024
 #define PID_FILE "/var/run/memfaultd.pid"
-#define CONFIG_FILE "/etc/memfaultd.conf"
 
 struct Memfaultd {
   sMemfaultdQueue *queue;
@@ -45,72 +50,16 @@ struct Memfaultd {
   sMemfaultdConfig *config;
   sMemfaultdDeviceSettings *settings;
   bool terminate;
+  bool dev_mode;
   pthread_t ipc_thread_id;
   int ipc_socket_fd;
   char ipc_rx_buffer[RX_BUFFER_SIZE];
 };
 
-typedef struct {
-  memfaultd_plugin_init init;
-  sMemfaultdPluginCallbackFns *fns;
-  const char name[32];
-  const char ipc_name[32];
-} sMemfaultdPluginDef;
-
-#ifdef PLUGIN_REBOOT
-bool memfaultd_reboot_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns **fns);
-void memfaultd_reboot_data_collection_enabled(sMemfaultd *memfaultd, bool data_collection_enabled);
-#endif
-#ifdef PLUGIN_SWUPDATE
-bool memfaultd_swupdate_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns **fns);
-#endif
-#ifdef PLUGIN_COLLECTD
-bool memfaultd_collectd_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns **fns);
-#endif
-#ifdef PLUGIN_COREDUMP
-bool memfaultd_coredump_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns **fns);
-#endif
-
-static sMemfaultdPluginDef s_plugins[] = {
-#ifdef PLUGIN_REBOOT
-  {.name = "reboot", .init = memfaultd_reboot_init},
-#endif
-#ifdef PLUGIN_SWUPDATE
-  {.name = "swupdate", .init = memfaultd_swupdate_init},
-#endif
-#ifdef PLUGIN_COLLECTD
-  {.name = "collectd", .init = memfaultd_collectd_init},
-#endif
-#ifdef PLUGIN_COREDUMP
-  {.name = "coredump", .init = memfaultd_coredump_init, .ipc_name = "CORE"},
-#endif
-  {NULL, NULL, "", ""}};
-
 static sMemfaultd *s_handle;
-
-#ifndef VERSION
-  #define VERSION dev
-#endif
-#ifndef GITCOMMIT
-  #define GITCOMMIT unknown
-#endif
-
-#define STRINGIZE(x) #x
-#define STRINGIZE_VALUE_OF(x) STRINGIZE(x)
 
 #define NETWORK_FAILURE_FIRST_BACKOFF_SECONDS 60
 #define NETWORK_FAILURE_BACKOFF_MULTIPLIER 2
-
-const char memfaultd_sdk_version[] = STRINGIZE_VALUE_OF(VERSION);
-
-/**
- * @brief Displays SDK version information
- *
- */
-static void prv_memfaultd_version_info(void) {
-  printf("VERSION=%s\n", STRINGIZE_VALUE_OF(VERSION));
-  printf("GIT COMMIT=%s\n", STRINGIZE_VALUE_OF(GITCOMMIT));
-}
 
 /**
  * @brief Displays usage information
@@ -124,56 +73,11 @@ static void prv_memfaultd_usage(void) {
          "memfaultd service\n");
   printf("      --disable-data-collection  : Disable data collection, will restart the main "
          "memfaultd service\n");
+  printf("      --enable-dev-mode          : Enable developer mode (restarts memfaultd)\n");
+  printf("      --disable-dev-mode         : Disable developer mode (restarts memfaultd)\n");
   printf("  -h, --help                     : Display this help and exit\n");
   printf("  -s, --show-settings            : Show settings\n");
   printf("  -v, --version                  : Show version information\n");
-}
-
-/**
- * @brief Call the init function of all defined plugins
- *
- * @param handle Main memfaultd handle
- */
-static void prv_memfaultd_load_plugins(sMemfaultd *handle) {
-  for (unsigned int i = 0; i < MEMFAULT_ARRAY_SIZE(s_plugins); ++i) {
-    if (s_plugins[i].init != NULL && !s_plugins[i].init(handle, &s_plugins[i].fns)) {
-      fprintf(stderr, "memfaultd:: Failed to initialize %s plugin, destroying.\n",
-              s_plugins[i].name);
-      s_plugins[i].fns = NULL;
-    }
-  }
-}
-
-/**
- * @brief Call the destroy function of all defined plugins
- */
-static void prv_memfaultd_destroy_plugins(void) {
-  for (unsigned int i = 0; i < MEMFAULT_ARRAY_SIZE(s_plugins); ++i) {
-    if (s_plugins[i].fns != NULL && s_plugins[i].fns->plugin_destroy) {
-      s_plugins[i].fns->plugin_destroy(s_plugins[i].fns->handle);
-    }
-  }
-}
-
-/**
- * @brief Enable collection in config and start daemon
- *
- * @param handle Main memfaultd handle
- */
-static void prv_memfaultd_enable_collection(sMemfaultd *handle, bool enable) {
-  bool current_state = false;
-  if (memfaultd_get_boolean(handle, "", "enable_data_collection", &current_state) &&
-      current_state == enable) {
-    printf("Data collection state already set\n");
-    return;
-  }
-  printf("%s data collection\n", enable ? "Enabling" : "Disabling");
-  memfaultd_set_boolean(handle, "", "enable_data_collection", enable);
-
-  if (getuid() == 0 &&
-      !memfaultd_utils_restart_service_if_running("memfaultd", "memfaultd.service")) {
-    fprintf(stderr, "memfaultd:: Failed to restart memfaultd.\n");
-  }
 }
 
 /**
@@ -196,23 +100,6 @@ static void prv_memfaultd_sig_handler(int sig) {
 }
 
 /**
- * @brief Looks up the HTTP API path given a eMemfaultdTxDataType.
- * @param type The type to lookup.
- * @return The HTTP API path or NULL if the type is unknown.
- */
-static const char *prv_endpoint_for_txdata_type(uint8_t type) {
-  switch (type) {
-    case kMemfaultdTxDataType_RebootEvent:
-      return "/api/v0/events";
-    case kMemfaultdTxDataType_CoreUpload:
-      return "/api/v0/upload/elf_coredump";
-    default:
-      fprintf(stderr, "memfaultd:: Unrecognised queue type '%d'\n", type);
-      return NULL;
-  }
-}
-
-/**
  * @brief Process TX queue and transmit messages
  *
  * @param handle Main memfaultd handle
@@ -225,26 +112,49 @@ static bool prv_memfaultd_process_tx_queue(sMemfaultd *handle) {
     return true;
   }
 
+  uint32_t count = 0;
   uint32_t queue_entry_size_bytes;
   uint8_t *queue_entry;
   while ((queue_entry = memfaultd_queue_read_head(handle->queue, &queue_entry_size_bytes))) {
     const sMemfaultdTxData *txdata = (const sMemfaultdTxData *)queue_entry;
-    const char *endpoint = prv_endpoint_for_txdata_type(txdata->type);
-    // FIXME: assuming NUL terminated UTF-8 C string -- need to support binary data too:
+
     const char *payload = (const char *)txdata->payload;
-    if (endpoint == NULL) {
-      free(queue_entry);
-      memfaultd_queue_complete_read(handle->queue);
-      continue;
-    }
 
     eMemfaultdNetworkResult rc = kMemfaultdNetworkResult_ErrorNoRetry;
     switch (txdata->type) {
       case kMemfaultdTxDataType_RebootEvent:
-        rc = memfaultd_network_post(handle->network, endpoint, payload, NULL, 0);
+        rc = memfaultd_network_post(handle->network, "/api/v0/events", kMemfaultdHttpMethod_POST,
+                                    payload, NULL, 0);
         break;
       case kMemfaultdTxDataType_CoreUpload:
-        rc = memfaultd_network_file_upload(handle->network, endpoint, payload);
+      case kMemfaultdTxDataType_CoreUploadWithGzip: {
+        const bool is_gzipped = txdata->type == kMemfaultdTxDataType_CoreUploadWithGzip;
+        rc = memfaultd_network_file_upload(handle->network, "/api/v0/upload/elf_coredump", payload,
+                                           is_gzipped);
+        break;
+      }
+      case kMemfaultdTxDataType_Attributes: {
+        char *endpoint;
+        sMemfaultdTxDataAttributes *data_attributes = (sMemfaultdTxDataAttributes *)txdata;
+
+        time_t timestamp;
+        memcpy(&timestamp, &data_attributes->timestamp, sizeof(time_t));
+        char iso_timestamp[sizeof("2022-11-30T11:24:00Z")];
+        strftime(iso_timestamp, sizeof(iso_timestamp), "%FT%TZ", gmtime(&timestamp));
+
+        if (memfault_asprintf(&endpoint, "/api/v0/attributes?device_serial=%s&captured_date=%s",
+                              handle->settings->device_id, iso_timestamp) == -1) {
+          fprintf(stderr, "memfaultd:: Unable to allocate memory for attribute endpoint.\n");
+          rc = kMemfaultdNetworkResult_ErrorRetryLater;
+          break;
+        }
+        rc = memfaultd_network_post(handle->network, endpoint, kMemfaultdHttpMethod_PATCH,
+                                    data_attributes->json, NULL, 0);
+        free(endpoint);
+        break;
+      }
+      default:
+        fprintf(stderr, "memfaultd:: Unrecognised queue type '%d'\n", txdata->type);
         break;
     }
 
@@ -252,32 +162,16 @@ static bool prv_memfaultd_process_tx_queue(sMemfaultd *handle) {
     if (rc == kMemfaultdNetworkResult_OK || rc == kMemfaultdNetworkResult_ErrorNoRetry) {
       memfaultd_queue_complete_read(handle->queue);
     } else {
+      fprintf(stderr, "memfaultd:: Network error while processing queue. Will retry...\n");
       // Retry-able error
       return false;
     }
+    count++;
   }
 
-  return true;
-}
-
-/**
- * @brief Checks for memfaultd daemon PID file
- *
- * @return true PID file exists
- * @return false Does not exist
- */
-static bool prv_memfaultd_check_for_pid_file(void) {
-  const int fd = open(PID_FILE, O_WRONLY | O_EXCL, S_IRUSR | S_IWUSR);
-  if (fd == -1) {
-    if (errno == ENOENT) {
-      return false;
-    } else {
-      // PID file exists, but can't open it for some reason
-      return true;
-    }
+  if (memfaultd_is_dev_mode(handle)) {
+    fprintf(stderr, "memfaultd:: Transmitted %i messages to memfault.\n", count);
   }
-
-  close(fd);
   return true;
 }
 
@@ -360,25 +254,6 @@ static void prv_memfaultd_process_loop(sMemfaultd *handle) {
   }
 }
 
-static void memfaultd_dump_config(sMemfaultd *handle, const char *config_file) {
-  memfaultd_config_dump_config(handle->config, config_file);
-
-  printf("Device configuration from memfault-device-info:\n");
-  printf("  MEMFAULT_DEVICE_ID=%s\n", handle->settings->device_id);
-  printf("  MEMFAULT_HARDWARE_VERSION=%s\n", handle->settings->hardware_version);
-  printf("\n");
-
-  prv_memfaultd_version_info();
-  printf("\n");
-
-  printf("Plugin enabled:\n");
-  for (unsigned int i = 0; i < MEMFAULT_ARRAY_SIZE(s_plugins); ++i) {
-    if (strlen(s_plugins[i].name) != 0) {
-      printf("  %s\n", s_plugins[i].name);
-    }
-  }
-}
-
 static void memfaultd_create_data_dir(sMemfaultd *handle) {
   const char *data_dir;
   if (!memfaultd_get_string(handle, "", "data_dir", &data_dir) || strlen(data_dir) == 0) {
@@ -405,10 +280,10 @@ static void *prv_ipc_process_thread(void *arg) {
   }
 
   struct sockaddr_un addr = {.sun_family = AF_UNIX};
-  strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
-  if (unlink(SOCKET_PATH) == -1 && errno != ENOENT) {
-    fprintf(stderr, "memfault:: Failed to remove IPC socket file '%s' : %s\n", SOCKET_PATH,
-            strerror(errno));
+  strncpy(addr.sun_path, MEMFAULTD_IPC_SOCKET_PATH, sizeof(addr.sun_path) - 1);
+  if (unlink(MEMFAULTD_IPC_SOCKET_PATH) == -1 && errno != ENOENT) {
+    fprintf(stderr, "memfault:: Failed to remove IPC socket file '%s' : %s\n",
+            MEMFAULTD_IPC_SOCKET_PATH, strerror(errno));
     goto cleanup;
   }
 
@@ -438,33 +313,16 @@ static void *prv_ipc_process_thread(void *arg) {
       continue;
     }
 
-    for (unsigned int i = 0; i < MEMFAULT_ARRAY_SIZE(s_plugins); ++i) {
-      if (strcmp(s_plugins[i].ipc_name, "") == 0 || !s_plugins[i].fns ||
-          !s_plugins[i].fns->plugin_ipc_msg_handler) {
-        // Plugin doesn't process IPC messages
-        continue;
-      }
-
-      if (received_size <= strlen(s_plugins[i].ipc_name) ||
-          strcmp(s_plugins[i].ipc_name, msg.msg_iov[0].iov_base) != 0) {
-        // Plugin doesn't match IPC signature
-        continue;
-      }
-
-      if (!s_plugins[i].fns->plugin_ipc_msg_handler(s_plugins[i].fns->handle, handle->ipc_socket_fd,
-                                                    &msg, received_size)) {
-        fprintf(stderr, "memfault:: '%s' plugin matched IPC message, but failed to process\n",
-                s_plugins[i].name);
-      }
-      break;
+    if (!memfaultd_plugins_process_ipc(&msg, received_size)) {
+      fprintf(stderr, "memfaultd:: Failed to process IPC message (no plugin).\n");
     }
   }
 
 cleanup:
   close(handle->ipc_socket_fd);
-  if (unlink(SOCKET_PATH) == -1 && errno != ENOENT) {
-    fprintf(stderr, "memfault:: Failed to remove IPC socket file '%s' : %s\n", SOCKET_PATH,
-            strerror(errno));
+  if (unlink(MEMFAULTD_IPC_SOCKET_PATH) == -1 && errno != ENOENT) {
+    fprintf(stderr, "memfault:: Failed to remove IPC socket file '%s' : %s\n",
+            MEMFAULTD_IPC_SOCKET_PATH, strerror(errno));
   }
 
   return (void *)NULL;
@@ -477,11 +335,13 @@ cleanup:
  * @param argv Argument array
  * @return int Return code
  */
-int main(int argc, char *argv[]) {
+int memfaultd_main(int argc, char *argv[]) {
   bool daemonize = false;
   bool enable_comms = false;
   bool disable_comms = false;
   bool display_config = false;
+  bool enable_devmode = false;
+  bool disable_devmode = false;
 
   s_handle = calloc(sizeof(sMemfaultd), 1);
   const char *config_file = CONFIG_FILE;
@@ -489,7 +349,9 @@ int main(int argc, char *argv[]) {
   static struct option sMemfaultdLongOptions[] = {
     {"config-file", required_argument, NULL, 'c'},
     {"disable-data-collection", no_argument, NULL, 'd'},
+    {"disable-dev-mode", no_argument, NULL, 'm'},
     {"enable-data-collection", no_argument, NULL, 'e'},
+    {"enable-dev-mode", no_argument, NULL, 'M'},
     {"help", no_argument, NULL, 'h'},
     {"show-settings", no_argument, NULL, 's'},
     {"version", no_argument, NULL, 'v'},
@@ -515,10 +377,16 @@ int main(int argc, char *argv[]) {
         display_config = true;
         break;
       case 'v':
-        prv_memfaultd_version_info();
+        memfault_version_print_info();
         exit(EXIT_SUCCESS);
       case 'Z':
         daemonize = true;
+        break;
+      case 'M':
+        enable_devmode = true;
+        break;
+      case 'm':
+        disable_devmode = true;
         break;
       default:
         exit(EXIT_FAILURE);
@@ -537,8 +405,17 @@ int main(int argc, char *argv[]) {
       fprintf(stderr, "memfaultd:: Unable to enable and disable comms simultaneously\n");
       exit(EXIT_FAILURE);
     }
-    prv_memfaultd_enable_collection(s_handle, enable_comms);
-    exit(EXIT_SUCCESS);
+    exit(memfault_set_runtime_bool_and_reload(s_handle->config, CONFIG_KEY_DATA_COLLECTION,
+                                              "data collection", enable_comms));
+  }
+
+  if (enable_devmode || disable_devmode) {
+    if (enable_devmode && disable_devmode) {
+      fprintf(stderr, "memfaultd:: Unable to enable and disable dev-mode simultaneously\n");
+      exit(EXIT_FAILURE);
+    }
+    exit(memfault_set_runtime_bool_and_reload(s_handle->config, CONFIG_KEY_DEV_MODE,
+                                              "developer mode", enable_devmode));
   }
 
   if (!(s_handle->settings = memfaultd_device_settings_init())) {
@@ -546,13 +423,13 @@ int main(int argc, char *argv[]) {
     exit(EXIT_FAILURE);
   }
 
-  memfaultd_dump_config(s_handle, config_file);
+  memfaultd_dump_settings(s_handle->settings, s_handle->config, config_file);
   if (display_config) {
     /* Already reported above, just exit */
     exit(EXIT_SUCCESS);
   }
 
-  if (!daemonize && prv_memfaultd_check_for_pid_file()) {
+  if (!daemonize && memfaultd_check_for_pid_file()) {
     fprintf(stderr, "memfaultd:: memfaultd already running, pidfile: '%s'.\n", PID_FILE);
     exit(EXIT_FAILURE);
   }
@@ -583,7 +460,12 @@ int main(int argc, char *argv[]) {
     exit(EXIT_FAILURE);
   }
 
-  prv_memfaultd_load_plugins(s_handle);
+  if (memfaultd_get_boolean(s_handle, NULL, CONFIG_KEY_DEV_MODE, &s_handle->dev_mode) &&
+      s_handle->dev_mode == true) {
+    fprintf(stderr, "memfaultd:: Starting with developer mode enabled\n");
+  }
+
+  memfaultd_load_plugins(s_handle);
 
   if (daemonize && !prv_memfaultd_daemonize_process()) {
     exit(EXIT_FAILURE);
@@ -601,7 +483,7 @@ int main(int argc, char *argv[]) {
 
   pthread_join(s_handle->ipc_thread_id, NULL);
 
-  prv_memfaultd_destroy_plugins();
+  memfaultd_destroy_plugins();
 
   memfaultd_network_destroy(s_handle->network);
   memfaultd_queue_destroy(s_handle->queue);
@@ -633,18 +515,6 @@ bool memfaultd_txdata(sMemfaultd *handle, const sMemfaultdTxData *data, uint32_t
                                sizeof(sMemfaultdTxData) + payload_size);
 }
 
-void memfaultd_set_boolean(sMemfaultd *handle, const char *parent_key, const char *key,
-                           const bool val) {
-  memfaultd_config_set_boolean(handle->config, parent_key, key, val);
-}
-void memfaultd_set_integer(sMemfaultd *handle, const char *parent_key, const char *key,
-                           const int val) {
-  memfaultd_config_set_integer(handle->config, parent_key, key, val);
-}
-void memfaultd_set_string(sMemfaultd *handle, const char *parent_key, const char *key,
-                          const char *val) {
-  memfaultd_config_set_string(handle->config, parent_key, key, val);
-}
 bool memfaultd_get_boolean(sMemfaultd *handle, const char *parent_key, const char *key, bool *val) {
   return memfaultd_config_get_boolean(handle->config, parent_key, key, val);
 }
@@ -668,3 +538,5 @@ const sMemfaultdDeviceSettings *memfaultd_get_device_settings(sMemfaultd *memfau
 char *memfaultd_generate_rw_filename(sMemfaultd *handle, const char *filename) {
   return memfaultd_config_generate_rw_filename(handle->config, filename);
 }
+
+bool memfaultd_is_dev_mode(sMemfaultd *handle) { return handle->dev_mode; }

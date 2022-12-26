@@ -17,8 +17,8 @@
 #include <iostream>
 #include <sstream>
 
+#include "memfault/util/systemd.h"
 #include "memfaultd.h"
-#include "memfaultd_utils.h"
 
 static sMemfaultd *g_stub_memfaultd = (sMemfaultd *)~0;
 
@@ -32,11 +32,18 @@ const sMemfaultdDeviceSettings *memfaultd_get_device_settings(sMemfaultd *memfau
     .returnConstPointerValue();
 }
 
-bool memfaultd_utils_restart_service_if_running(const char *src_module, const char *service_name) {
+bool memfaultd_restart_service_if_running(const char *service_name) {
   return mock()
     .actualCall("memfaultd_utils_restart_service_if_running")
-    .withStringParameter("src_module", src_module)
     .withStringParameter("service_name", service_name)
+    .returnBoolValue();
+}
+
+bool memfaultd_kill_service(const char *service_name, int signal) {
+  return mock()
+    .actualCall("memfaultd_kill_service")
+    .withStringParameter("service_name", service_name)
+    .withIntParameter("signal", signal)
     .returnBoolValue();
 }
 
@@ -160,7 +167,6 @@ TEST_BASE(MemfaultdCollectdUtest) {
   void expect_memfaultd_utils_restart_service_if_running_call() {
     mock()
       .expectOneCall("memfaultd_utils_restart_service_if_running")
-      .withStringParameter("src_module", "collectd")
       .withStringParameter("service_name", "collectd.service")
       .andReturnValue(true);
   }

@@ -6,7 +6,9 @@
 //! See License.txt for details
 //!
 //! @brief
-//! memfaultd helper util function definitions
+//!
+
+#define PID_FILE "/var/run/memfaultd.pid"
 
 #include <stdbool.h>
 
@@ -14,7 +16,8 @@
 extern "C" {
 #endif
 
-bool memfaultd_utils_restart_service_if_running(const char *src_module, const char *service_name);
+bool memfaultd_check_for_pid_file(void);
+int memfaultd_get_pid(void);
 
 #ifdef __cplusplus
 }

@@ -11,6 +11,7 @@
 
 #include <CppUTest/TestHarness.h>
 #include <CppUTestExt/MockSupport.h>
+#include <zlib.h>
 
 #include "core_elf_memory_io.h"
 #include "memfault/core/math.h"
@@ -142,4 +143,60 @@ TEST(TestGroup_ElfWriting, Test_WriteSegmentDataRequiringPadding) {
 
   // Segment data is placed after the segment table and the padding:
   MEMCMP_EQUAL(data, &buffer[expected_segment.p_offset], data_size);
+}
+
+TEST_GROUP(TestGroup_GzipIO) {
+  uint8_t buffer[16 * 1024];
+  sMemfaultCoreElfWriteMemoryIO mio;
+  sMemfaultCoreElfWriteGzipIO gzio;
+
+  void setup() override { memfault_core_elf_write_memory_io_init(&mio, buffer, sizeof(buffer)); }
+
+  void teardown() override {
+    mock().checkExpectations();
+    mock().clear();
+  }
+
+  size_t written_size() const { return mio.cursor - (uint8_t *)mio.buffer; }
+};
+
+TEST(TestGroup_GzipIO, Test_Gzip) {
+  // Pseudo-random data -- actually doesn't compress, but actually grows to 10263 bytes:
+  uint8_t pattern[10 * 1024];
+  srand(0x892012);
+  for (unsigned int i = 0; i < sizeof(pattern); ++i) {
+    pattern[i] = 0xff & rand();
+  }
+
+  CHECK_TRUE(memfault_core_elf_write_gzip_io_init(&gzio, &mio.io));
+  CHECK_EQUAL(sizeof(pattern), gzio.io.write(&gzio.io, pattern, sizeof(pattern)));
+  CHECK_TRUE(gzio.io.sync(&gzio.io));
+  CHECK_TRUE(memfault_core_elf_write_gzip_io_deinit(&gzio));
+
+  // Decompress:
+  z_stream strm = {
+    .next_in = buffer,
+    .avail_in = (unsigned int)written_size(),
+    .zalloc = Z_NULL,
+    .zfree = Z_NULL,
+  };
+  const int window_bits = 15;
+  const int gzip_mode = 16;
+  CHECK_EQUAL(Z_OK, inflateInit2(&strm, window_bits + gzip_mode));
+  uint8_t out_buffer[sizeof(pattern)];
+  strm.next_out = out_buffer;
+  strm.avail_out = (unsigned int)sizeof(out_buffer);
+  CHECK_EQUAL(Z_STREAM_END, inflate(&strm, Z_FINISH));
+  CHECK_EQUAL(Z_OK, inflateEnd(&strm));
+
+  // Match with original input:
+  MEMCMP_EQUAL(pattern, out_buffer, sizeof(pattern));
+}
+
+TEST(TestGroup_GzipIO, Test_GzipMissingSync) {
+  uint8_t pattern[1] = {0};
+  CHECK_TRUE(memfault_core_elf_write_gzip_io_init(&gzio, &mio.io));
+  CHECK_EQUAL(sizeof(pattern), gzio.io.write(&gzio.io, pattern, sizeof(pattern)));
+  // Returns false, because there is still unflushed data in the compression buffer:
+  CHECK_FALSE(memfault_core_elf_write_gzip_io_deinit(&gzio));
 }

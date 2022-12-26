@@ -1,7 +1,7 @@
 DESCRIPTION = "memfault-core-handler application"
 LICENSE = "Proprietary"
 LICENSE_FLAGS = "commercial"
-LIC_FILES_CHKSUM = "file://${FILE_DIRNAME}/../../../License.txt;md5=56e72796d5838e30cf6671385527172c"
+LIC_FILES_CHKSUM = "file://${FILE_DIRNAME}/../../../License.txt;md5=f10c502d265f86bd71f9dac8ec7827c2"
 
 SRC_URI = " \
     file://memfault-core-handler \

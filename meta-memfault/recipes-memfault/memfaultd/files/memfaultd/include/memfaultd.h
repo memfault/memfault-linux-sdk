@@ -23,8 +23,8 @@ typedef struct MemfaultdPlugin sMemfaultdPlugin;
 
 typedef bool (*memfaultd_plugin_reload)(sMemfaultdPlugin *plugin);
 typedef void (*memfaultd_plugin_destroy)(sMemfaultdPlugin *plugin);
-typedef bool (*memfaultd_plugin_ipc_msg_handler)(sMemfaultdPlugin *handle, int socket_fd,
-                                                 struct msghdr *msg, size_t received_size);
+typedef bool (*memfaultd_plugin_ipc_msg_handler)(sMemfaultdPlugin *handle, struct msghdr *msg,
+                                                 size_t received_size);
 
 typedef enum {
   kMemfaultdConfigTypeUnknown,
@@ -61,6 +61,8 @@ typedef bool (*memfaultd_plugin_init)(sMemfaultd *memfaultd, sMemfaultdPluginCal
 typedef enum {
   kMemfaultdTxDataType_RebootEvent = 'R',
   kMemfaultdTxDataType_CoreUpload = 'C',
+  kMemfaultdTxDataType_CoreUploadWithGzip = 'c',
+  kMemfaultdTxDataType_Attributes = 'A',
 } eMemfaultdTxDataType;
 
 typedef struct __attribute__((__packed__)) MemfaultdTxData {
@@ -68,16 +70,15 @@ typedef struct __attribute__((__packed__)) MemfaultdTxData {
   uint8_t payload[];
 } sMemfaultdTxData;
 
-extern const char memfaultd_sdk_version[];
+typedef struct __attribute__((__packed__)) MemfaultdTxDataAttributes {
+  uint8_t type;  // eMemfaultdTxDataType
+  time_t timestamp;
+  char json[];
+} sMemfaultdTxDataAttributes;
+
+int memfaultd_main(int argc, char *argv[]);
 
 bool memfaultd_txdata(sMemfaultd *memfaultd, const sMemfaultdTxData *data, uint32_t payload_size);
-
-void memfaultd_set_boolean(sMemfaultd *memfaultd, const char *parent_key, const char *key,
-                           const bool val);
-void memfaultd_set_integer(sMemfaultd *memfaultd, const char *parent_key, const char *key,
-                           const int val);
-void memfaultd_set_string(sMemfaultd *memfaultd, const char *parent_key, const char *key,
-                          const char *val);
 
 bool memfaultd_get_boolean(sMemfaultd *memfaultd, const char *parent_key, const char *key,
                            bool *val);
@@ -91,6 +92,8 @@ bool memfaultd_get_objects(sMemfaultd *memfaultd, const char *parent_key,
 const sMemfaultdDeviceSettings *memfaultd_get_device_settings(sMemfaultd *memfaultd);
 
 char *memfaultd_generate_rw_filename(sMemfaultd *memfaultd, const char *filename);
+
+bool memfaultd_is_dev_mode(sMemfaultd *memfaultd);
 
 #ifdef __cplusplus
 }

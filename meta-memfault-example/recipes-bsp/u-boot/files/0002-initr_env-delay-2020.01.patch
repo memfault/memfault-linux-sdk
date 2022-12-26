@@ -16,4 +16,3 @@ diff -Naur a/common/board_r.c b/common/board_r.c
 +	initr_env,
  	run_main_loop,
  };
- 

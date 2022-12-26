@@ -13,10 +13,10 @@
 //! WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 //! See the License for the specific language governing permissions and
 //! limitations under the License.
+#include <statsd-client.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <statsd-client.h>
 #include <sys/time.h>
 #include <unistd.h>
 
@@ -24,34 +24,36 @@
 #define PKT_LEN 1400
 
 int main(int argc, char *argv[]) {
-    statsd_link *link;
+  statsd_link *link;
 
-    link = statsd_init_with_namespace("localhost", 8125, "mycapp");
+  link = statsd_init_with_namespace("localhost", 8125, "mycapp");
 
-    while (1) {
-        char pkt[PKT_LEN] = {'\0'};
-        char tmp[MAX_LINE_LEN] = {'\0'};
-        struct timeval start, end;
-        int ms;
+  while (1) {
+    char pkt[PKT_LEN] = {'\0'};
+    char tmp[MAX_LINE_LEN] = {'\0'};
+    struct timeval start, end;
+    int ms;
 
-        statsd_prepare(link, "mycount", rand() % 3, "c", 1.0, tmp, MAX_LINE_LEN, 1);
-        strncat(pkt, tmp, PKT_LEN - 1);
+    statsd_prepare(link, "mycount", rand() % 3, "c", 1.0, tmp, MAX_LINE_LEN, 1);
+    strncat(pkt, tmp, PKT_LEN - 1);
 
-        statsd_prepare(link, "mygauge", rand() % 100, "g", 1.0, tmp, MAX_LINE_LEN, 1);
-        strncat(pkt, tmp, PKT_LEN - 1);
+    statsd_prepare(link, "mygauge", rand() % 100, "g", 1.0, tmp, MAX_LINE_LEN,
+                   1);
+    strncat(pkt, tmp, PKT_LEN - 1);
 
-        gettimeofday(&start, NULL);
-        sleep(rand() % 2);
-        gettimeofday(&end, NULL);
-        ms = ((end.tv_sec - start.tv_sec) * 1000) + ((end.tv_usec - start.tv_usec) / 1000);
+    gettimeofday(&start, NULL);
+    sleep(rand() % 2);
+    gettimeofday(&end, NULL);
+    ms = ((end.tv_sec - start.tv_sec) * 1000) +
+         ((end.tv_usec - start.tv_usec) / 1000);
 
-        statsd_prepare(link, "mytime", ms, "ms", 1.0, tmp, MAX_LINE_LEN, 1);
-        strncat(pkt, tmp, PKT_LEN - 1);
+    statsd_prepare(link, "mytime", ms, "ms", 1.0, tmp, MAX_LINE_LEN, 1);
+    strncat(pkt, tmp, PKT_LEN - 1);
 
-        statsd_send(link, pkt);
-    }
+    statsd_send(link, pkt);
+  }
 
-    statsd_finalize(link);
+  statsd_finalize(link);
 
-    return 0;
+  return 0;
 }

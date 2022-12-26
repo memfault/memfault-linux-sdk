@@ -12,7 +12,6 @@
 #include <curl/curl.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <json-c/json.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,6 +19,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "memfault/util/json-c.h"
 #include "memfault/util/string.h"
 #include "memfaultd.h"
 
@@ -176,33 +176,83 @@ cleanup:
   return false;
 }
 
+static struct json_object *prv_prepare_request_body(const sMemfaultdNetwork *handle,
+                                                    const size_t filesize,
+                                                    const char *content_encoding) {
+  const sMemfaultdDeviceSettings *settings = memfaultd_get_device_settings(handle->memfaultd);
+  struct json_object *request_body = json_object_new_object();
+  if (request_body == NULL) {
+    goto fail;
+  }
+  if (content_encoding != NULL) {
+    if (json_object_object_add_ex(request_body, "content_encoding",
+                                  json_object_new_string(content_encoding),
+                                  JSON_C_OBJECT_ADD_CONSTANT_KEY) != 0) {
+      goto fail;
+    }
+  }
+  if (json_object_object_add_ex(request_body, "kind", json_object_new_string("ELF_COREDUMP"),
+                                JSON_C_OBJECT_ADD_CONSTANT_KEY) != 0) {
+    goto fail;
+  }
+  if (json_object_object_add_ex(request_body, "size", json_object_new_int64((int64_t)filesize),
+                                JSON_C_OBJECT_ADD_CONSTANT_KEY) != 0) {
+    goto fail;
+  }
+  struct json_object *device = json_object_new_object();
+  if (device == NULL) {
+    goto fail;
+  }
+  if (json_object_object_add_ex(request_body, "device", device, JSON_C_OBJECT_ADD_CONSTANT_KEY) !=
+      0) {
+    json_object_put(device);
+    goto fail;
+  }
+  if (json_object_object_add_ex(device, "device_serial",
+                                json_object_new_string(settings->device_id),
+                                JSON_C_OBJECT_ADD_CONSTANT_KEY) != 0) {
+    goto fail;
+  }
+  if (json_object_object_add_ex(device, "hardware_version",
+                                json_object_new_string(settings->hardware_version),
+                                JSON_C_OBJECT_ADD_CONSTANT_KEY) != 0) {
+    goto fail;
+  }
+  if (json_object_object_add_ex(device, "software_version",
+                                json_object_new_string(handle->software_version),
+                                JSON_C_OBJECT_ADD_CONSTANT_KEY) != 0) {
+    goto fail;
+  }
+  if (json_object_object_add_ex(device, "software_type",
+                                json_object_new_string(handle->software_type),
+                                JSON_C_OBJECT_ADD_CONSTANT_KEY) != 0) {
+    goto fail;
+  }
+  return request_body;
+
+fail:
+  json_object_put(request_body);
+  fprintf(stderr, "network:: failed to create prepared upload request body\n");
+  return NULL;
+}
+
 static eMemfaultdNetworkResult prv_file_upload_prepare(sMemfaultdNetwork *handle,
                                                        const char *endpoint, const size_t filesize,
-                                                       char **upload_url, char **upload_token) {
+                                                       char **upload_url, char **upload_token,
+                                                       bool is_gzipped) {
   char *recvdata = NULL;
   size_t recvlen;
   eMemfaultdNetworkResult rc;
-  const sMemfaultdDeviceSettings *settings = memfaultd_get_device_settings(handle->memfaultd);
 
-  char *upload_request = NULL;
-  char *upload_request_fmt = "{"
-                             "  \"kind\": \"ELF_COREDUMP\","
-                             "  \"device\": {"
-                             "    \"device_serial\": \"%s\","
-                             "    \"hardware_version\": \"%s\","
-                             "    \"software_version\": \"%s\","
-                             "    \"software_type\": \"%s\""
-                             "  },"
-                             "  \"size\": %d"
-                             "}";
-  if (memfault_asprintf(&upload_request, upload_request_fmt, settings->device_id,
-                        settings->hardware_version, handle->software_version, handle->software_type,
-                        filesize) == -1) {
+  const char *content_encoding = is_gzipped ? "gzip" : NULL;
+  struct json_object *request_body = prv_prepare_request_body(handle, filesize, content_encoding);
+  if (request_body == NULL) {
     rc = kMemfaultdNetworkResult_ErrorRetryLater;
     goto cleanup;
   }
 
-  rc = memfaultd_network_post(handle, endpoint, upload_request, &recvdata, &recvlen);
+  rc = memfaultd_network_post(handle, endpoint, kMemfaultdHttpMethod_POST,
+                              json_object_to_json_string(request_body), &recvdata, &recvlen);
   if (rc != kMemfaultdNetworkResult_OK) {
     goto cleanup;
   }
@@ -216,14 +266,16 @@ static eMemfaultdNetworkResult prv_file_upload_prepare(sMemfaultdNetwork *handle
   rc = kMemfaultdNetworkResult_OK;
 
 cleanup:
-  free(upload_request);
+  json_object_put(request_body);
   free(recvdata);
   return rc;
 }
 
 static eMemfaultdNetworkResult prv_file_upload(sMemfaultdNetwork *handle, const char *url,
-                                               const char *filename, const size_t filesize) {
+                                               const char *filename, const size_t filesize,
+                                               bool is_gzipped) {
   eMemfaultdNetworkResult rc;
+  struct curl_slist *headers = NULL;
 
   FILE *fd;
   if (!(fd = fopen(filename, "rb"))) {
@@ -237,10 +289,16 @@ static eMemfaultdNetworkResult prv_file_upload(sMemfaultdNetwork *handle, const 
   curl_easy_setopt(handle->curl, CURLOPT_READDATA, fd);
   curl_easy_setopt(handle->curl, CURLOPT_INFILESIZE_LARGE, (curl_off_t)filesize);
 
+  if (is_gzipped) {
+    headers = curl_slist_append(headers, "Content-Encoding: gzip");
+    curl_easy_setopt(handle->curl, CURLOPT_HTTPHEADER, headers);
+  }
+
   const CURLcode res = curl_easy_perform(handle->curl);
   rc = prv_check_error(handle, res, "PUT", url);
 
 cleanup:
+  curl_slist_free_all(headers);
   curl_easy_reset(handle->curl);
   fclose(fd);
   return rc;
@@ -270,12 +328,23 @@ static eMemfaultdNetworkResult prv_file_upload_commit(sMemfaultdNetwork *handle,
     goto cleanup;
   }
 
-  rc = memfaultd_network_post(handle, endpoint, payload, NULL, 0);
+  rc = memfaultd_network_post(handle, endpoint, kMemfaultdHttpMethod_POST, payload, NULL, 0);
 
 cleanup:
   free(payload);
 
   return rc;
+}
+
+static const char *prv_method_as_string(enum MemfaultdHttpMethod method) {
+  switch (method) {
+    case kMemfaultdHttpMethod_POST:
+      return "POST";
+    case kMemfaultdHttpMethod_PATCH:
+      return "PATCH";
+    default:
+      return "UNKNOWN";
+  }
 }
 
 /**
@@ -363,7 +432,8 @@ void memfaultd_network_destroy(sMemfaultdNetwork *handle) {
  * @return A eMemfaultdNetworkResult value indicating whether the POST was successful or not.
  */
 eMemfaultdNetworkResult memfaultd_network_post(sMemfaultdNetwork *handle, const char *endpoint,
-                                               const char *payload, char **data, size_t *len) {
+                                               enum MemfaultdHttpMethod method, const char *payload,
+                                               char **data, size_t *len) {
   char *url = prv_create_url(handle, endpoint);
   if (!url) {
     return kMemfaultdNetworkResult_ErrorRetryLater;
@@ -387,10 +457,14 @@ eMemfaultdNetworkResult memfaultd_network_post(sMemfaultdNetwork *handle, const 
   curl_easy_setopt(handle->curl, CURLOPT_NOPROGRESS, 1L);
   curl_easy_setopt(handle->curl, CURLOPT_WRITEFUNCTION, prv_network_write_callback);
   curl_easy_setopt(handle->curl, CURLOPT_WRITEDATA, (void *)&recv_buf);
+  if (method == kMemfaultdHttpMethod_PATCH) {
+    curl_easy_setopt(handle->curl, CURLOPT_CUSTOMREQUEST, "PATCH");
+  }
   const CURLcode res = curl_easy_perform(handle->curl);
   curl_slist_free_all(headers);
 
-  const eMemfaultdNetworkResult result = prv_check_error(handle, res, "POST", url);
+  const eMemfaultdNetworkResult result =
+    prv_check_error(handle, res, prv_method_as_string(method), url);
 
   free(url);
 
@@ -411,7 +485,7 @@ eMemfaultdNetworkResult memfaultd_network_post(sMemfaultdNetwork *handle, const 
 
 eMemfaultdNetworkResult memfaultd_network_file_upload(sMemfaultdNetwork *handle,
                                                       const char *commit_endpoint,
-                                                      const char *filename) {
+                                                      const char *filename, bool is_gzipped) {
   eMemfaultdNetworkResult rc;
   char *upload_url = NULL;
   char *upload_token = NULL;
@@ -423,12 +497,13 @@ eMemfaultdNetworkResult memfaultd_network_file_upload(sMemfaultdNetwork *handle,
     goto cleanup;
   }
 
-  rc = prv_file_upload_prepare(handle, "/api/v0/upload", st.st_size, &upload_url, &upload_token);
+  rc = prv_file_upload_prepare(handle, "/api/v0/upload", st.st_size, &upload_url, &upload_token,
+                               is_gzipped);
   if (rc != kMemfaultdNetworkResult_OK) {
     goto cleanup;
   }
 
-  rc = prv_file_upload(handle, upload_url, filename, st.st_size);
+  rc = prv_file_upload(handle, upload_url, filename, st.st_size, is_gzipped);
   if (rc != kMemfaultdNetworkResult_OK) {
     goto cleanup;
   }
