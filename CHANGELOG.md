@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2022-12-26
+
+### Added
+
+- [memfaultctl] Added a new command `memfaultctl` to interact with `memfaultd`.
+  - `memfaultctl trigger-coredump` to force a coredump generation and upload.
+  - `memfaultctl request-metrics` to force `collectd` to flush metrics to
+    Memfault.
+  - `memfaultctl reboot` to save a reboot reason and restart the system.
+  - `memfaultctl sync` to process `memfaultd` queue immediately.
+  - `memfaultctl write-attributes` to push device attributes to Memfault.
+  - 'Developer Mode` to reduce rate limits applied to coredumps during
+    development.
+
+### Changed
+
+- Our Docker container now runs on Apple silicon without Rosetta emulation.
+- Updated the `memfault-cli` package in the Docker image.
+- Added "preferred versions" for `swupdate` and `collectd`.
+- Coredumps are now compressed with gzip reducing storage and network usage.
+- `memfaultd` is now built with `-g3`.
+
+### Deprecated
+
+- `memfaultd --(enable|disable)-dev-collection` and `memfaultctl -s` are now
+  replaced by equivalent commands on `memfaultctl` and will be removed in a
+  future version.
+
+### Fixed
+
+- `swupdate` would get in a bad state after reloading `memfaultd`. This is fixed
+  by restarting both `swupdate` and `swupdate.socket` units.
+
 ## [1.1.0] - 2022-11-10
 
 ### Added
@@ -75,6 +108,8 @@ and this project adheres to
   even if `plugin_reboot` is disabled. As a work-around, if you need to keep
   [systemd-pstore.service], remove the `systemd_%.bbappend` file from the SDK.
 
+[1.1.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.1.0-kirkstone
 [systemd-pstore.service]:
   https://www.freedesktop.org/software/systemd/man/systemd-pstore.service.html
 [docs-reboots]: https://mflt.io/linux-reboots

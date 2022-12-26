@@ -15,6 +15,11 @@
 
 #include "memfaultd.h"
 
+typedef enum MemfaultdHttpMethod {
+  kMemfaultdHttpMethod_POST,
+  kMemfaultdHttpMethod_PATCH
+} eMemfaultdHttpMethod;
+
 typedef enum MemfaultdNetworkResult {
   /**
    * The network operation was successful.
@@ -37,10 +42,11 @@ typedef struct MemfaultdNetwork sMemfaultdNetwork;
 sMemfaultdNetwork *memfaultd_network_init(sMemfaultd *memfaultd);
 void memfaultd_network_destroy(sMemfaultdNetwork *handle);
 eMemfaultdNetworkResult memfaultd_network_post(sMemfaultdNetwork *handle, const char *endpoint,
-                                               const char *payload, char **data, size_t *len);
+                                               eMemfaultdHttpMethod method, const char *payload,
+                                               char **data, size_t *len);
 
 eMemfaultdNetworkResult memfaultd_network_file_upload(sMemfaultdNetwork *handle,
                                                       const char *commit_endpoint,
-                                                      const char *payload);
+                                                      const char *payload, bool is_gzipped);
 
 #endif

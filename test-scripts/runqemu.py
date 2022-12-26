@@ -5,6 +5,7 @@
 import dataclasses
 import os
 import pathlib
+import platform
 import shlex
 from typing import Dict, List, Union
 
@@ -19,6 +20,10 @@ def get_machine() -> str:
     machine = os.getenv("MACHINE")
     assert machine, "Missing MACHINE environment variable"
     return machine
+
+
+def get_host_arch() -> str:
+    return platform.machine()
 
 
 BASE_IMAGE_FILENAME = f"base-image-{get_machine()}.wic"
@@ -56,7 +61,9 @@ def qemu_build_command(
     command_parts: List[Union[str, pathlib.Path]] = []
     command_parts.append(
         bitbake_path
-        / "tmp/work/x86_64-linux/qemu-helper-native/1.0-r1/recipe-sysroot-native/usr/bin"
+        / "tmp/work"
+        / f"{get_host_arch()}-linux"
+        / "qemu-helper-native/1.0-r1/recipe-sysroot-native/usr/bin"
         / qemu_info.executable_name
     )
     command_parts.append(

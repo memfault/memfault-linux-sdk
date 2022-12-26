@@ -1,7 +1,7 @@
 DESCRIPTION = "memfaultd application"
 LICENSE = "Proprietary"
 LICENSE_FLAGS = "commercial"
-LIC_FILES_CHKSUM = "file://${FILE_DIRNAME}/../../../License.txt;md5=56e72796d5838e30cf6671385527172c"
+LIC_FILES_CHKSUM = "file://${FILE_DIRNAME}/../../../License.txt;md5=f10c502d265f86bd71f9dac8ec7827c2"
 
 FILESEXTRAPATHS_prepend := "${FILE_DIRNAME}/../../:"
 
@@ -21,10 +21,10 @@ SYSTEMD_SERVICE_${PN} = "memfaultd.service"
 DEPENDS = "curl json-c systemd vim-native"
 
 PACKAGECONFIG ??= "plugin_coredump plugin_collectd plugin_reboot plugin_swupdate"
-PACKAGECONFIG[plugin_coredump] = "-DENABLE_PLUGINS=1 -DPLUGIN_COREDUMP=1"
-PACKAGECONFIG[plugin_collectd] = "-DENABLE_PLUGINS=1 -DPLUGIN_COLLECTD=1"
-PACKAGECONFIG[plugin_reboot] = "-DENABLE_PLUGINS=1 -DPLUGIN_REBOOT=1"
-PACKAGECONFIG[plugin_swupdate] = "-DENABLE_PLUGINS=1 -DPLUGIN_SWUPDATE=1"
+PACKAGECONFIG[plugin_coredump] = "-DPLUGIN_COREDUMP=1"
+PACKAGECONFIG[plugin_collectd] = "-DPLUGIN_COLLECTD=1"
+PACKAGECONFIG[plugin_reboot] = "-DPLUGIN_REBOOT=1"
+PACKAGECONFIG[plugin_swupdate] = "-DPLUGIN_SWUPDATE=1"
 
 RDEPENDS_append_${PN} = " \
     ${@bb.utils.contains('PACKAGECONFIG', 'plugin_coredump', \

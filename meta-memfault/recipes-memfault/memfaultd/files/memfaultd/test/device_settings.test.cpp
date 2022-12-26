@@ -7,7 +7,7 @@
 //! Unit tests for device_settings.c
 //!
 
-#include "device_settings.h"
+#include "memfault/util/device_settings.h"
 
 #include <CppUTest/TestHarness.h>
 

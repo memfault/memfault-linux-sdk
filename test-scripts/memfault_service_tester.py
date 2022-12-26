@@ -139,3 +139,12 @@ class MemfaultServiceTester:
             return elf_coredumps
 
         return self.poll_until_not_raising(_check, timeout_seconds=timeout_secs)
+
+    def list_attributes(self, *, device_serial, params=None, expect_status=200):
+        if params is None:
+            params = {}
+
+        url = f"{self._project_url}/devices/{device_serial}/attributes"
+        resp = self.session.get(url, params=params)
+        assert resp.status_code == expect_status
+        return resp.json()["data"] if resp.ok else None

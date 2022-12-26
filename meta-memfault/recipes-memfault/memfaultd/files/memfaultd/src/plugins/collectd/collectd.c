@@ -10,14 +10,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <systemd/sd-bus.h>
 #include <unistd.h>
 
 #include "memfault/core/math.h"
 #include "memfault/util/string.h"
+#include "memfault/util/systemd.h"
 #include "memfaultd.h"
-#include "memfaultd_utils.h"
 
 #define DEFAULT_HEADER_INCLUDE_OUTPUT_FILE "/tmp/collectd-header-include.conf"
 #define DEFAULT_FOOTER_INCLUDE_OUTPUT_FILE "/tmp/collectd-footer-include.conf"
@@ -37,16 +39,21 @@ struct MemfaultdPlugin {
  * @brief Generate new collectd-header-include.conf file from config
  *
  * @param handle collectd plugin handle
+ * @param override_interval if greater than 0, will override the interval in configuration
  * @return true Successfully generated new config
  * @return false Failed to generate
  */
-bool prv_generate_header_include(sMemfaultdPlugin *handle) {
+bool prv_generate_header_include(sMemfaultdPlugin *handle, int override_interval) {
   bool result = true;
   FILE *fd = NULL;
 
   int interval_seconds = DEFAULT_INTERVAL_SECS;
   memfaultd_get_integer(handle->memfaultd, "collectd_plugin", "interval_seconds",
                         &interval_seconds);
+
+  if (override_interval > 0) {
+    interval_seconds = override_interval;
+  }
 
   fd = fopen(handle->header_include_output_file, "w+");
   if (!fd) {
@@ -316,7 +323,7 @@ static bool prv_reload(sMemfaultdPlugin *handle) {
     if (handle->was_enabled || needs_restart) {
       // Data collection only just disabled
 
-      if (!memfaultd_utils_restart_service_if_running("collectd", "collectd.service")) {
+      if (!memfaultd_restart_service_if_running("collectd.service")) {
         fprintf(stderr, "collectd:: Failed to restart collectd\n");
         return false;
       }
@@ -325,7 +332,7 @@ static bool prv_reload(sMemfaultdPlugin *handle) {
     }
   } else {
     // Data collection enabled
-    if (!prv_generate_header_include(handle)) {
+    if (!prv_generate_header_include(handle, 0)) {
       fprintf(stderr, "collectd:: Failed to generate updated header config file\n");
       return false;
     }
@@ -334,7 +341,7 @@ static bool prv_reload(sMemfaultdPlugin *handle) {
       return false;
     }
 
-    if (!memfaultd_utils_restart_service_if_running("collectd", "collectd.service")) {
+    if (!memfaultd_restart_service_if_running("collectd.service")) {
       fprintf(stderr, "collectd:: Failed to restart collectd\n");
       return false;
     }
@@ -344,10 +351,34 @@ static bool prv_reload(sMemfaultdPlugin *handle) {
   return true;
 }
 
-static sMemfaultdPluginCallbackFns s_fns = {
-  .plugin_destroy = prv_destroy,
-  .plugin_reload = prv_reload,
-};
+static bool prv_request_metrics(sMemfaultdPlugin *handle) {
+  if (handle->was_enabled) {
+    // Restarting collectd forces a new measurement of all monitored values.
+    if (!memfaultd_restart_service_if_running("collectd.service")) {
+      fprintf(stderr, "collectd:: Failed to restart collectd\n");
+      return false;
+    }
+
+    // Make sure we give collectd time to take the measurement
+    sleep(1);
+
+    // And now force collectd to flush the measurements in cache.
+    fprintf(stderr, "collectd:: Requesting metrics from collectd now.\n");
+    memfaultd_kill_service("collectd.service", SIGUSR1);
+  } else {
+    fprintf(stderr, "collected:: Metrics are not enabled.\n");
+  }
+  return true;
+}
+
+static bool prv_ipc_handler(sMemfaultdPlugin *handle, struct msghdr *msg, size_t received_size) {
+  // Any IPC message will cause us to request metrics.
+  return prv_request_metrics(handle);
+}
+
+static sMemfaultdPluginCallbackFns s_fns = {.plugin_destroy = prv_destroy,
+                                            .plugin_reload = prv_reload,
+                                            .plugin_ipc_msg_handler = prv_ipc_handler};
 
 /**
  * @brief Initialises collectd plugin

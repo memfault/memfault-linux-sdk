@@ -19,5 +19,3 @@ BBLAYERS ?= " \
     ${YOCTOROOT}/sources/poky/meta-poky \
     ${YOCTOROOT}/sources/poky/meta-yocto-bsp \
 "
-
-

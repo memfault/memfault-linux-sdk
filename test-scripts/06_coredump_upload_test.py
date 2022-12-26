@@ -1,8 +1,6 @@
 #
 # Copyright (c) Memfault, Inc.
 # See License.txt for details
-import time
-
 from memfault_service_tester import MemfaultServiceTester
 from qemu import QEMU
 
@@ -12,6 +10,11 @@ from qemu import QEMU
 #   or whatever the underlying QEMU instance points at.
 # - The MEMFAULT_E2E_* environment variables are set to match whatever the underlying
 #   QEMU instance points at.
+#
+# If you want to see the crashes on the server, remember to upload the symbols:
+# qemu$ memfault --org $MEMFAULT_E2E_ORGANIZATION_SLUG --org-token $MEMFAULT_E2E_ORG_TOKEN \
+#   --project $MEMFAULT_E2E_PROJECT_SLUG upload-yocto-symbols
+#   --image tmp/deploy/images/qemuarm64/base-image-qemuarm64.tar.bz2
 def test(
     qemu: QEMU, memfault_service_tester: MemfaultServiceTester, qemu_device_id: str
 ):
@@ -19,29 +22,20 @@ def test(
     qemu.exec_cmd("memfaultd --enable-data-collection")
     qemu.systemd_wait_for_service_state("memfaultd.service", "active")
 
-    # Give memfaultd a moment to start the socket thread
-    time.sleep(1)
-
     # Stream memfaultd's log
-    qemu.exec_cmd("journalctl --follow --unit=memfaultd.service &")
+    qemu.exec_cmd("journalctl -n 0 --follow --unit=memfaultd.service &")
 
-    # Generate corefile from killing 'sleep' process
-    qemu.exec_cmd("sleep 5s &")
-    qemu.exec_cmd("SLEEP_PID=$!")
+    # Wait for memfaultd to actually be ready
+    qemu.child().expect("Started memfaultd daemon")
 
-    # Give the sleep program a bit of time to start and run:
-    qemu.exec_cmd("sleep 0.1s")
-
-    # Now send SIGQUIT to trigger a coredump!
-    qemu.exec_cmd("kill -SIGQUIT $SLEEP_PID")
+    # Trigger the coredump
+    qemu.exec_cmd("memfaultctl trigger-coredump")
 
     # Ensure memfaultd has received the core
-    qemu.child().expect("coredump:: Received corefile for PID")
+    qemu.child().expect("coredump:: enqueued corefile")
 
-    # Trigger memfaultd to parse TX queue
-    qemu.exec_cmd(
-        "kill -SIGUSR1 $(systemctl show --property MainPID --value memfaultd.service)"
-    )
+    # Tell memfault to do the upload now
+    qemu.exec_cmd("systemctl kill memfaultd --signal SIGUSR1")
 
     # Ensure memfaultd has transmitted the corefile
     qemu.child().expect("network:: Successfully transmitted file")

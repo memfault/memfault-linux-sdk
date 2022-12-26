@@ -21,21 +21,24 @@
 #include <uuid/uuid.h>
 
 #include "core_elf_transformer.h"
+#include "coredump_ratelimiter.h"
 #include "memfault/core/math.h"
 #include "memfault/util/disk.h"
 #include "memfault/util/rate_limiter.h"
 #include "memfault/util/string.h"
+#include "memfault/util/version.h"
 #include "memfaultd.h"
 
 #define CORE_PATTERN_PATH "/proc/sys/kernel/core_pattern"
 #define CORE_PATTERN "|/usr/sbin/memfault-core-handler %P"
-#define RATE_LIMIT_FILENAME "coredump_rate_limit"
+#define COMPRESSION_DEFAULT "gzip"
 
 struct MemfaultdPlugin {
   sMemfaultd *memfaultd;
   bool enable_data_collection;
   sMemfaultdRateLimiter *rate_limiter;
   char *core_dir;
+  bool gzip_enabled;
 };
 
 static char *prv_create_dir(sMemfaultdPlugin *handle, const char *subdir) {
@@ -66,7 +69,8 @@ static char *prv_create_dir(sMemfaultdPlugin *handle, const char *subdir) {
   return path;
 }
 
-static char *prv_generate_filename(sMemfaultdPlugin *handle, const char *prefix) {
+static char *prv_generate_filename(sMemfaultdPlugin *handle, const char *prefix,
+                                   const char *extension) {
   char *filename = NULL;
 
   uuid_t uuid;
@@ -74,8 +78,8 @@ static char *prv_generate_filename(sMemfaultdPlugin *handle, const char *prefix)
   uuid_generate(uuid);
   uuid_unparse_lower(uuid, uuid_str);
 
-  char *fmt = "%s/%s%s";
-  if (memfault_asprintf(&filename, fmt, handle->core_dir, prefix, uuid_str) == -1) {
+  char *fmt = "%s/%s%s%s";
+  if (memfault_asprintf(&filename, fmt, handle->core_dir, prefix, uuid_str, extension) == -1) {
     fprintf(stderr, "coredump:: Failed to create filename buffer\n");
     goto cleanup;
   }
@@ -123,6 +127,8 @@ static bool prv_transform_coredump_from_fd_to_file(sMemfaultdPlugin *handle, con
                                                    int in_fd, pid_t pid, size_t max_size) {
   sMemfaultCoreElfReadFileIO reader_io;
   sMemfaultCoreElfWriteFileIO writer_io;
+  sMemfaultCoreElfWriteGzipIO gzip_io;
+  bool gzip_io_initialized = false;
   sMemfaultCoreElfTransformer transformer;
   sMemfaultCoreElfMetadata metadata;
   sMemfaultCoreElfTransformerProcfsHandler transformer_handler;
@@ -144,21 +150,33 @@ static bool prv_transform_coredump_from_fd_to_file(sMemfaultdPlugin *handle, con
   }
 
   memfault_core_elf_write_file_io_init(&writer_io, out_fd, max_size);
+  if (handle->gzip_enabled) {
+    gzip_io_initialized = memfault_core_elf_write_gzip_io_init(&gzip_io, &writer_io.io);
+    if (!gzip_io_initialized) {
+      fprintf(stderr, "coredump:: Failed to init gzip io\n");
+      goto cleanup;
+    }
+  }
   memfault_core_elf_read_file_io_init(&reader_io, in_fd);
-  memfault_core_elf_transformer_init(&transformer, &reader_io.io, &writer_io.io, &metadata,
+  memfault_core_elf_transformer_init(&transformer, &reader_io.io,
+                                     handle->gzip_enabled ? &gzip_io.io : &writer_io.io, &metadata,
                                      &transformer_handler.handler);
 
   result = memfault_core_elf_transformer_run(&transformer);
 
 cleanup:
   memfault_deinit_core_elf_transformer_procfs_handler(&transformer_handler);
+  if (gzip_io_initialized) {
+    memfault_core_elf_write_gzip_io_deinit(&gzip_io);
+  }
   if (out_fd != -1) {
     close(out_fd);
   }
   return result;
 }
 
-static sMemfaultdTxData *prv_build_queue_entry(const char *filename, uint32_t *payload_size) {
+static sMemfaultdTxData *prv_build_queue_entry(bool gzip_enabled, const char *filename,
+                                               uint32_t *payload_size) {
   size_t filename_len = strlen(filename);
   sMemfaultdTxData *data;
   if (!(data = malloc(sizeof(sMemfaultdTxData) + filename_len + 1))) {
@@ -166,7 +184,8 @@ static sMemfaultdTxData *prv_build_queue_entry(const char *filename, uint32_t *p
     return NULL;
   }
 
-  data->type = kMemfaultdTxDataType_CoreUpload;
+  data->type =
+    gzip_enabled ? kMemfaultdTxDataType_CoreUploadWithGzip : kMemfaultdTxDataType_CoreUpload;
   strcpy((char *)data->payload, filename);
 
   *payload_size = filename_len + 1;
@@ -241,8 +260,7 @@ static size_t prv_check_for_available_space(sMemfaultdPlugin *handle) {
   return MEMFAULT_MIN(MEMFAULT_MIN(headroom_delta, usage_delta), max_size);
 }
 
-static bool prv_msg_handler(sMemfaultdPlugin *handle, int socket_fd, struct msghdr *msg,
-                            size_t received_size) {
+static bool prv_msg_handler(sMemfaultdPlugin *handle, struct msghdr *msg, size_t received_size) {
   int ret = EXIT_FAILURE;
   char *buf = msg->msg_iov[0].iov_base;
   char *outfile = NULL;
@@ -308,7 +326,8 @@ static bool prv_msg_handler(sMemfaultdPlugin *handle, int socket_fd, struct msgh
   }
 
   // Write corefile to fs
-  if ((outfile = prv_generate_filename(handle, "corefile-")) == NULL) {
+  const char *extension = handle->gzip_enabled ? ".gz" : "";
+  if ((outfile = prv_generate_filename(handle, "corefile-", extension)) == NULL) {
     goto cleanup;
   }
 
@@ -323,7 +342,7 @@ static bool prv_msg_handler(sMemfaultdPlugin *handle, int socket_fd, struct msgh
 
   // Add outfile to queue for transmission
   uint32_t payload_size;
-  data = prv_build_queue_entry(outfile, &payload_size);
+  data = prv_build_queue_entry(handle->gzip_enabled, outfile, &payload_size);
   if (!data) {
     fprintf(stderr, "coredump:: Failed to build queue entry\n");
     goto cleanup;
@@ -334,16 +353,14 @@ static bool prv_msg_handler(sMemfaultdPlugin *handle, int socket_fd, struct msgh
     goto cleanup;
   }
 
+  fprintf(stderr, "coredump:: enqueued corefile for PID %d\n", pid);
+
   ret = EXIT_SUCCESS;
 
 cleanup:
   free(data);
   if (file_stream != -1) {
     close(file_stream);
-  }
-  if ((sendto(socket_fd, &ret, sizeof(ret), 0, (struct sockaddr *)msg->msg_name,
-              msg->msg_namelen)) == -1) {
-    fprintf(stderr, "coredump:: Failed to send response back to client : %s\n", strerror(errno));
   }
 
   if (ret != EXIT_SUCCESS) {
@@ -401,6 +418,7 @@ bool memfaultd_coredump_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns 
   }
 
   if (!(handle->core_dir = prv_create_dir(handle, "core"))) {
+    fprintf(stderr, "coredump:: Unable to create core directory.\n");
     goto cleanup;
   }
 
@@ -415,16 +433,21 @@ bool memfaultd_coredump_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns 
   }
   close(fd);
 
-  //! Initialise the corefile rate limiter, errors here aren't critical
-  int rate_limit_count = 0;
-  int rate_limit_duration_seconds = 0;
-  memfaultd_get_integer(handle->memfaultd, "coredump_plugin", "rate_limit_count",
-                        &rate_limit_count);
-  memfaultd_get_integer(handle->memfaultd, "coredump_plugin", "rate_limit_duration_seconds",
-                        &rate_limit_duration_seconds);
+  handle->rate_limiter = coredump_create_rate_limiter(handle->memfaultd);
 
-  handle->rate_limiter = memfaultd_rate_limiter_init(
-    handle->memfaultd, rate_limit_count, rate_limit_duration_seconds, RATE_LIMIT_FILENAME);
+  const char *compression = COMPRESSION_DEFAULT;
+  memfaultd_get_string(handle->memfaultd, "coredump_plugin", "compression", &compression);
+  if (strcmp(compression, "gzip") == 0) {
+    handle->gzip_enabled = true;
+  } else if (strcmp(compression, "none") == 0) {
+    handle->gzip_enabled = false;
+  } else {
+    fprintf(stderr,
+            "coredump:: Invalid configuration: coredump_plugin.compression value '%s' - Use "
+            "'none' or 'gzip'.\n",
+            compression);
+    handle->gzip_enabled = true;
+  }
 
   return true;
 

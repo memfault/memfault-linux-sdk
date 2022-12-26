@@ -24,6 +24,10 @@ repos:
       - id: prettier
         args: [--write]
         files: \.(json|markdown|md|yaml|yml)$
+        exclude: |
+          (?x)^(
+              \.github/pull_request_template.md$  # It's Markdown-ish
+          )$
 
   - repo: https://github.com/pre-commit/mirrors-clang-format
     rev: "v13.0.1"
