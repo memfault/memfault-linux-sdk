@@ -10,16 +10,11 @@ fi
 echo "Installing cpputest dependencies"
 dpkg --add-architecture i386
 apt-get update
-
-# Work-around for conflicting binary (32 vs 64 bit) -- we don't use/need it
-rm -rf /usr/bin/curl-config
-
 apt-get install -y \
     gcc-multilib g++-multilib \
     libjson-c-dev:i386 \
     libsystemd-dev:i386 \
     uuid-dev:i386 \
-    libcurl4-openssl-dev:i386 \
     zlib1g-dev:i386
 
 # Work-around for libubootenv-dev:i386 package not existing -- we only need the header to compiler the unit tests:

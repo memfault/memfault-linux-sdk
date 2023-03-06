@@ -1,5 +1,9 @@
 # Development
 
+`memfaultd` build is controlled by Cargo. The `Cargo.toml` and `build.rs`
+control the rust build process and will call `cmake`/`configure`/`make` to build
+the C libraries during the build process.
+
 ## Building outside Yocto
 
 ### Installing dependencies
@@ -9,39 +13,45 @@
 ```sh
 apt install \
   cpputest \
-  libcurl4-openssl-dev \
   libjson-c-dev \
+  uuid-dev \
   libsystemd-dev \
-  libubootenv-dev
+  libubootenv-dev \
+  libconfig-dev
+```
+
+#### On macOS
+
+```sh
+brew install cmake cpputest libconfig util-linux json-c
 ```
 
 ### Building
 
 ```sh
-BUILD_DIR=build
-
-mkdir -p $BUILD_DIR
-cd $BUILD_DIR
-cmake .. # Point it at the directory where DEVELOPMENT.md lives.
-make
+cargo build
 ```
 
-You may choose anything as your build directory, but currently we have some in
-`.gitignore`:
+## Building with Yocto
 
-- `/build` at the root of the `memfault-linux-sdk-internal` repository, and
-- `cmake-build-*/` anywhere in the `memfault-linux-sdk-internal` repository—this
-  is what CLion uses.
+Use the `docker/run.sh` script to run a docker container with all the required
+dependencies. Use the alias `b` to build the image.
 
 ## Running tests
 
-Do this after running a build, inside the build directory:
+### Unit tests
+
+Do this after running a build, inside the (cmake) build directory:
 
 ```sh
+mkdir build
+cd build
+cmake ..
+make
 make test
 ```
 
-### Inside Docker
+### Integration tests (inside docker)
 
 A helper script called `/test.sh` is part of the Docker image that runs
 `memfaultd`'s CppUTest unit tests.
@@ -62,8 +72,6 @@ Or from the host:
 
 ### Using CLion to work on memfaultd
 
-[Install dependencies][#installing-dependencies] first.
-
 - Add `-DPLUGIN_REBOOT=1` (and any other plugins you want to compile in) to the
   CMake arguments in Clion's Settings.
 - If you are using a conda env, add
@@ -74,3 +82,8 @@ Or from the host:
 - Right click it and select "Load Cmake Project".
 - `memfaultd` and various `test_...` targets are now available to build, run and
   debug from CLion!
+
+### Using VSCode to work on memfaultd
+
+VSCode rust plugin will not find the `Cargo.toml` file unless you open the
+`meta-memfault/recipes-memfault/memfaultd/files/memfaultd/` directly.

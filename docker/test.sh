@@ -29,7 +29,7 @@ for arch_and_cflag in "i386 -m32" "x86_64 -m64"; do
     "-DCMAKE_CXX_FLAGS=$2" \
     "-DCMAKE_C_FLAGS=$2" \
     -B "${TEST_BUILD_DIR}-$1" \
-    /home/build/yocto/sources/memfault-linux-sdk/meta-memfault/recipes-memfault/memfaultd/files/memfaultd
+    /home/build/yocto/sources/memfault-linux-sdk/meta-memfault/recipes-memfault/memfaultd/files/libmemfaultc
   cd "${TEST_BUILD_DIR}-$1"
   make --trace "-j$(nproc)"
   make test ARGS=--output-on-failure

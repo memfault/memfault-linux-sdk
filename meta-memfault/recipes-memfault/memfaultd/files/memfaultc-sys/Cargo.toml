@@ -1,0 +1,20 @@
+[package]
+name = "memfaultc-sys"
+version = "0.1.0"
+edition = "2021"
+autobins = false
+
+[dependencies]
+libc = "0.2.138"
+
+[build-dependencies]
+cmake = "0.1"
+pkg-config = "0.3"
+walkdir = "2"
+
+[features]
+coredump = []
+collectd = []
+reboot = []
+swupdate = []
+logging = []

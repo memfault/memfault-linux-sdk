@@ -1,6 +1,8 @@
 #
 # Copyright (c) Memfault, Inc.
 # See License.txt for details
+import time
+
 from memfault_service_tester import MemfaultServiceTester
 from qemu import QEMU
 
@@ -19,7 +21,7 @@ def test(
     qemu: QEMU, memfault_service_tester: MemfaultServiceTester, qemu_device_id: str
 ):
     # Enable data collection, activating the coredump functionality
-    qemu.exec_cmd("memfaultd --enable-data-collection")
+    qemu.exec_cmd("memfaultctl enable-data-collection")
     qemu.systemd_wait_for_service_state("memfaultd.service", "active")
 
     # Stream memfaultd's log
@@ -28,17 +30,21 @@ def test(
     # Wait for memfaultd to actually be ready
     qemu.child().expect("Started memfaultd daemon")
 
+    # Stream logs from memfault-core-handler
+    qemu.exec_cmd("journalctl --follow -t memfault-core-handler &")
+    time.sleep(0.5)
+
     # Trigger the coredump
     qemu.exec_cmd("memfaultctl trigger-coredump")
 
-    # Ensure memfaultd has received the core
-    qemu.child().expect("coredump:: enqueued corefile")
+    # Wait for coredump to be captured by memfault-core-handler:
+    qemu.child().expect("Successfully captured coredump")
 
     # Tell memfault to do the upload now
     qemu.exec_cmd("systemctl kill memfaultd --signal SIGUSR1")
 
     # Ensure memfaultd has transmitted the corefile
-    qemu.child().expect("network:: Successfully transmitted file")
+    qemu.child().expect("Uploading coredump")
 
     # Check that the backend created the coredump:
     memfault_service_tester.poll_elf_coredumps_until_count(

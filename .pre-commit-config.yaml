@@ -36,6 +36,32 @@ repos:
         args: [-style=file, -i]
         files: \.(h|c|cpp)$
 
+  - repo: https://github.com/doublify/pre-commit-rust
+    rev: v1.0
+    hooks:
+      - id: fmt
+        args:
+          [
+            "--manifest-path",
+            "meta-memfault/recipes-memfault/memfaultd/files/memfaultd/Cargo.toml",
+            "--",
+          ]
+      - id: cargo-check
+        args:
+          [
+            "--manifest-path",
+            "meta-memfault/recipes-memfault/memfaultd/files/memfaultd/Cargo.toml",
+          ]
+      - id: clippy
+        args: [
+            "--manifest-path",
+            "meta-memfault/recipes-memfault/memfaultd/files/memfaultd/Cargo.toml",
+            "--",
+            # fail on clippy warnings
+            "-D",
+            "clippy::all",
+          ]
+
   # use local hooks, so we use the versions installed via conda/poetry rather
   # than relying on separately defined pre-commit versions
   - repo: local
