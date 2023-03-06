@@ -10,7 +10,7 @@ IMAGE_FSTYPES:append = " ext4.gz"
 EXTRA_IMAGE_FEATURES ?= "debug-tweaks"
 
 # Licensing
-LICENSE_FLAGS_ACCEPTED = "commercial_memfaultd commercial_memfault-core-handler"
+LICENSE_FLAGS_ACCEPTED = "commercial_memfaultd"
 
 # Wic file support
 IMAGE_FSTYPES:append = " wic wic.bmap"

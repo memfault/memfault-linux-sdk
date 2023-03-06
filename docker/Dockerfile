@@ -1,4 +1,4 @@
-FROM ubuntu:latest
+FROM ubuntu:kinetic
 
 # **NOTE: DO NOT PUT ANYTHING SECRET / CONFIDENTIAL IN THE DOCKER IMAGE** The
 # image is publically published.
@@ -27,7 +27,6 @@ RUN apt-get install -y python3-pip
 # CppUnit testing dependencies for memfaultd's unit tests
 RUN apt-get install -y \
     cmake \
-    libcurl4-openssl-dev \
     libjson-c-dev \
     libsystemd-dev \
     libubootenv-dev \

@@ -1,0 +1,15 @@
+[Unit]
+Description=fluent-bit
+Documentation=https://docs.fluentbit.io/manual/
+Requires=network.target
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/sysconfig/fluent-bit
+EnvironmentFile=-/etc/default/fluent-bit
+ExecStart=/usr/bin/fluent-bit -q -c /etc/fluent-bit/fluent-bit.conf
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

@@ -3,6 +3,7 @@
 # See License.txt for details
 import dataclasses
 import time
+import uuid
 from typing import Any, Callable, Optional, TypeVar
 from unittest.mock import ANY
 
@@ -148,3 +149,17 @@ class MemfaultServiceTester:
         resp = self.session.get(url, params=params)
         assert resp.status_code == expect_status
         return resp.json()["data"] if resp.ok else None
+
+    def log_files_get_list(self, device_serial: str, params=None):
+        rv = self.session.get(
+            f"{self._project_url}/devices/{device_serial}/log-files", params=params
+        )
+        assert rv.status_code == 200
+        return rv.json()["data"]
+
+    def log_file_download(self, device_serial: str, cid: uuid.UUID) -> str:
+        rv = self.session.get(
+            f"{self._project_url}/devices/{device_serial}/log-files/{cid}/download"
+        )
+        assert rv.status_code == 200
+        return rv.text

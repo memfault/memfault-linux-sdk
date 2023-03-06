@@ -24,16 +24,11 @@ class QEMU:
     def __init__(self, image_wic_path: os.PathLike):
         command, *args = runqemu.qemu_build_command(image_wic_path)
         self.pid = pexpect.spawn(command, args, timeout=120, logfile=sys.stdout.buffer)
-        self._prepare()
+        self.login()
 
     def __del__(self):
         self.pid.close()
         self.pid.wait()
-
-    def _prepare(self):
-        self.pid.expect(" login:")
-        self.pid.sendline("root")
-        self._set_env()
 
     def _set_env(self):
         # Setting this environment variable to an empty string or the value "cat" is equivalent to passing --no-pager.
@@ -41,6 +36,11 @@ class QEMU:
         self.exec_cmd("export PAGER=cat")
         # Similarly, use "cat" as a pager for other programs that may honor $PAGER (e.g. systemd does).
         self.exec_cmd("export SYSTEMD_PAGER=cat")
+
+    def login(self):
+        self.pid.expect(" login:")
+        self.pid.sendline("root")
+        self._set_env()
 
     def child(self):
         return self.pid

@@ -6,26 +6,40 @@ LIC_FILES_CHKSUM = "file://${FILE_DIRNAME}/../../../License.txt;md5=f10c502d265f
 FILESEXTRAPATHS:prepend := "${FILE_DIRNAME}/../../:"
 
 SRC_URI = " \
+    file://libmemfaultc \
+    file://memfaultc-sys \
     file://memfaultd \
     file://memfaultd.service \
+    file://Cargo.toml \
+    file://Cargo.lock \
     file://VERSION \
 "
 
-S = "${WORKDIR}/memfaultd"
+S = "${WORKDIR}"
 
-inherit systemd pkgconfig cmake
+inherit systemd cargo
 
-SYSTEMD_AUTO_ENABLE = "enable"
 SYSTEMD_SERVICE:${PN} = "memfaultd.service"
 
-DEPENDS = "curl json-c systemd vim-native"
+DEPENDS = "json-c systemd vim-native cmake-native"
 
-PACKAGECONFIG ??= "plugin_coredump plugin_collectd plugin_reboot plugin_swupdate"
-PACKAGECONFIG[plugin_coredump] = "-DPLUGIN_COREDUMP=1"
-PACKAGECONFIG[plugin_collectd] = "-DPLUGIN_COLLECTD=1"
-PACKAGECONFIG[plugin_reboot] = "-DPLUGIN_REBOOT=1"
-PACKAGECONFIG[plugin_swupdate] = "-DPLUGIN_SWUPDATE=1"
+PACKAGECONFIG ??= "plugin_coredump plugin_collectd plugin_reboot plugin_swupdate "
+PACKAGECONFIG[plugin_coredump] = ""
+PACKAGECONFIG[plugin_collectd] = ""
+PACKAGECONFIG[plugin_reboot] = ""
+PACKAGECONFIG[plugin_swupdate] = ""
+PACKAGECONFIG[plugin_logging] = ""
 
+# Tell Cargo to disable all plugins and only enable the ones we will use.
+EXTRA_CARGO_FLAGS = "--no-default-features"
+
+# Plugin Coredump
+CARGO_FEATURES:append = " \
+    ${@bb.utils.contains('PACKAGECONFIG', 'plugin_coredump', \
+        'coredump', \
+        '', \
+    d)} \
+"
 RDEPENDS:append:${PN} = " \
     ${@bb.utils.contains('PACKAGECONFIG', 'plugin_coredump', \
         'util-linux-libuuid', \
@@ -33,6 +47,21 @@ RDEPENDS:append:${PN} = " \
     d)} \
 "
 
+# Plugin Collectd
+CARGO_FEATURES:append = " \
+    ${@bb.utils.contains('PACKAGECONFIG', 'plugin_collectd', \
+        'collectd', \
+        '', \
+    d)} \
+"
+
+# Plugin Reboot
+CARGO_FEATURES:append = " \
+    ${@bb.utils.contains('PACKAGECONFIG', 'plugin_reboot', \
+        'reboot', \
+        '', \
+    d)} \
+"
 DEPENDS:append = " \
     ${@bb.utils.contains('PACKAGECONFIG', 'plugin_reboot', \
         'libubootenv', \
@@ -40,6 +69,13 @@ DEPENDS:append = " \
     d)} \
 "
 
+# Plugin SWUpdate
+CARGO_FEATURES:append = " \
+    ${@bb.utils.contains('PACKAGECONFIG', 'plugin_swupdate', \
+        'swupdate', \
+        '', \
+    d)} \
+"
 DEPENDS:append = " \
     ${@bb.utils.contains('PACKAGECONFIG', 'plugin_swupdate', \
         'libconfig', \
@@ -47,20 +83,25 @@ DEPENDS:append = " \
     d)} \
 "
 
-def get_cflags(d):
-    ret = []
-    versionFile = d.expand("${FILE_DIRNAME}") + "/../../VERSION"
-    if os.path.exists(versionFile):
-        with open(versionFile) as file:
-            for line in file.readlines():
-                ret.append(" -D" + line.strip().replace(" ", "").replace(":", "="))
-    return ''.join(ret)
-
-CFLAGS = "${@get_cflags(d)}"
-
-EXTRA_OECMAKE = "-DTESTS=0"
+# Plugin Logging
+CARGO_FEATURES:append = " \
+    ${@bb.utils.contains('PACKAGECONFIG', 'plugin_logging', \
+        'logging', \
+        '', \
+    d)} \
+"
 
 do_install:append() {
     install -d ${D}/${systemd_unitdir}/system
     install -m 0644 ${WORKDIR}/memfaultd.service ${D}/${systemd_unitdir}/system
+
+    # Cargo will build two binaries but we know they are the same.
+    # To save space we replace memfaultctl with a symbolic link to memfaultd.
+    rm ${D}/usr/bin/memfaultctl
+    ln -s /usr/bin/memfaultd ${D}/usr/bin/memfaultctl
+
+    # TODO: only install if plugin is enabled
+    rm ${D}/usr/bin/memfault-core-handler
+    mkdir -p ${D}/usr/sbin
+    ln -s /usr/bin/memfaultd ${D}/usr/sbin/memfault-core-handler
 }

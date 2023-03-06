@@ -1,0 +1,14 @@
+[workspace]
+
+members = [
+  "memfaultd",
+  "memfaultc-sys"
+]
+
+[profile.release]
+# We do not handle FFI unwinding so we need to keep panic abort for now.
+panic="abort"
+opt-level = "z"
+
+[profile.dev]
+panic="abort"

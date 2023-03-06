@@ -6,6 +6,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2023-03-06
+
+### Added
+
+- Memfault SDK on Linux now supports Memfault archives (MAR), also used in our
+  Android SDK. Going forward this is how all data will be stored on disk.
+- A local TCP endpoint, compatible with fluent-bit tcp output plugin, is now
+  available to capture logs. Logs are written to disk in MAR (Memfault ARchive)
+  format and uploaded to Memfault when the device is online. **This feature is
+  in technical preview stage and is disabled by default.** See [logging on
+  linux][linux-logging] for more information.
+- `meta-memfault-example` now includes fluent-bit to demonstrate how to collect
+  logs.
+- Memfault Linux SDK is now partially written in Rust. Our Yocto layer requires
+  cargo and rust 1.65.0. We recommend [meta-rust-bin] from the rust-embedded
+  project.
+  - 🚧 `memfaultd` in the Linux SDK is currently a mix of C code and Rust.
+    Please excuse the noise while we continue construction. 🚧
+- Memfault agent can now be built on Linux and macOS systems (`cargo build`).
+
+[meta-rust-bin]: https://github.com/rust-embedded/meta-rust-bin
+[linux-logging]: https://docs.memfault.com/docs/linux/logging
+
+### Changed
+
+- `memfaultd` can now capture coredumps of itself.
+
+### Fixed
+
+- Fix bug where we restarted swupdate instead of swupdate.service. This removes
+  a warning in the logs.
+- Added link to the changelog in the release notes.
+- Fix a bug where memfault would ignore SIGUSR1 signal while it was processing
+  uploads.
+- Fix a bug in the coredump capturing code that would cause a crash in case more
+  than 16 warnings got emitted during the capture process. Thanks to
+  [@attilaszia](https://github.com/attilaszia) for reporting this issue.
+
 ## [1.2.0] - 2022-12-26
 
 ### Added
@@ -257,3 +295,7 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/0.3.1-kirkstone
 [1.0.0]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.0.0-kirkstone
+[1.2.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.2.0-kirkstone
+[1.3.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.3.0-kirkstone

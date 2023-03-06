@@ -22,6 +22,7 @@ while getopts "bv:c:e:r:tv:" options; do
         ;;
     r)
         YOCTO_RELEASE="${OPTARG}"
+        buildmount="--mount type=volume,source=yocto-build-${YOCTO_RELEASE},target=/home/build/yocto/build"
         ;;
     t)
         # Use a bind mount at ${MEMFAULT_YOCTO_BUILD_MOUNT_PREFIX}${YOCTO_RELEASE} for the build artifacts
