@@ -17,8 +17,7 @@ expression: content
     "output_file": "/tmp/swupdate.cfg"
   },
   "reboot_plugin": {
-    "last_reboot_reason_file": "/media/last_reboot_reason",
-    "uboot_fw_env_file": "/etc/fw_env.config"
+    "last_reboot_reason_file": "/media/last_reboot_reason"
   },
   "collectd_plugin": {
     "header_include_output_file": "/tmp/collectd-header-include.conf",
@@ -44,9 +43,11 @@ expression: content
   "logs": {
     "rotate_size_kib": 10240,
     "rotate_after_seconds": 3600,
-    "tmp_folder": "tmplogs"
+    "tmp_folder": "tmplogs",
+    "compression_level": 1
   },
   "mar": {
-    "storage_max_usage_kib": 102400
+    "storage_max_usage_kib": 102400,
+    "mar_file_max_size_kib": 10240
   }
 }

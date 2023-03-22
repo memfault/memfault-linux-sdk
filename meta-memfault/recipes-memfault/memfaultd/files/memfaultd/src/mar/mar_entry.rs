@@ -7,10 +7,12 @@
 //!
 //! A MAR entry is a folder with a unique name, a manifest and some optional attachments.
 //!
+use crate::mar::manifest::CompressionAlgorithm;
 use eyre::{eyre, Context, Result};
 use std::collections::VecDeque;
 use std::fs::{self, File};
 use std::io::BufReader;
+use std::iter::once;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use uuid::Uuid;
@@ -22,6 +24,7 @@ use super::manifest::{CollectionTime, Manifest, Metadata};
 
 /// A candidate folder for inclusion in a MAR zip file
 pub struct MarEntry {
+    /// Path to the directory on disk where the MAR entry is stored.
     pub path: PathBuf,
     pub uuid: Uuid,
     pub manifest: Manifest,
@@ -103,10 +106,20 @@ impl MarEntry {
             manifest,
         })
     }
+
+    /// Returns an iterator over the filenames of the manifest.json and attachments of this MAR entry.
+    pub fn filenames(&self) -> impl Iterator<Item = String> {
+        once("manifest.json".to_owned()).chain(self.manifest.attachments())
+    }
 }
 
 impl MarEntryBuilder {
-    pub fn new_log(file: PathBuf, cid: Uuid, next_cid: Uuid) -> Result<Self> {
+    pub fn new_log(
+        file: PathBuf,
+        cid: Uuid,
+        next_cid: Uuid,
+        compression: CompressionAlgorithm,
+    ) -> Result<Self> {
         Ok(Self {
             collection_time: CollectionTime::now()?,
             metadata: Metadata::new_log(
@@ -117,6 +130,7 @@ impl MarEntryBuilder {
                     .to_owned(),
                 cid,
                 next_cid,
+                compression,
             ),
             attachments: vec![file],
         })

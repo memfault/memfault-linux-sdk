@@ -65,7 +65,6 @@ static int prv_cmd_disable_data_collection(sMemfaultCtl *h) {
 }
 
 static int prv_cmd_reboot(sMemfaultCtl *h) {
-#ifdef PLUGIN_REBOOT
   const char *reboot_reason_file;
 
   if (!memfaultd_config_get_string(h->config, "reboot_plugin", "last_reboot_reason_file",
@@ -113,11 +112,6 @@ static int prv_cmd_reboot(sMemfaultCtl *h) {
     return -1;
   }
   return 0;
-#else
-  fprintf(stderr,
-          "You must enable PLUGIN_REBOOT when building memfault SDK to use reboot reasons.\n");
-  return -1;
-#endif
 }
 
 static int prv_cmd_request_metrics(sMemfaultCtl *h) {

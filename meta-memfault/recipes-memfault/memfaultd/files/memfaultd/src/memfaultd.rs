@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use eyre::Result;
 use eyre::{eyre, Context};
-use log::{error, info, trace, warn};
+use log::{debug, error, info, trace, warn};
 
 use memfaultc_sys::QueueHandle;
 
@@ -27,8 +27,9 @@ use crate::process_coredumps::process_coredumps_with;
 
 #[cfg(feature = "logging")]
 use crate::{
-    fluent_bit::FluentBitReceiver, logs::fluent_bit_adapter::FluentBitAdapter,
-    logs::log_collector::LogCollector,
+    fluent_bit::FluentBitReceiver, logs::completed_log::CompletedLog,
+    logs::fluent_bit_adapter::FluentBitAdapter, logs::log_collector::LogCollector,
+    mar::mar_entry::MarEntryBuilder,
 };
 
 #[no_mangle]
@@ -72,10 +73,10 @@ fn process_loop(user_config: Option<&Path>, queue: QueueHandle) -> Result<()> {
         .wrap_err(eyre!("Unable to prepare network client"))?;
     let mut queue = Queue::attach(queue);
 
-    // Make sure the mar staging area exists
+    // Make sure the MAR staging area exists
     create_dir_all(config.mar_staging_path()).wrap_err_with(|| {
         eyre!(
-            "Unable to create mar staging area {}",
+            "Unable to create MAR staging area {}",
             &config.mar_staging_path().display(),
         )
     })?;
@@ -100,12 +101,29 @@ fn process_loop(user_config: Option<&Path>, queue: QueueHandle) -> Result<()> {
 
     #[cfg(feature = "logging")]
     {
+        let network_config = NetworkConfig::from(&config);
+        let mar_staging_path = config.mar_staging_path();
         let fluent_bit_receiver = FluentBitReceiver::start((&config).into())?;
         let mar_cleaner = mar_cleaner.clone();
-        let before_add_mar_entry = move |estimated_entry_size: u64| {
-            mar_cleaner.clean(estimated_entry_size).unwrap();
+        let on_log_completion = move |CompletedLog {
+                                          path,
+                                          cid,
+                                          next_cid,
+                                          compression,
+                                      }|
+              -> Result<()> {
+            // Prepare the MAR entry
+            let mar_builder = MarEntryBuilder::new_log(path, cid, next_cid, compression)?;
+
+            mar_cleaner.clean(mar_builder.estimated_entry_size())?;
+
+            // Move the log in the mar_staging area and add a manifest
+            let mar_entry = mar_builder.save(&mar_staging_path, &network_config)?;
+            debug!("New MAR entry generated: {}", mar_entry.path.display());
+
+            Ok(())
         };
-        let mut log_collector = LogCollector::open((&config).into(), before_add_mar_entry)?;
+        let mut log_collector = LogCollector::open((&config).into(), on_log_completion)?;
         log_collector.spawn_collect_from(FluentBitAdapter::new(
             fluent_bit_receiver,
             &config.config_file.fluent_bit.extra_fluentd_attributes,
@@ -140,7 +158,11 @@ fn process_loop(user_config: Option<&Path>, queue: QueueHandle) -> Result<()> {
             mar_cleaner.clean(0).unwrap();
 
             trace!("Collect MAR entries...");
-            collect_and_upload(&config.mar_staging_path(), &client)?;
+            collect_and_upload(
+                &config.mar_staging_path(),
+                &client,
+                config.config_file.mar.mar_file_max_size,
+            )?;
             Ok(())
         },
         || match (

@@ -1,4 +1,5 @@
 MACHINE ?= "qemuarm64"
+include conf/machine/${MACHINE}-memfault.conf
 
 DISTRO = "poky"
 PACKAGE_CLASSES = "package_deb"
@@ -12,9 +13,7 @@ EXTRA_IMAGE_FEATURES ?= "debug-tweaks"
 # Licensing
 LICENSE_FLAGS_WHITELIST = "commercial_memfaultd"
 
-# Wic file support
 IMAGE_FSTYPES_append = " wic wic.bmap"
-WKS_FILE = "memfault.wks"
 MACHINE_ESSENTIAL_EXTRA_RDEPENDS += "kernel-image"
 do_image_wic[depends] += "mtools-native:do_populate_sysroot dosfstools-native:do_populate_sysroot virtual/bootloader:do_deploy"
 
@@ -24,9 +23,8 @@ KERNEL_FEATURES_append = " cgl/features/pstore/pstore.scc cfg/debug/misc/debug-p
 
 # Bootloader
 UBOOT_MACHINE ?= "qemu_arm64_defconfig"
+# This is in the qemu include file but not with the dunfell syntax
 EXTRA_IMAGEDEPENDS_append = " virtual/bootloader"
-PREFERRED_PROVIDER_virtual/bootloader = "u-boot"
-IMAGE_BOOT_FILES = "u-boot.bin boot.scr"
 
 # systemd system manager
 DISTRO_FEATURES_append = " systemd"
@@ -50,11 +48,3 @@ MEMFAULT_HARDWARE_VERSION_pn-swupdate := "${@d.getVar('BB_ORIGENV', False).getVa
 # Used by swupdate-image to populate the sw-description.in template file:
 MEMFAULT_SOFTWARE_VERSION_pn-swupdate-image := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_SOFTWARE_VERSION')}"
 MEMFAULT_HARDWARE_VERSION_pn-swupdate-image := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_HARDWARE_VERSION')}"
-
-
-# Support runqemu script
-QB_DEFAULT_FSTYPE = "wic"
-QB_DRIVE_TYPE = "/dev/vdb"
-QB_SYSTEM_NAME = "qemu-system-arm"
-QB_DEFAULT_BIOS = "u-boot.bin"
-QB_MEM = "512M"

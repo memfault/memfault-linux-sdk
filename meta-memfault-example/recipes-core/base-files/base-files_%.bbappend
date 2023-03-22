@@ -1,8 +1,8 @@
-FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
+FILESEXTRAPATHS:prepend := "${THISDIR}/files/${SOC_FAMILY}:${THISDIR}/files:"
 
-SRC_URI:append = " \
-    file://fstab.append \
+SRC_URI += " \
     file://hosts.append \
+    file://fstab.append \
 "
 
 do_install:append () {

@@ -10,16 +10,13 @@ do_rootfs[noexec] = "1"
 do_rootfs_wicenv[noexec] = "1"
 do_image[noexec] = "1"
 do_image_wic[noexec] = "1"
+do_image_ext3[noexec] = "1"
 do_image_ext4[noexec] = "1"
 do_image_tar[noexec] = "1"
+do_image_complete[noexec] = "1"
 do_image_complete_setscene[noexec] = "1"
 do_image_qa[noexec] = "1"
 do_image_qa_setscene[noexec] = "1"
 do_build[noexec] = "1"
-
-# Overload instead of disabling to allow dependencies to be processed correctly
-python do_image_complete() {
-    pass
-}
 
 do_image[depends] += "swupdate-image:do_swuimage base-image:do_image_complete"

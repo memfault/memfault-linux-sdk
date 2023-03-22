@@ -30,6 +30,13 @@ else
     git -C "${swupdate_dir}" checkout "${YOCTO_RELEASE}" && git -C "${swupdate_dir}" pull --ff-only
 fi
 
+raspberrypi_dir="${HOME}/yocto/sources/meta-raspberrypi"
+if [ ! -d "${raspberrypi_dir}" ]; then
+  git clone https://git.yoctoproject.org/git/meta-raspberrypi --branch "${YOCTO_RELEASE}" "${raspberrypi_dir}"
+else
+  git -C "${raspberrypi_dir}" checkout "${YOCTO_RELEASE}" && git -C "${raspberrypi_dir}" pull --ff-only
+fi
+
 # oe-init-build-env requires allowing unbound variables...:
 set +u
 

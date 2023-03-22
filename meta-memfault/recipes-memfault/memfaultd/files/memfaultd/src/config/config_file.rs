@@ -40,7 +40,6 @@ pub struct SwUpdateConfig {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RebootPlugin {
     pub last_reboot_reason_file: PathBuf,
-    pub uboot_fw_env_file: PathBuf,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -93,20 +92,26 @@ pub struct LogsConfig {
     pub rotate_after: Duration,
 
     pub tmp_folder: PathBuf,
+
+    #[serde(with = "number_to_compression")]
+    pub compression_level: Compression,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct MarConfig {
     #[serde(rename = "storage_max_usage_kib", with = "kib_to_usize")]
     pub storage_max_usage: usize,
+    #[serde(rename = "mar_file_max_size_kib", with = "kib_to_usize")]
+    pub mar_file_max_size: usize,
 }
 
+use flate2::Compression;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
 
 impl MemfaultdConfig {
-    const DEFAULT_CONFIG_PATH: &str = "/etc/memfaultd.conf";
+    const DEFAULT_CONFIG_PATH: &'static str = "/etc/memfaultd.conf";
 
     pub fn load(config_path: Option<&Path>) -> eyre::Result<MemfaultdConfig> {
         // Initialize with the builtin config file.
@@ -167,6 +172,19 @@ impl MemfaultdConfig {
         );
         data_dir.push("runtime.conf");
         Ok(data_dir)
+    }
+}
+
+#[cfg(test)]
+impl MemfaultdConfig {
+    pub fn test_fixture() -> Self {
+        use std::fs::write;
+        use tempfile::tempdir;
+
+        let tmp = tempdir().unwrap();
+        let config_path = tmp.path().join("memfaultd.conf");
+        write(&config_path, "{}").unwrap();
+        MemfaultdConfig::load(Some(&config_path)).unwrap()
     }
 }
 

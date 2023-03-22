@@ -41,3 +41,13 @@ impl Config {
         self.config_file.data_dir.join(MAR_STAGING_SUBDIRECTORY)
     }
 }
+
+#[cfg(test)]
+impl Config {
+    pub fn test_fixture() -> Self {
+        Config {
+            device_info: DeviceInfo::test_fixture(),
+            config_file: MemfaultdConfig::test_fixture(),
+        }
+    }
+}

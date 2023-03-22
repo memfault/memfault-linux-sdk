@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2023-03-22
+
+### Added
+
+- Add configuration in `meta-memfault-example` to run on Raspberry Pi 2/3/4.
+
+### Changed
+
+- Log files are now stored compressed on disk to reduce disk usage.
+- To upload Memfault MAR entries (including logs), they are now streamed
+  directly from disk without writing the MAR zip file to disk. This reduces disk
+  I/O (flash wear) and means logs are only written once to disk which is
+  optimal.
+- Display server error text for Memfault API endpoints. This helps debug
+  configuration issues.
+- Validate the provided `device_id` and show an error if it will not be accepted
+  by Memfault.
+- Removed memfaultd dependency on libuboot. It was used to detect OTA reboots
+  but we are now configuring swupdate to call `memfaultctl reboot --reason 3`
+  after installing an upgrade.
+
+### Fixed
+
+- Fixed consistency of logfiles' Cid/NextCid which will help the Memfault
+  dashboard identify discontinuity in the series of logs.
+- Fixed the sleep duration displayed after a network error (memfaultd would
+  announce sleeping for an hour but it would actually retry sooner).
+- Fix a configuration problem where `collectd` logs would not be visible in the
+  Memfault Dashboard (logs sent only to syslog are not captured by the default
+  configuration - we are now configuring `collectd` to log to the standard
+  output which is captured by `journald`).
+
 ## [1.3.0] - 2023-03-06
 
 ### Added
@@ -299,3 +331,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.2.0-kirkstone
 [1.3.0]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.3.0-kirkstone
+[1.3.1]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.3.1-kirkstone

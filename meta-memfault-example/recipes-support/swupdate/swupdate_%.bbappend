@@ -11,6 +11,7 @@ do_swupdate_args_update() {
     # directly during the build process, create a 'output' file to modify
     cp ${WORKDIR}/09-swupdate-args.in ${WORKDIR}/09-swupdate-args
     sed -i -e "s%__MEMFAULT_HARDWARE_VERSION%${MEMFAULT_HARDWARE_VERSION}%" ${WORKDIR}/09-swupdate-args
+    sed -i -e "s%__OTA_PARTITION_A%${OTA_PARTITION_A}%" ${WORKDIR}/09-swupdate-args
 }
 addtask do_swupdate_args_update before do_install after do_unpack
 

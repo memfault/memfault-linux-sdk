@@ -25,6 +25,8 @@ do_swupdate_update_swdescription() {
     cp ${WORKDIR}/sw-description.in ${WORKDIR}/sw-description
     sed -i -e "s%__MEMFAULT_SOFTWARE_VERSION%${MEMFAULT_SOFTWARE_VERSION}%" ${WORKDIR}/sw-description
     sed -i -e "s%__MEMFAULT_HARDWARE_VERSION%${MEMFAULT_HARDWARE_VERSION}%" ${WORKDIR}/sw-description
+    sed -i -e "s%__OTA_PARTITION_A%${OTA_PARTITION_A}%" ${WORKDIR}/sw-description
+    sed -i -e "s%__OTA_PARTITION_B%${OTA_PARTITION_B}%" ${WORKDIR}/sw-description
     sed -i -e "s%__MACHINE%${MACHINE}%" ${WORKDIR}/sw-description
 }
 addtask do_swupdate_update_swdescription before do_swuimage after do_unpack do_prepare_recipe_sysroot

@@ -10,7 +10,7 @@ software = {
                         filename = "base-image-__MACHINE.ext4.gz";
                         type = "raw";
                         compressed = "zlib";
-                        device = "/dev/vda2";
+                        device = "/dev/__OTA_PARTITION_A";
                     }
                 );
                 uboot: (
@@ -27,7 +27,7 @@ software = {
                         filename = "base-image-__MACHINE.ext4.gz";
                         type = "raw";
                         compressed = "zlib";
-                        device = "/dev/vda3";
+                        device = "/dev/__OTA_PARTITION_B";
                     }
                 );
                 uboot: (

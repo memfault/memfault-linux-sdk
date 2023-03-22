@@ -52,6 +52,9 @@ list(APPEND sources
     src/memfaultd.c
     src/queue.c
     src/plugins/attributes/attributes.c
+    src/plugins/reboot/reboot.c
+    src/plugins/reboot/reboot_last_boot_id.c
+    src/plugins/reboot/reboot_process_pstore.c
     src/util/cbor.c
     src/util/config.c
     src/util/device_settings.c
@@ -69,21 +72,6 @@ list(APPEND sources
     src/util/systemd.c
     src/util/version.c
 )
-
-if(PLUGIN_REBOOT)
-    list(APPEND sources
-        src/plugins/reboot/reboot.c
-        src/plugins/reboot/reboot_last_boot_id.c
-        src/plugins/reboot/reboot_process_pstore.c
-    )
-    add_definitions("-DPLUGIN_REBOOT")
-
-    if (NOT MACOS_BUILD)
-        pkg_check_modules(LIBUBOOT REQUIRED libubootenv)
-        add_definitions("-DHAVE_UBOOT")
-        list(APPEND plugin_libraries ${libuboot_LIBRARIES})
-    endif()
-endif()
 
 if(PLUGIN_SWUPDATE)
     list(APPEND sources src/plugins/swupdate.c)

@@ -24,7 +24,6 @@
 #include "reboot/reboot_process_pstore.h"
 
 extern "C" {
-#include <libuboot.h>
 #include <systemd/sd-bus.h>
 }
 
@@ -118,26 +117,6 @@ int sd_bus_get_property_string(sd_bus *bus, const char *destination, const char 
 void sd_bus_error_free(sd_bus_error *e) {}
 
 sd_bus *sd_bus_unref(sd_bus *bus) { return bus; }
-
-int libuboot_initialize(struct uboot_ctx **out, struct uboot_env_device *envdevs) {
-  return mock().actualCall("libuboot_initialize").returnIntValue();
-}
-
-int libuboot_read_config(struct uboot_ctx *ctx, const char *config) {
-  return mock().actualCall("libuboot_read_config").returnIntValue();
-}
-
-int libuboot_open(struct uboot_ctx *ctx) {
-  return mock().actualCall("libuboot_open").returnIntValue();
-}
-
-char *libuboot_get_env(struct uboot_ctx *ctx, const char *varname) {
-  return (char *)mock().actualCall("libuboot_get_env").returnPointerValue();
-}
-
-void libuboot_close(struct uboot_ctx *ctx) { mock().actualCall("libuboot_close"); }
-
-void libuboot_exit(struct uboot_ctx *ctx) { mock().actualCall("libuboot_exit"); }
 
 TEST_BASE(MemfaultdRebootUtest) {
   char tmp_dir[PATH_MAX] = {0};
@@ -261,23 +240,6 @@ TEST_BASE(MemfaultdRebootUtest) {
       .expectOneCall("sd_bus_get_property_string")
       .withOutputParameterReturning("ret", &system_state, sizeof(system_state))
       .andReturnValue(0);
-  }
-
-  void expect_ustate_calls(const char *val) {
-    ustate = strdup(val);
-    mock().expectOneCall("libuboot_initialize").andReturnValue(0);
-    mock()
-      .expectOneCall("memfaultd_get_string")
-      .withStringParameter("parent_key", "reboot_plugin")
-      .withStringParameter("key", "uboot_fw_env_file")
-      .withOutputParameterReturning("val", NULL, 0)
-      .andReturnValue(true);
-    mock().expectOneCall("libuboot_read_config").andReturnValue(0);
-    mock().expectOneCall("libuboot_open").andReturnValue(0);
-
-    mock().expectOneCall("libuboot_get_env").andReturnValue((void *)ustate);
-    mock().expectOneCall("libuboot_close").andReturnValue(0);
-    mock().expectOneCall("libuboot_exit").andReturnValue(0);
   }
 
   void expect_tx_unknown_reboot_reason() {
@@ -575,37 +537,12 @@ TEST(TestGroup_Shutdown, Test_Stopping) {
   memfaultd_reboot_init(g_stub_memfaultd, &fns);
 
   expect_sd_bus_get_property_string_call("stopping");              // systemd in stopping state
-  expect_ustate_calls("0");                                        // not upgrading
   expect_lastrebootreason_file_generate_call("lastrebootreason");  // write reboot reason file
 
   fns->plugin_destroy(fns->handle);
 
   char *lastrebootreason_str = read_lastrebootreason_file();
   MEMCMP_EQUAL("2", lastrebootreason_str, strlen(lastrebootreason_str));
-  free(lastrebootreason_str);
-}
-
-/* shutting down, upgrade; "3" in lastrebootreason */
-TEST(TestGroup_Shutdown, Test_Upgrade) {
-  // 'Empty' startup
-  expect_enable_data_collection_get_boolean_call(true);  // collection enabled
-  expect_last_tracked_boot_id_file_generate_call();
-  expect_memfault_reboot_is_untracked_boot_id(true);
-  expect_customer_reboot_reason_file_get_string_call();
-  expect_lastrebootreason_file_generate_call("lastrebootreason");  // read reboot reason file
-  expect_access_call(-1);                                          // no pstore file
-  expect_tx_unknown_reboot_reason();
-
-  memfaultd_reboot_init(g_stub_memfaultd, &fns);
-
-  expect_sd_bus_get_property_string_call("stopping");              // systemd in stopping state
-  expect_ustate_calls("1");                                        // upgrading
-  expect_lastrebootreason_file_generate_call("lastrebootreason");  // write reboot reason file
-
-  fns->plugin_destroy(fns->handle);
-
-  char *lastrebootreason_str = read_lastrebootreason_file();
-  MEMCMP_EQUAL("3", lastrebootreason_str, strlen(lastrebootreason_str));
   free(lastrebootreason_str);
 }
 

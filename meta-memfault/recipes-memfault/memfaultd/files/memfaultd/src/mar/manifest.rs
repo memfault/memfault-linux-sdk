@@ -45,6 +45,19 @@ struct Device {
     device_serial: String,
 }
 
+#[derive(Serialize, Deserialize, Copy, Clone)]
+pub enum CompressionAlgorithm {
+    None,
+    #[serde(rename = "zlib")]
+    Zlib,
+}
+
+impl CompressionAlgorithm {
+    pub fn is_none(&self) -> bool {
+        matches!(self, CompressionAlgorithm::None)
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", content = "metadata")]
 pub enum Metadata {
@@ -55,6 +68,8 @@ pub enum Metadata {
         // PathBuf.file_name() -> OsString but serde does not handle it well
         // so we use a String here.
         log_file_name: String,
+        #[serde(skip_serializing_if = "CompressionAlgorithm::is_none")]
+        compression: CompressionAlgorithm,
         cid: Cid,
         next_cid: Cid,
     },
@@ -79,9 +94,15 @@ pub struct Cid {
 }
 
 impl Metadata {
-    pub fn new_log(log_file_name: String, cid: Uuid, next_cid: Uuid) -> Self {
+    pub fn new_log(
+        log_file_name: String,
+        cid: Uuid,
+        next_cid: Uuid,
+        compression: CompressionAlgorithm,
+    ) -> Self {
         Self::LinuxLogs {
             log_file_name,
+            compression,
             cid: Cid { uuid: cid },
             next_cid: Cid { uuid: next_cid },
             format: LinuxLogsFormat {
@@ -159,6 +180,7 @@ impl Manifest {
 
 #[cfg(test)]
 mod tests {
+    use crate::mar::manifest::CompressionAlgorithm;
     use rstest::rstest;
     use uuid::uuid;
 
@@ -167,16 +189,18 @@ mod tests {
     use super::{CollectionTime, Manifest};
 
     #[rstest]
-    fn serialization_of_log() {
+    #[case("log-zlib", CompressionAlgorithm::Zlib)]
+    #[case("log-none", CompressionAlgorithm::None)]
+    fn serialization_of_log(#[case] name: &str, #[case] compression: CompressionAlgorithm) {
         let config = NetworkConfig::test_fixture();
 
         let this_cid = uuid!("99686390-a728-11ed-a68b-e7ff3cd0c7e7");
         let next_cid = uuid!("9e1ece10-a728-11ed-918e-5be35a10c7e7");
-        let m = Manifest::new(
+        let manifest = Manifest::new(
             &config,
             CollectionTime::test_fixture(),
-            super::Metadata::new_log("/var/log/syslog".into(), this_cid, next_cid),
+            super::Metadata::new_log("/var/log/syslog".into(), this_cid, next_cid, compression),
         );
-        insta::assert_json_snapshot!(m, { ".metadata.producer.version" => "tests"});
+        insta::assert_json_snapshot!(name, manifest, { ".metadata.producer.version" => "tests"});
     }
 }

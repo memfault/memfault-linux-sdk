@@ -29,7 +29,6 @@ RUN apt-get install -y \
     cmake \
     libjson-c-dev \
     libsystemd-dev \
-    libubootenv-dev \
     uuid-dev \
     pkg-config
 
