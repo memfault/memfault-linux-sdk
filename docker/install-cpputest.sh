@@ -17,10 +17,6 @@ apt-get install -y \
     uuid-dev:i386 \
     zlib1g-dev:i386
 
-# Work-around for libubootenv-dev:i386 package not existing -- we only need the header to compiler the unit tests:
-cp /usr/include/x86_64-linux-gnu/libuboot.h /usr/include/i386-linux-gnu/libuboot.h
-
-
 # Install a more up to date version of cpputest (debian buster installs 3.8-7)
 CPPUTEST_URL=https://github.com/cpputest/cpputest/releases/download/v4.0/cpputest-4.0.tar.gz
 CPPUTEST_SHA256SUM=21c692105db15299b5529af81a11a7ad80397f92c122bd7bf1e4a4b0e85654f7

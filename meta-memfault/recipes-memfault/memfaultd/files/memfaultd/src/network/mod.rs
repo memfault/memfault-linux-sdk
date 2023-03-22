@@ -1,6 +1,7 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
+use std::io::Read;
 use std::path;
 
 use chrono::Utc;
@@ -9,6 +10,7 @@ use eyre::Result;
 use mockall::automock;
 
 use crate::config::Config;
+use crate::util::io::StreamLen;
 
 pub mod client;
 mod requests;
@@ -24,8 +26,8 @@ pub trait NetworkClient {
     /// Upload a coredump file to Memfault.
     fn upload_coredump(&self, path: &path::Path, gzipped: bool) -> Result<()>;
 
-    /// Upload a marfile to Memfault
-    fn upload_marfile(&self, file: &path::Path) -> Result<()>;
+    /// Upload a MAR file to Memfault
+    fn upload_mar_file<F: Read + StreamLen + Send + 'static>(&self, file: F) -> Result<()>;
 }
 
 /// Internal representation of what is needed to talk to the backend.

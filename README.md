@@ -31,6 +31,15 @@ implements Memfault-specific features and also acts as a configuration agent.
 [source-memfaultd]:
   https://github.com/memfault/memfault-linux-sdk/blob/-/meta-memfault/recipes-memfault/memfaultd/files/memfaultd
 
+## Quickstart
+
+To get started in minutes using the QEMU emulator, read our [Quick Start with
+QEMU guide][quickstart-qemu].
+
+If you have a Raspberry Pi available, the [Quick Start with Raspberry Pi guide]
+[quickstart-rpi] will walk you through building a complete system image,
+flashing it to an SDCard and updating your device remotely with Memfault OTA.
+
 ## Prerequisites
 
 Even though support for a broader diversity of setups is planned, this first
@@ -114,11 +123,23 @@ Linux SDK][docs-linux-coredumps].
 [docs-linux-coredumps]: https://mflt.io/linux-coredumps
 [man-core]: https://man7.org/linux/man-pages/man5/core.5.html
 
-### Reboot Reason Tracking and Logs
+### Reboot Reason Tracking
 
-These features are fully in the domain of `memfaultd`. Note that logs are an
-upcoming feature, while reboot reason tracking and crash reports are supported
-today. Read more about [reboot reason tracking using the Memfault Linux
-SDK][docs-reboots].
+Memfault will detect various reboot reasons from the system and report them to
+the Memfault Dashboard. Users can also provide a specific reboot reason before
+restarting the device. Read more about [reboot reason tracking using the
+Memfault Linux SDK][docs-reboots].
 
 [docs-reboots]: https://mflt.io/linux-reboots
+
+### Log files
+
+System logs are captured by `fluent-bit` and forwarded to Memfault Linux SDK.
+
+Logs are compressed, stored locally and uploaded when the device connects to the
+Internet.
+
+For more information on how to configure log file support, please refer to [the
+linux logging guide][docs-logging]
+
+[docs-logging]: https://docs.memfault.com/docs/linux/logging

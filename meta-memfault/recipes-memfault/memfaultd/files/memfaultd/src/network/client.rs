@@ -1,7 +1,8 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use std::fs;
+use std::fs::File;
+use std::io::Read;
 use std::path;
 use std::str;
 
@@ -11,9 +12,12 @@ use eyre::Context;
 use eyre::Result;
 use log::{debug, trace};
 use reqwest::blocking;
+use reqwest::blocking::Body;
 use reqwest::header;
 
 use crate::retriable_error::RetriableError;
+use crate::util::io::StreamLen;
+use crate::util::string::Ellipsis;
 
 use super::requests::MarUploadMetadata;
 use super::requests::UploadCommitRequest;
@@ -82,13 +86,19 @@ impl NetworkClientImpl {
             }
             .into()),
             // Any other error (404, etc) will be considered fatal and will not be retried.
-            // In testing we capture the full response.
-            _ if cfg!(test) => Err(eyre!(
-                "Unexpected server response: {} {}",
-                status.as_u16(),
-                response.text()?
-            )),
-            _ => Err(eyre!("Unexpected server response: {}", status.as_u16())),
+            // HTTP client errors (4xx) are not expected to happen in normal operation, but can
+            // occur due to misconfiguration/integration issues. Log the first 1KB of the response
+            // body to help with debugging:
+            _ => {
+                let mut response_text = response.text().unwrap_or_else(|_| "???".into());
+                // Limit the size of the response text to avoid filling up the log:
+                response_text.truncate_with_ellipsis(1024);
+                Err(eyre!(
+                    "Unexpected server response: {} {}",
+                    status.as_u16(),
+                    response_text
+                ))
+            }
         }
     }
 
@@ -125,15 +135,13 @@ impl NetworkClientImpl {
     }
 
     /// Upload a file to S3 and return the file token
-    fn prepare_and_upload(&self, file: &path::Path, gzipped: bool) -> Result<String> {
-        let metadata = std::fs::metadata(file)?;
-
-        if !metadata.is_file() {
-            return Err(eyre!("{} is not a file.", file.display()));
-        }
-
+    fn prepare_and_upload<R: Read + Send + 'static>(
+        &self,
+        file: BodyAdapter<R>,
+        gzipped: bool,
+    ) -> Result<String> {
         let prepare_request =
-            UploadPrepareRequest::prepare(&self.config, metadata.len() as usize, gzipped);
+            UploadPrepareRequest::prepare(&self.config, file.size as usize, gzipped);
 
         let prepare_response = self
             .fetch(
@@ -157,13 +165,12 @@ impl NetworkClientImpl {
         Ok(prepare_response.data.token)
     }
 
-    fn put_file(
+    fn put_file<R: Read + Send + 'static>(
         &self,
         url: &str,
-        filepath: &path::Path,
+        file: BodyAdapter<R>,
         content_encoding: Option<&str>,
     ) -> Result<()> {
-        let file = fs::File::open(filepath)?;
         let mut req = self.file_upload_client.put(url);
 
         if let Some(content_encoding) = content_encoding {
@@ -171,8 +178,9 @@ impl NetworkClientImpl {
             req = req.header(header::CONTENT_ENCODING, content_encoding);
         }
 
-        trace!("Uploading {} to {}", filepath.display(), url);
-        let r = req.body(file).send()?;
+        trace!("Uploading file to {}", url);
+        let body: Body = file.into();
+        let r = req.body(body).send()?;
         Self::good_response_or_error(r).and(Ok(()))
     }
 }
@@ -192,8 +200,8 @@ impl NetworkClient for NetworkClientImpl {
             .and(Ok(()))
     }
 
-    fn upload_coredump(&self, file: &path::Path, gzipped: bool) -> Result<()> {
-        let token = self.prepare_and_upload(file, gzipped)?;
+    fn upload_coredump(&self, filepath: &path::Path, gzipped: bool) -> Result<()> {
+        let token = self.prepare_and_upload(File::open(filepath)?.try_into()?, gzipped)?;
 
         let commit = UploadCommitRequest::prepare(&self.config, &token);
         self.fetch(
@@ -205,8 +213,8 @@ impl NetworkClient for NetworkClientImpl {
         .wrap_err("Coredump commit error")
     }
 
-    fn upload_marfile(&self, file: &path::Path) -> Result<()> {
-        let token = self.prepare_and_upload(file, false)?;
+    fn upload_mar_file<F: Read + StreamLen + Send + 'static>(&self, file: F) -> Result<()> {
+        let token = self.prepare_and_upload(file.into(), false)?;
 
         let mar_upload = MarUploadMetadata::prepare(&self.config, &token);
         self.fetch(
@@ -216,5 +224,35 @@ impl NetworkClient for NetworkClientImpl {
         )
         .wrap_err("MAR Upload Error")
         .and(Ok(()))
+    }
+}
+
+/// Small helper to adapt a Read/File into a Body.
+/// Note it's not possible to directly write: impl<T: Read + ...> From<T> for Body { ... }
+/// because of orphan rules. See https://doc.rust-lang.org/error_codes/E0210.html
+struct BodyAdapter<R: Read + Send> {
+    reader: R,
+    size: u64,
+}
+
+impl<R: Read + StreamLen + Send> From<R> for BodyAdapter<R> {
+    fn from(reader: R) -> Self {
+        let size = reader.stream_len();
+        Self { reader, size }
+    }
+}
+
+impl TryFrom<File> for BodyAdapter<File> {
+    type Error = std::io::Error;
+
+    fn try_from(file: File) -> Result<Self, Self::Error> {
+        let size = file.metadata()?.len();
+        Ok(Self { reader: file, size })
+    }
+}
+
+impl<T: Read + Send + 'static> From<BodyAdapter<T>> for Body {
+    fn from(wrapper: BodyAdapter<T>) -> Self {
+        Body::sized(wrapper.reader, wrapper.size)
     }
 }

@@ -82,13 +82,6 @@ fn main() {
     if env::var("CARGO_FEATURE_COLLECTD").is_ok() {
         config.define("PLUGIN_COLLECTD", "1");
     }
-    if env::var("CARGO_FEATURE_REBOOT").is_ok() {
-        config.define("PLUGIN_REBOOT", "1");
-        libs.push(LinkedLibrary {
-            name: "libubootenv",
-            target_os: Some("linux"),
-        });
-    }
     if env::var("CARGO_FEATURE_SWUPDATE").is_ok() {
         config.define("PLUGIN_SWUPDATE", "1");
         libs.push(LinkedLibrary {

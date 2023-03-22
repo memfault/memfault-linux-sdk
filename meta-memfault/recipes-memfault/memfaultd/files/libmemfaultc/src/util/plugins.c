@@ -15,9 +15,7 @@
 
 sMemfaultdPluginDef g_plugins[] = {
   {.name = "attributes", .init = memfaultd_attributes_init, .ipc_name = "ATTRIBUTES"},
-#ifdef PLUGIN_REBOOT
   {.name = "reboot", .init = memfaultd_reboot_init},
-#endif
 #ifdef PLUGIN_SWUPDATE
   {.name = "swupdate", .init = memfaultd_swupdate_init},
 #endif

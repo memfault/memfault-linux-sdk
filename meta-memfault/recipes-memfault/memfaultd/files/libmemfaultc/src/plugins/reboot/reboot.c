@@ -6,14 +6,6 @@
 //! @brief
 //! reboot reason plugin implementation
 
-// clang-format off
-#ifdef HAVE_UBOOT
-  // libuboot.h requires size_t from stddef.h
-  #include <stddef.h>
-  #include <libuboot.h>
-#endif
-// clang-format on
-
 #include <errno.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -236,57 +228,6 @@ cleanup:
 }
 
 /**
- * @brief Checks if the system is mid-upgrade
- *
- * @param handle reboot plugin handle
- * @return true System is upgrading
- * @return false System is not
- */
-static bool prv_reboot_is_upgrade(sMemfaultd *memfaultd) {
-#ifdef HAVE_UBOOT
-  struct uboot_ctx *ctx;
-
-  if (libuboot_initialize(&ctx, NULL) < 0) {
-    fprintf(stderr, "reboot:: Cannot init libuboot library\n");
-    return false;
-  }
-
-  const char *file;
-  if (!memfaultd_get_string(memfaultd, "reboot_plugin", "uboot_fw_env_file", &file)) {
-    file = FWENV_CONFIG_FILE;
-  }
-
-  if (libuboot_read_config(ctx, file) < 0) {
-    libuboot_exit(ctx);
-    fprintf(stderr, "reboot:: Cannot read configuration file %s\n", file);
-    return false;
-  }
-
-  if (libuboot_open(ctx) < 0) {
-    fprintf(stderr, "reboot:: Failed to open libuboot configuration\n");
-    libuboot_exit(ctx);
-    return false;
-  }
-
-  char *ustate = libuboot_get_env(ctx, "ustate");
-  if (!ustate || strcmp("1", ustate) != 0) {
-    free(ustate);
-    libuboot_close(ctx);
-    libuboot_exit(ctx);
-    return false;
-  }
-
-  free(ustate);
-  libuboot_close(ctx);
-  libuboot_exit(ctx);
-  return true;
-#else
-  fprintf(stderr, "reboot:: Assuming reboot is not an upgrade (built without libuboot).");
-  return false;
-#endif
-}
-
-/**
  * @brief Destroys reboot plugin
  *
  * @param memfaultd reboot plugin handle
@@ -295,11 +236,7 @@ static void prv_reboot_destroy(sMemfaultdPlugin *handle) {
   if (handle) {
     if (prv_reboot_is_systemd_state("stopping")) {
       sMemfaultd *const memfaultd = handle->memfaultd;
-      if (prv_reboot_is_upgrade(memfaultd)) {
-        prv_reboot_write_reboot_reason(memfaultd, kMfltRebootReason_FirmwareUpdate);
-      } else {
-        prv_reboot_write_reboot_reason(memfaultd, kMfltRebootReason_UserReset);
-      }
+      prv_reboot_write_reboot_reason(memfaultd, kMfltRebootReason_UserReset);
     }
 
     free(handle);

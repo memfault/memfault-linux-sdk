@@ -24,10 +24,9 @@ typedef struct {
 #define PLUGIN_ATTRIBUTES_IPC_NAME "ATTRIBUTES"
 bool memfaultd_attributes_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns **fns);
 
-#ifdef PLUGIN_REBOOT
 bool memfaultd_reboot_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns **fns);
 void memfaultd_reboot_data_collection_enabled(sMemfaultd *memfaultd, bool data_collection_enabled);
-#endif
+
 #ifdef PLUGIN_SWUPDATE
 bool memfaultd_swupdate_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns **fns);
 #endif

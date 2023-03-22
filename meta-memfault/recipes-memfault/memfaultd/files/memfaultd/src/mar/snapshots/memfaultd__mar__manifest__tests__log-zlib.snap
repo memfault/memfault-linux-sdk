@@ -1,6 +1,6 @@
 ---
 source: memfaultd/src/mar/manifest.rs
-expression: m
+expression: manifest
 ---
 {
   "schema_version": 1,
@@ -29,6 +29,7 @@ expression: m
       "version": "tests"
     },
     "log_file_name": "/var/log/syslog",
+    "compression": "zlib",
     "cid": {
       "uuid": "99686390-a728-11ed-a68b-e7ff3cd0c7e7"
     },

@@ -28,6 +28,7 @@ pub struct SizeLimitedFile {
 impl SizeLimitedFile {
     /// Create a new SizeLimitedFile which will write to file until limit is
     /// reached.
+    #[allow(dead_code)]
     pub fn new(file: File, limit: usize) -> Self {
         Self {
             file,
@@ -71,6 +72,12 @@ pub fn create_file_with_size(path: &Path, size: u64) -> std::io::Result<()> {
         file.write_all(&buffer[..bytes_to_write as usize])?;
         remaining -= bytes_to_write;
     }
+    Ok(())
+}
+
+pub fn create_file_with_contents(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    let mut file = File::create(path)?;
+    file.write_all(contents)?;
     Ok(())
 }
 

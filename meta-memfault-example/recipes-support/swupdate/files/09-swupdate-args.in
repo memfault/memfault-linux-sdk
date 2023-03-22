@@ -1,6 +1,6 @@
 rootfs=$(swupdate -g)
 
-if [ "$rootfs" == '/dev/vda2' ]; then
+if [ "$rootfs" == '/dev/__OTA_PARTITION_A' ]; then
 	selection="-e stable,copy2"
 else
 	selection="-e stable,copy1"
@@ -8,6 +8,7 @@ fi
 
 state=$(fw_printenv ustate | cut -f 2 -d'=')
 if [ "$state" == 1 ]; then
+ # Confirm update Success to server
 	SWUPDATE_SURICATTA_ARGS="-c 2"
 else
 	SWUPDATE_SURICATTA_ARGS=" "

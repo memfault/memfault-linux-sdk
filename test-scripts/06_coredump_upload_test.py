@@ -24,12 +24,6 @@ def test(
     qemu.exec_cmd("memfaultctl enable-data-collection")
     qemu.systemd_wait_for_service_state("memfaultd.service", "active")
 
-    # Stream memfaultd's log
-    qemu.exec_cmd("journalctl -n 0 --follow --unit=memfaultd.service &")
-
-    # Wait for memfaultd to actually be ready
-    qemu.child().expect("Started memfaultd daemon")
-
     # Stream logs from memfault-core-handler
     qemu.exec_cmd("journalctl --follow -t memfault-core-handler &")
     time.sleep(0.5)
@@ -40,8 +34,8 @@ def test(
     # Wait for coredump to be captured by memfault-core-handler:
     qemu.child().expect("Successfully captured coredump")
 
-    # Tell memfault to do the upload now
-    qemu.exec_cmd("systemctl kill memfaultd --signal SIGUSR1")
+    # Stream memfaultd's log
+    qemu.exec_cmd("journalctl --follow --unit=memfaultd.service &")
 
     # Ensure memfaultd has transmitted the corefile
     qemu.child().expect("Uploading coredump")

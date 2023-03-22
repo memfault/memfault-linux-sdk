@@ -4,16 +4,18 @@
 use std::time::SystemTime;
 use std::{
     fs::{create_dir, create_dir_all, set_permissions, File},
-    io::{BufReader, BufWriter, Write},
+    io::{BufWriter, Write},
     os::unix::prelude::PermissionsExt,
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
+use crate::mar::manifest::CompressionAlgorithm;
 use tempfile::{tempdir, TempDir};
 use uuid::Uuid;
 
 use crate::network::NetworkConfig;
 use crate::test_utils::create_file_with_size;
+use crate::util::zip::ZipEncoder;
 
 use super::manifest::{CollectionTime, Manifest, Metadata};
 
@@ -44,6 +46,10 @@ impl MarCollectorFixture {
         path
     }
 
+    pub fn create_logentry_with_size(&mut self, size: u64) -> PathBuf {
+        return self.create_logentry_with_size_and_age(size, SystemTime::now());
+    }
+
     pub fn create_logentry_with_size_and_age(
         &mut self,
         size: u64,
@@ -64,7 +70,12 @@ impl MarCollectorFixture {
         let manifest = Manifest::new(
             &self.config,
             collection_time,
-            Metadata::new_log(log_name, Uuid::new_v4(), Uuid::new_v4()),
+            Metadata::new_log(
+                log_name,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                CompressionAlgorithm::Zlib,
+            ),
         );
         serde_json::to_writer(BufWriter::new(manifest_file), &manifest).unwrap();
 
@@ -92,7 +103,12 @@ impl MarCollectorFixture {
         let manifest = Manifest::new(
             &self.config,
             CollectionTime::test_fixture(),
-            Metadata::new_log(log_name, Uuid::new_v4(), Uuid::new_v4()),
+            Metadata::new_log(
+                log_name,
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                CompressionAlgorithm::Zlib,
+            ),
         );
         serde_json::to_writer(BufWriter::new(manifest_file), &manifest).unwrap();
 
@@ -138,23 +154,21 @@ impl MarCollectorFixture {
     }
 }
 
-/// Check the content of a MAR zip file against a list of expected files
+/// Check the content of a MAR zip encoder against a list of expected files.
 /// The first (in zip order) entry name is renamed from "some_uuid/" to
 /// "<entry>/" before matching and the list is sorted alphabetically.
 /// Eg: ZIP(abcd42/manifest.json abcd42/file.txt) => [<entry>/file.txt, <entry>/manifest.json]
-pub fn assert_mar_content_matches(zip_path: &Path, expected_files: Vec<&str>) -> bool {
-    let z = zip::ZipArchive::new(BufReader::new(File::open(zip_path).unwrap())).unwrap();
-
+pub fn assert_mar_content_matches(zip_encoder: &ZipEncoder, expected_files: Vec<&str>) -> bool {
     // Get the folder name for the first entry, we will s/(entry_uuid)/<entry>/ to make matching friendlier
-    let entry_name = z
-        .file_names()
-        .next()
-        .unwrap()
+    let file_names = zip_encoder.file_names();
+    assert!(!file_names.is_empty());
+
+    let entry_name = file_names[0]
         .split(std::path::MAIN_SEPARATOR)
         .next()
         .unwrap();
-    let mut files_list = z
-        .file_names()
+    let mut files_list = file_names
+        .iter()
         .map(|filename| filename.replace(entry_name, "<entry>"))
         .collect::<Vec<String>>();
     files_list.sort();

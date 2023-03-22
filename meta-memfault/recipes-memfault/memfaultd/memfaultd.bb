@@ -23,10 +23,9 @@ SYSTEMD_SERVICE_${PN} = "memfaultd.service"
 
 DEPENDS = "json-c systemd vim-native cmake-native"
 
-PACKAGECONFIG ??= "plugin_coredump plugin_collectd plugin_reboot plugin_swupdate "
+PACKAGECONFIG ??= "plugin_coredump plugin_collectd plugin_swupdate "
 PACKAGECONFIG[plugin_coredump] = ""
 PACKAGECONFIG[plugin_collectd] = ""
-PACKAGECONFIG[plugin_reboot] = ""
 PACKAGECONFIG[plugin_swupdate] = ""
 PACKAGECONFIG[plugin_logging] = ""
 
@@ -51,20 +50,6 @@ RDEPENDS_append_${PN} = " \
 CARGO_FEATURES_append = " \
     ${@bb.utils.contains('PACKAGECONFIG', 'plugin_collectd', \
         'collectd', \
-        '', \
-    d)} \
-"
-
-# Plugin Reboot
-CARGO_FEATURES_append = " \
-    ${@bb.utils.contains('PACKAGECONFIG', 'plugin_reboot', \
-        'reboot', \
-        '', \
-    d)} \
-"
-DEPENDS_append = " \
-    ${@bb.utils.contains('PACKAGECONFIG', 'plugin_reboot', \
-        'libubootenv', \
         '', \
     d)} \
 "

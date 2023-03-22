@@ -1,24 +1,29 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use eyre::{eyre, Context, Result};
-use log::{trace, warn};
 use std::fs::{remove_dir_all, File};
-use std::io::{Seek, Write};
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
-use tempfile::NamedTempFile;
-use zip::{write::FileOptions, ZipWriter};
+
+use eyre::{Context, Result};
+use itertools::Itertools;
+use log::{trace, warn};
 
 use crate::network::NetworkClient;
+use crate::util::zip::{zip_stream_len_empty, zip_stream_len_for_file, ZipEncoder, ZipEntryInfo};
 
 use super::mar_entry::{MarEntry, MarEntryIterator};
 
 /// Collect all valid MAR entries, upload them and delete them on success.
 ///
 /// This function will not do anything with invalid MAR entries (we assume they are "under construction").
-pub fn collect_and_upload(mar_staging: &Path, client: &impl NetworkClient) -> Result<()> {
+pub fn collect_and_upload(
+    mar_staging: &Path,
+    client: &impl NetworkClient,
+    max_zip_size: usize,
+) -> Result<()> {
     let mut entries = MarEntry::iterate_from_container(mar_staging)?;
-    upload_mar_entries(&mut entries, client, |included_entries| {
+    upload_mar_entries(&mut entries, client, max_zip_size, |included_entries| {
         trace!("Uploaded {:?} - deleting...", included_entries);
         included_entries.iter().for_each(|f| {
             let _ = remove_dir_all(f);
@@ -27,100 +32,121 @@ pub fn collect_and_upload(mar_staging: &Path, client: &impl NetworkClient) -> Re
     Ok(())
 }
 
-/// Zip mar entries into the provided file, consuming items from the iterator.
-/// To continue zipping, caller can call this function again with the same iterator.
+/// Describes the contents for a single MAR file to upload.
+struct MarZipContents {
+    /// All the MAR entry directories to to be included in this file.
+    entry_paths: Vec<PathBuf>,
+    /// All the ZipEntryInfos to be included in this file.
+    zip_infos: Vec<ZipEntryInfo>,
+}
+
+/// Gather MAR entries and associated ZipEntryInfos, consuming items from the iterator.
 ///
-/// Return the list of folders that are included in the zip and can be deleted
-/// after upload.
-/// Will return an error only on write errors. Invalid folders will not trigger
-/// an error but they will not be included in the zip or in the returned list.
-fn zip_mar_entries<F: Write + Seek>(
+/// Return a list of MarZipContents, each containing the list of folders that are included in the
+/// zip (and can be deleted after upload) and the list of ZipEntryInfos.
+/// Invalid folders will not trigger an error and they will not be included in the returned lists.
+fn gather_mar_entries_to_zip(
     entries: &mut MarEntryIterator,
-    file: F,
-) -> Result<Vec<PathBuf>> {
-    let mut zip = zip::ZipWriter::new(file);
-
-    let mut zipped_entries = vec![];
-    for entry_result in entries {
-        match entry_result {
-            Ok(entry) => {
-                trace!("Adding {:?}", entry.path);
-                add_entry_to_zip(&mut zip, &entry)
-                    .wrap_err_with(|| format!("Unable to add entry {}.", entry.path.display()))?;
-                zipped_entries.push(entry.path)
-            }
-            Err(e) => {
-                warn!("Invalid folder in MAR staging: {:?}", e)
-            }
+    max_zip_size: usize,
+) -> Vec<MarZipContents> {
+    let entry_paths_with_zip_infos = entries.filter_map(|entry_result| match entry_result {
+        Ok(entry) => {
+            trace!("Adding {:?}", &entry.path);
+            let zip_infos: Option<Vec<ZipEntryInfo>> = (&entry)
+                .try_into()
+                .wrap_err_with(|| format!("Unable to add entry {}.", &entry.path.display()))
+                .ok();
+            let entry_and_infos: Option<(PathBuf, Vec<ZipEntryInfo>)> =
+                zip_infos.map(|infos| (entry.path, infos));
+            entry_and_infos
         }
-    }
+        Err(e) => {
+            warn!("Invalid folder in MAR staging: {:?}", e);
+            None
+        }
+    });
 
-    zip.finish()?;
-    Ok(zipped_entries)
+    let mut zip_size = zip_stream_len_empty();
+    let mut zip_file_index: usize = 0;
+    let grouper = entry_paths_with_zip_infos.group_by(|(_, zip_infos)| {
+        let entry_zipped_size = zip_infos.iter().map(zip_stream_len_for_file).sum::<usize>();
+        if zip_size + entry_zipped_size > max_zip_size {
+            zip_size = zip_stream_len_empty() + entry_zipped_size;
+            zip_file_index += 1;
+        } else {
+            zip_size += entry_zipped_size;
+        }
+        zip_file_index
+    });
+
+    grouper
+        .into_iter()
+        .map(|(_zip_file_index, group)| {
+            // Convert from Vec<(PathBuf, Vec<ZipEntryInfo>)> to MarZipContents:
+            let (entry_paths, zip_infos): (Vec<PathBuf>, Vec<Vec<ZipEntryInfo>>) = group.unzip();
+            MarZipContents {
+                entry_paths,
+                zip_infos: zip_infos
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<ZipEntryInfo>>(),
+            }
+        })
+        .collect()
 }
 
-fn add_entry_to_zip<F: Write + Seek>(zip: &mut ZipWriter<F>, entry: &MarEntry) -> Result<()> {
-    let options: FileOptions =
-        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-    let dir_name = entry.uuid.to_string();
-    zip.add_directory(&dir_name, options)?;
+impl TryFrom<&MarEntry> for Vec<ZipEntryInfo> {
+    type Error = eyre::Error;
 
-    // Add the manifest
-    add_file_to_zip(&dir_name, zip, &entry.path.join("manifest.json"))
-        .wrap_err("Error copying manifest.json")?;
-    for file_name in entry.manifest.attachments() {
-        add_file_to_zip(&dir_name, zip, &entry.path.join(&file_name))
-            .wrap_err(format!("Error copying {:?}", file_name))?;
+    fn try_from(entry: &MarEntry) -> Result<Self> {
+        let entry_path = entry.path.clone();
+        entry
+            .filenames()
+            .map(move |filename| {
+                let path = entry_path.join(&filename);
+
+                // Open the file to check that it exists and is readable. This is a best effort to avoid
+                // starting to upload a MAR file only to find out half way through that a file was not
+                // readable. Yes, this is prone to a race condition where it is no longer readable by
+                // the time is going to be read by the zip writer, but it is better than nothing.
+                let file =
+                    File::open(&path).wrap_err_with(|| format!("Error opening {:?}", filename))?;
+                drop(file);
+
+                let base = entry_path.parent().unwrap();
+                ZipEntryInfo::new(path, base)
+                    .wrap_err_with(|| format!("Error adding {:?}", filename))
+            })
+            .collect::<Result<Vec<_>>>()
     }
-    Ok(())
-}
-
-fn add_file_to_zip<F: Write + Seek>(
-    dir_name: &String,
-    zip: &mut ZipWriter<F>,
-    filepath: &Path,
-) -> Result<()> {
-    let options: FileOptions =
-        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-    let filename = filepath
-        .file_name()
-        .ok_or_else(|| eyre!("Invalid entry resource {}", filepath.display()))?;
-    let filename_in_zip = PathBuf::from(&dir_name).join(filename);
-    zip.start_file(filename_in_zip.to_string_lossy(), options)?;
-    let mut file = File::open(filepath)?;
-    std::io::copy(&mut file, zip)?;
-    Ok(())
 }
 
 /// Progressively upload the MAR entries. The callback will be called for each batch that is uploaded.
 fn upload_mar_entries(
     entries: &mut MarEntryIterator,
     client: &impl NetworkClient,
+    max_zip_size: usize,
     callback: fn(entries: Vec<PathBuf>) -> (),
 ) -> Result<()> {
-    loop {
-        let mut zip = NamedTempFile::new()?;
-        let zipped_entries = zip_mar_entries(entries, &mut zip)?;
-
-        if zipped_entries.is_empty() {
-            break;
-        }
-        client.upload_marfile(zip.path())?;
-        callback(zipped_entries);
+    for MarZipContents {
+        entry_paths,
+        zip_infos,
+    } in gather_mar_entries_to_zip(entries, max_zip_size)
+    {
+        client.upload_mar_file(BufReader::new(ZipEncoder::new(zip_infos)))?;
+        callback(entry_paths);
     }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::test_utils::setup_logger;
     use rstest::{fixture, rstest};
-    use tempfile::tempfile;
 
+    use crate::test_utils::setup_logger;
     use crate::{
         mar::test_utils::{assert_mar_content_matches, MarCollectorFixture},
         network::MockNetworkClient,
-        test_utils::SizeLimitedFile,
     };
 
     use super::*;
@@ -155,7 +181,6 @@ mod tests {
 
     #[rstest]
     fn zipping_two_entries(_setup_logger: (), mut mar_fixture: MarCollectorFixture) {
-        // create_bogus_entry(&mut mar_fixture);
         // Add one valid entry so we can verify that this one is readable.
         mar_fixture.create_logentry();
         mar_fixture.create_logentry();
@@ -163,14 +188,11 @@ mod tests {
         let mut entries = MarEntry::iterate_from_container(&mar_fixture.mar_staging)
             .expect("We should still be able to collect.");
 
-        let file = tempfile().unwrap();
+        let mars = gather_mar_entries_to_zip(&mut entries, usize::MAX);
 
-        assert_eq!(
-            zip_mar_entries(&mut entries, file)
-                .expect("zip_mar_entries should not return an error")
-                .len(),
-            2
-        )
+        assert_eq!(mars.len(), 1);
+        assert_eq!(mars[0].entry_paths.len(), 2);
+        assert_eq!(mars[0].zip_infos.len(), 4); // for each entry: manifest.json + log file
     }
 
     #[rstest]
@@ -189,14 +211,11 @@ mod tests {
         let mut entries = MarEntry::iterate_from_container(&mar_fixture.mar_staging)
             .expect("We should still be able to collect.");
 
-        let file = tempfile().unwrap();
+        let mars = gather_mar_entries_to_zip(&mut entries, usize::MAX);
 
-        assert_eq!(
-            zip_mar_entries(&mut entries, file)
-                .expect("zip_mar_entries should not return an error for invalid data")
-                .len(),
-            1
-        )
+        assert_eq!(mars.len(), 1);
+        assert_eq!(mars[0].entry_paths.len(), 1);
+        assert_eq!(mars[0].zip_infos.len(), 2); // manifest.json + log file
     }
 
     #[rstest]
@@ -207,29 +226,31 @@ mod tests {
         let mut entries = MarEntry::iterate_from_container(&mar_fixture.mar_staging)
             .expect("We should still be able to collect.");
 
-        let file = tempfile().unwrap();
+        let mars = gather_mar_entries_to_zip(&mut entries, usize::MAX);
 
-        let r = zip_mar_entries(&mut entries, file);
-
-        // We should return an error if the attachment is unreadable.
-        assert!(r.is_err());
-        assert!(format!("{:?}", r.err().unwrap()).contains("Permission denied"))
+        // No MAR should be created because the attachment is unreadable.
+        assert_eq!(mars.len(), 0);
     }
 
     #[rstest]
-    fn zipping_into_a_full_drive(_setup_logger: (), mut mar_fixture: MarCollectorFixture) {
-        mar_fixture.create_logentry();
+    fn new_mar_when_size_limit_is_reached(_setup_logger: (), mut mar_fixture: MarCollectorFixture) {
+        let max_zip_size = 1024;
+        mar_fixture.create_logentry_with_size(max_zip_size / 2);
+        mar_fixture.create_logentry_with_size(max_zip_size);
+        // Note: the next entry exceeds the size limit, but it is still added to a MAR of its own:
+        mar_fixture.create_logentry_with_size(max_zip_size * 2);
 
         let mut entries = MarEntry::iterate_from_container(&mar_fixture.mar_staging)
             .expect("We should still be able to collect.");
 
-        let file = SizeLimitedFile::new(tempfile().unwrap(), 100);
+        let mars = gather_mar_entries_to_zip(&mut entries, max_zip_size as usize);
 
-        let r = zip_mar_entries(&mut entries, file);
-
-        // We should return an error if we are unable to zip because the drive is full
-        assert!(r.is_err());
-        assert!(format!("{:?}", r.err().unwrap()).contains("limit reached"))
+        // 3 MARs should be created because the size limit was reached after every entry:
+        assert_eq!(mars.len(), 3);
+        for contents in mars {
+            assert_eq!(contents.entry_paths.len(), 1);
+            assert_eq!(contents.zip_infos.len(), 2); // for each entry: manifest.json + log file
+        }
     }
 
     #[rstest]
@@ -239,7 +260,7 @@ mod tests {
         mar_fixture: MarCollectorFixture,
     ) {
         // We do not set an expectation on client => it will panic if client.upload_mar is called
-        collect_and_upload(&mar_fixture.mar_staging, &client).unwrap();
+        collect_and_upload(&mar_fixture.mar_staging, &client, usize::MAX).unwrap();
     }
 
     #[rstest]
@@ -250,16 +271,17 @@ mod tests {
     ) {
         mar_fixture.create_logentry();
         client
-            .expect_upload_marfile()
-            .withf(move |zip| {
+            .expect_upload_mar_file::<BufReader<ZipEncoder>>()
+            .withf(|buf_reader| {
+                let zip_encoder = buf_reader.get_ref();
                 assert_mar_content_matches(
-                    zip,
-                    vec!["<entry>/", "<entry>/manifest.json", "<entry>/system.log"],
+                    zip_encoder,
+                    vec!["<entry>/manifest.json", "<entry>/system.log"],
                 )
             })
             .once()
             .returning(|_| Ok(()));
-        collect_and_upload(&mar_fixture.mar_staging, &client).unwrap();
+        collect_and_upload(&mar_fixture.mar_staging, &client, usize::MAX).unwrap();
     }
 
     #[fixture]

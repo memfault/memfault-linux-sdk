@@ -48,13 +48,18 @@ impl DeviceInfo {
                 })
             }
         }
-        match (di.device_id.is_empty(), di.hardware_version.is_empty()) {
-            (true, true) => Err(eyre::eyre!(
+        match (
+            di.device_id.is_empty(),
+            di.hardware_version.is_empty(),
+            !device_id_is_valid(&di.device_id),
+        ) {
+            (true, true, _) => Err(eyre::eyre!(
                 "Missing both MEMFAULT_DEVICE_ID and MEMFAULT_HARDWARE_VERSION."
             )),
-            (false, true) => Err(eyre::eyre!("Missing MEMFAULT_HARDWARE_VERSION.")),
-            (true, false) => Err(eyre::eyre!("Missing MEMFAULT_DEVICE_ID.")),
-            (false, false) => Ok((di, warnings)),
+            (false, true, _) => Err(eyre::eyre!("Missing MEMFAULT_HARDWARE_VERSION.")),
+            (true, false, _) => Err(eyre::eyre!("Missing MEMFAULT_DEVICE_ID.")),
+            (_, _, true) => Err(eyre::eyre!("Invalid MEMFAULT_DEVICE_ID. Must be 1-128 characters long and contain only a-z, A-Z, 0-9, - and _")),
+            (false, false, false) => Ok((di, warnings)),
         }
     }
 
@@ -64,9 +69,28 @@ impl DeviceInfo {
     }
 }
 
+fn device_id_is_valid(id: &str) -> bool {
+    (1..=128).contains(&id.len())
+        && id
+            .chars()
+            .all(|c| matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_'))
+}
+
+#[cfg(test)]
+impl DeviceInfo {
+    pub fn test_fixture() -> Self {
+        DeviceInfo {
+            device_id: "001".to_owned(),
+            hardware_version: "DVT".to_owned(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
+
     #[test]
     fn test_empty() {
         let r = DeviceInfo::parse(b"");
@@ -90,5 +114,24 @@ mod tests {
                 message: "Expect '=' separated key/value pairs."
             }
         );
+    }
+
+    #[rstest]
+    // Minimum 1 character
+    #[case("A", true)]
+    // Allowed characters
+    #[case(
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz_-",
+        true
+    )]
+    // Disallowed characters
+    #[case("DEMO.1234", false)]
+    #[case("DEMO 1234", false)]
+    // Too short (0 characters)
+    #[case("", false)]
+    // Too long (129 characters)
+    #[case("012345679012345679012345679012345679012345679012345679012345679012345679012345679012345679012345679012345679012345678901234567890", false)]
+    fn device_id_is_valid_works(#[case] device_id: &str, #[case] expected: bool) {
+        assert_eq!(device_id_is_valid(device_id), expected);
     }
 }

@@ -1,0 +1,39 @@
+---
+source: memfaultd/src/mar/manifest.rs
+expression: manifest
+---
+{
+  "schema_version": 1,
+  "collection_time": {
+    "timestamp": "2012-04-12T17:00:00Z",
+    "uptime_ms": 10000,
+    "linux_boot_id": "413554b8-a727-11ed-b307-0317a0ffbea7",
+    "elapsed_realtime_ms": 10000,
+    "boot_count": 0
+  },
+  "device": {
+    "project_key": "abcd",
+    "hardware_version": "DVT",
+    "software_version": "1.0.0",
+    "software_type": "test",
+    "device_serial": "001"
+  },
+  "type": "linux-logs",
+  "metadata": {
+    "format": {
+      "id": "v1",
+      "serialization": "json-lines"
+    },
+    "producer": {
+      "id": "memfaultd",
+      "version": "tests"
+    },
+    "log_file_name": "/var/log/syslog",
+    "cid": {
+      "uuid": "99686390-a728-11ed-a68b-e7ff3cd0c7e7"
+    },
+    "next_cid": {
+      "uuid": "9e1ece10-a728-11ed-918e-5be35a10c7e7"
+    }
+  }
+}

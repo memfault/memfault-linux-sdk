@@ -95,10 +95,7 @@ fn loop_with_exponential_error_backoff_internal<
                 );
 
                 count_errors_since_success += 1;
-                warn!(
-                    "Network error while processing queue: {} - Backing off for {:?}",
-                    e, period
-                );
+                warn!("Network error while processing queue: {}", e);
                 next_run
             }
         };

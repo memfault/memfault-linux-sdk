@@ -37,7 +37,7 @@ add_memfaultd_cpputest_target(test_reboot
     ${PLUGINS_DIR}/reboot/reboot.c
     ${SRC_DIR}/util/reboot_reason.c
 )
-target_compile_definitions(test_reboot PUBLIC HAVE_SYSTEMD HAVE_UBOOT)
+target_compile_definitions(test_reboot PUBLIC HAVE_SYSTEMD)
 if (MACOS_BUILD)
     target_include_directories(test_reboot SYSTEM PRIVATE macos-stubs)
     target_sources(test_reboot PRIVATE macos-stubs/systemd/systemd-stub.c)

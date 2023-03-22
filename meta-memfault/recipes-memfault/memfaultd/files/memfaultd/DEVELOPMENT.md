@@ -16,7 +16,6 @@ apt install \
   libjson-c-dev \
   uuid-dev \
   libsystemd-dev \
-  libubootenv-dev \
   libconfig-dev
 ```
 
@@ -72,8 +71,6 @@ Or from the host:
 
 ### Using CLion to work on memfaultd
 
-- Add `-DPLUGIN_REBOOT=1` (and any other plugins you want to compile in) to the
-  CMake arguments in Clion's Settings.
 - If you are using a conda env, add
   `-DPKG_CONFIG_EXECUTABLE=<path/to/pkg-config>` to the CMake arguments, to make
   sure the correct `pkg-config` binary is used.
