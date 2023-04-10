@@ -21,7 +21,7 @@ inherit systemd cargo
 
 SYSTEMD_SERVICE_${PN} = "memfaultd.service"
 
-DEPENDS = "json-c systemd vim-native cmake-native"
+DEPENDS = "json-c systemd vim-native cmake-native openssl"
 
 PACKAGECONFIG ??= "plugin_coredump plugin_collectd plugin_swupdate "
 PACKAGECONFIG[plugin_coredump] = ""
@@ -53,6 +53,12 @@ CARGO_FEATURES_append = " \
         '', \
     d)} \
 "
+RRECOMMENDS_${PN} += " \
+    ${@bb.utils.contains('PACKAGECONFIG', 'plugin_collectd', \
+        'collectd', \
+        '', \
+    d)} \
+"
 
 # Plugin SWUpdate
 CARGO_FEATURES_append = " \
@@ -67,6 +73,12 @@ DEPENDS_append = " \
         '', \
     d)} \
 "
+RRECOMMENDS_${PN}_append = " \
+    ${@bb.utils.contains('PACKAGECONFIG', 'plugin_swupdate', \
+        'swupdate swupdate-tools-ipc swupdate-tools-hawkbit', \
+        '', \
+    d)} \
+"
 
 # Plugin Logging
 CARGO_FEATURES_append = " \
@@ -75,6 +87,15 @@ CARGO_FEATURES_append = " \
         '', \
     d)} \
 "
+RRECOMMENDS_${PN} += " \
+    ${@bb.utils.contains('PACKAGECONFIG', 'plugin_logging', \
+        'fluent-bit', \
+        '', \
+    d)} \
+"
+
+# Network access required to download Cargo dependencies
+do_compile[network] = "1"
 
 do_install_append() {
     install -d ${D}/${systemd_unitdir}/system

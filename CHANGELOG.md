@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2023-04-06
+
+### Changed
+
+- The Yocto layer meta-memfault does not depend on swupdate, collectd and
+  fluent-bit anymore. Instead these dependencies are added by the memfaultd
+  recipe and only when the corresponding plugins are enabled.
+
+### Fixed
+
+- Fix Yocto recipe to always enable network access during compilation and add
+  `openssl` as a dependency.
+- Updated architecture diagram to include fluent-bit
+
 ## [1.3.1] - 2023-03-22
 
 ### Added
@@ -333,3 +347,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.3.0-kirkstone
 [1.3.1]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.3.1-kirkstone
+[1.3.2]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.3.2-kirkstone

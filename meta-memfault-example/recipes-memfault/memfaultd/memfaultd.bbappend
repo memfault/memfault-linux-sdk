@@ -1,5 +1,5 @@
 # Enable logging support (it's disabled by default)
-PACKAGECONFIG_append = "plugin_logging"
+PACKAGECONFIG_append = " plugin_logging"
 
 do_install_append() {
     mkdir -p ${D}${sysconfdir}
