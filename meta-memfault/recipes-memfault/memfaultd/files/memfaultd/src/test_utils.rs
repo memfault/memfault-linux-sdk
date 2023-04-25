@@ -86,3 +86,18 @@ pub fn create_file_with_contents(path: &Path, contents: &[u8]) -> std::io::Resul
 pub fn setup_logger() {
     let _ = stderrlog::new().module("memfaultd").verbosity(10).init();
 }
+
+/// Macro to set the snapshot suffix for a test.
+///
+/// This is a workaround suggested by the insta docs to scope the snapshot suffix
+/// to a test when using rstest cases. See docs
+/// [here](https://insta.rs/docs/patterns/).
+macro_rules! set_snapshot_suffix {
+    ($($expr:expr),*) => {
+        let mut settings = insta::Settings::clone_current();
+        settings.set_snapshot_suffix(format!($($expr,)*));
+        let _guard = settings.bind_to_scope();
+    }
+}
+
+pub(crate) use set_snapshot_suffix;

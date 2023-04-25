@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/time.h>
 
 #include "memfaultd.h"
@@ -19,7 +20,7 @@ struct MemfaultdRateLimiter {
   int count;
   int duration;
   time_t *history;
-  const char *file;
+  char *file;
 };
 
 bool memfaultd_rate_limiter_check_event(sMemfaultdRateLimiter *handle) {
@@ -63,6 +64,7 @@ bool memfaultd_rate_limiter_check_event(sMemfaultdRateLimiter *handle) {
 void memfaultd_rate_limiter_destroy(sMemfaultdRateLimiter *handle) {
   if (handle) {
     free(handle->history);
+    free(handle->file);
     free(handle);
   }
 }
@@ -88,7 +90,10 @@ sMemfaultdRateLimiter *memfaultd_rate_limiter_init(int count, const int duration
   }
 
   if (filename) {
-    handle->file = filename;
+    handle->file = strdup(filename);
+    if (!handle->file) {
+      goto cleanup;
+    }
 
     FILE *fd = fopen(handle->file, "r");
     if (!fd) {
@@ -114,6 +119,7 @@ sMemfaultdRateLimiter *memfaultd_rate_limiter_init(int count, const int duration
 cleanup:
 
   free(handle->history);
+  free(handle->file);
   free(handle);
   return NULL;
 }

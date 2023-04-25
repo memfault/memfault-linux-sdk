@@ -15,16 +15,10 @@ from qemu import QEMU
 def test(
     qemu: QEMU, memfault_service_tester: MemfaultServiceTester, qemu_device_id: str
 ):
-    qemu.exec_cmd("memfaultctl enable-data-collection")
+    qemu.systemd_wait_for_service_state("collectd.service", "active")
 
     # Start following memfaultd logs
     qemu.exec_cmd("journalctl -u memfaultd -n 0 -f &")
-
-    qemu.systemd_wait_for_service_state("memfaultd.service", "active")
-    qemu.systemd_wait_for_service_state("collectd.service", "active")
-
-    # Wait until memfaultd has started
-    qemu.child().expect("Started memfaultd daemon.")
 
     # Wait a little bit for any "startup requests"
     time.sleep(3)

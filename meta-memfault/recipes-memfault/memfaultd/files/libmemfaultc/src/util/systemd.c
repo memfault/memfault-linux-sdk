@@ -102,7 +102,7 @@ static bool prv_systemd_kill_service(sd_bus *bus, const char *service_name, int 
  * @return true Successfully restarted requested service
  * @return false Failed to restart service
  */
-bool memfaultd_restart_service_if_running(const char *service_name) {
+bool memfaultd_restart_systemd_service_if_running(const char *service_name) {
 #ifdef HAVE_SYSTEMD
   bool result = true;
 
@@ -152,7 +152,7 @@ cleanup:
  * @return true Successfully sent signal to requested service
  * @return false Failed to restart service
  */
-bool memfaultd_kill_service(const char *service_name, int signal) {
+bool memfaultd_kill_systemd_service(const char *service_name, int signal) {
 #ifdef HAVE_SYSTEMD
   bool result = true;
 

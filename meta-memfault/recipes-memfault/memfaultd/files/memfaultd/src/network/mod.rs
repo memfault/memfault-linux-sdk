@@ -4,7 +4,6 @@
 use std::io::Read;
 use std::path;
 
-use chrono::Utc;
 use eyre::Result;
 #[cfg(test)]
 use mockall::automock;
@@ -17,9 +16,6 @@ mod requests;
 
 #[cfg_attr(test, automock)]
 pub trait NetworkClient {
-    /// Patch the list of attributes for current device.
-    fn patch_attributes(&self, timestamp: chrono::DateTime<Utc>, json: &str) -> Result<()>;
-
     /// Post a new event to Memfault.
     fn post_event(&self, event: &str) -> Result<()>;
 

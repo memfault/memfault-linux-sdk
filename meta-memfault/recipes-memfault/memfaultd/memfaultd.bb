@@ -17,13 +17,13 @@ SRC_URI = " \
 
 S = "${WORKDIR}"
 
-inherit systemd cargo
+inherit systemd cargo_bin
 
 SYSTEMD_SERVICE_${PN} = "memfaultd.service"
 
 DEPENDS = "json-c systemd vim-native cmake-native openssl"
 
-PACKAGECONFIG ??= "plugin_coredump plugin_collectd plugin_swupdate "
+PACKAGECONFIG ??= "plugin_coredump plugin_collectd plugin_swupdate plugin_logging"
 PACKAGECONFIG[plugin_coredump] = ""
 PACKAGECONFIG[plugin_collectd] = ""
 PACKAGECONFIG[plugin_swupdate] = ""

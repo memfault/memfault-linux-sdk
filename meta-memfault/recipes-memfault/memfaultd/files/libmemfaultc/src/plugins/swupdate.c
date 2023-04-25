@@ -197,7 +197,7 @@ static bool prv_swupdate_add_identify(sMemfaultdPlugin *handle, config_t *config
  * @return true Successfully added runtime.cfg options
  * @return false Failed to add
  */
-static bool prv_swupdate_add_runtime() { return true; }
+static bool prv_swupdate_add_runtime(void) { return true; }
 
 /**
  * @brief Generate new swupdate.cfg file from config
@@ -283,13 +283,13 @@ static bool prv_swupdate_reload(sMemfaultdPlugin *handle) {
     fprintf(stderr, "swupdate:: Failed to generate config file\n");
     return false;
   }
-  if (!memfaultd_restart_service_if_running("swupdate.service")) {
+  if (!memfaultd_restart_systemd_service_if_running("swupdate.service")) {
     fprintf(stderr, "swupdate:: Failed to restart swupdate\n");
     return false;
   }
   // We need to also reload swupdate.socket otherwise the IPC communication to
   // swupdate is broken.
-  if (!memfaultd_restart_service_if_running("swupdate.socket")) {
+  if (!memfaultd_restart_systemd_service_if_running("swupdate.socket")) {
     fprintf(stderr, "swupdate:: Failed to restart swupdate.socket\n");
     return false;
   }

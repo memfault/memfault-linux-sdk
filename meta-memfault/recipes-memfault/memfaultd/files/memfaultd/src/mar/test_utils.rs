@@ -47,7 +47,7 @@ impl MarCollectorFixture {
     }
 
     pub fn create_logentry_with_size(&mut self, size: u64) -> PathBuf {
-        return self.create_logentry_with_size_and_age(size, SystemTime::now());
+        self.create_logentry_with_size_and_age(size, SystemTime::now())
     }
 
     pub fn create_logentry_with_size_and_age(

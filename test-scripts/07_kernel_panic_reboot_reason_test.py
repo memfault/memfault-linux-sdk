@@ -13,15 +13,8 @@ from qemu import QEMU
 def test_start(
     qemu: QEMU, memfault_service_tester: MemfaultServiceTester, qemu_device_id: str
 ):
-    # enable data collection, so that the reboot event can get captured
-    qemu.exec_cmd("memfaultd --enable-data-collection")
-
     # Stream memfaultd's log
     qemu.exec_cmd("journalctl --follow --unit=memfaultd.service &")
-
-    # Wait until it has been restarted after enabling data collection:
-    qemu.child().expect("Stopped memfaultd daemon")
-    qemu.child().expect("Started memfaultd daemon")
 
     # Sync filesystems (otherwise /media/memfault/runtime.conf would sometimes be lost!)
     qemu.exec_cmd("sync")
@@ -31,10 +24,10 @@ def test_start(
     qemu.child().expect(" login:")
 
     events = memfault_service_tester.poll_reboot_events_until_count(
-        1, device_serial=qemu_device_id, timeout_secs=60
+        2, device_serial=qemu_device_id, timeout_secs=60
     )
     assert events
-    assert events[0]["reason"] == 0x8008
+    assert events[-1]["reason"] == 0x8008
 
     qemu.child().sendline("root")
     qemu.exec_cmd("reboot")
@@ -42,7 +35,7 @@ def test_start(
     qemu.child().expect(" login:")
 
     events = memfault_service_tester.poll_reboot_events_until_count(
-        2, device_serial=qemu_device_id, timeout_secs=60
+        3, device_serial=qemu_device_id, timeout_secs=60
     )
     assert events
-    assert events[0]["reason"] == 2
+    assert events[-1]["reason"] == 2

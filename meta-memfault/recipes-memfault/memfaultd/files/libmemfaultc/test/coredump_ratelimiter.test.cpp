@@ -50,6 +50,13 @@ bool memfaultd_config_get_boolean(sMemfaultdConfig *handle, const char *parent_k
     .withOutputParameter("val", val)
     .returnBoolValue();
 }
+
+char *memfaultd_config_generate_tmp_filename(sMemfaultdConfig *handle, const char *filename) {
+  return (char *)mock()
+    .actualCall("memfaultd_config_generate_tmp_filename")
+    .withStringParameter("filename", filename)
+    .returnStringValue();
+}
 }
 
 /**
@@ -79,6 +86,10 @@ TEST(TestCoreDumpRateLimiterGroup, NormalMode) {
     .withStringParameter("key", "rate_limit_duration_seconds")
     .withOutputParameterReturning("val", &rate_limit_duration, sizeof(rate_limit_duration))
     .andReturnValue(true);
+  mock()
+    .expectOneCall("memfaultd_config_generate_tmp_filename")
+    .withStringParameter("filename", "coredump_rate_limit")
+    .andReturnValue(strdup("coredump_rate_limit"));
 
   auto r = coredump_create_rate_limiter(NULL);
 
@@ -103,6 +114,10 @@ TEST(TestCoreDumpRateLimiterGroup, DevMode) {
     .withStringParameter("key", "enable_dev_mode")
     .withOutputParameterReturning("val", &dev_mode, sizeof(dev_mode))
     .andReturnValue(true);
+  mock()
+    .expectOneCall("memfaultd_config_generate_tmp_filename")
+    .withStringParameter("filename", "coredump_rate_limit")
+    .andReturnValue(strdup("coredump_rate_limit"));
 
   auto r = coredump_create_rate_limiter(NULL);
 

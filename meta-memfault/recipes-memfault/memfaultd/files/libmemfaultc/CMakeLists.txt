@@ -48,10 +48,8 @@ list(APPEND sources
     ${CMAKE_CURRENT_BINARY_DIR}/builtin_conf.h
     src/memfaultctl/crash.c
     src/memfaultctl/memfaultctl.c
-    src/memfaultctl/parse_attributes.c
     src/memfaultd.c
     src/queue.c
-    src/plugins/attributes/attributes.c
     src/plugins/reboot/reboot.c
     src/plugins/reboot/reboot_last_boot_id.c
     src/plugins/reboot/reboot_process_pstore.c
@@ -65,7 +63,6 @@ list(APPEND sources
     src/util/logging.c
     src/util/pid.c
     src/util/plugins.c
-    src/util/runtime_config.c
     src/util/rate_limiter.c
     src/util/reboot_reason.c
     src/util/string.c

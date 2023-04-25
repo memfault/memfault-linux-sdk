@@ -5,7 +5,6 @@ __pycache__
 .mypy_cache/
 
 .idea/
-.vscode
 
 cmake-build-*/
 build/

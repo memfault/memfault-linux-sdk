@@ -79,3 +79,18 @@ class QEMU:
         raise TimeoutError(
             f"Timed out waiting for service {service} to get state {expected_state}. Last state: {states[last_state_idx]}"
         )
+
+    def expect_journald_message(self, unit, message, timeout: float = 3, last_lines=0):
+        """Wait for a specific message from a journald unit."""
+        self.exec_cmd(
+            '(journalctl -f -u {} -n {} &) |grep -q "{}"'.format(
+                unit, last_lines, message
+            )
+        )
+        self.pid.expect("#", timeout=timeout)
+
+    def wait_for_memfaultd_start(self, timeout: float = 3):
+        """Wait for memfaultd to start - Note that this will return immediately if memfaultd was just started."""
+        self.expect_journald_message(
+            "memfaultd", "Started memfaultd daemon", last_lines=10
+        )

@@ -1,0 +1,5 @@
+---
+source: memfaultd/src/config/config_file.rs
+expression: disk_config_string
+---
+"{\"key\":true}"

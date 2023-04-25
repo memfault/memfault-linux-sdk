@@ -21,9 +21,6 @@ typedef struct {
   const char ipc_name[32];
 } sMemfaultdPluginDef;
 
-#define PLUGIN_ATTRIBUTES_IPC_NAME "ATTRIBUTES"
-bool memfaultd_attributes_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns **fns);
-
 bool memfaultd_reboot_init(sMemfaultd *memfaultd, sMemfaultdPluginCallbackFns **fns);
 void memfaultd_reboot_data_collection_enabled(sMemfaultd *memfaultd, bool data_collection_enabled);
 

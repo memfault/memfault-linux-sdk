@@ -4,18 +4,28 @@
 import time
 
 import pexpect
+import pytest
 from qemu import QEMU
 
 
+@pytest.fixture()
+def data_collection_enabled() -> bool:
+    return False
+
+
 def test_start(qemu: QEMU):
-    qemu.exec_cmd("memfaultd --enable-data-collection")
+    qemu.exec_cmd("memfaultctl enable-data-collection")
     qemu.child().expect("Enabling data collection")
     qemu.systemd_wait_for_service_state("memfaultd.service", "active")
 
-    qemu.exec_cmd("memfaultd --enable-data-collection")
+    qemu.exec_cmd("memfaultctl enable-data-collection")
     qemu.child().expect("Data collection is already enabled.")
 
-    qemu.exec_cmd("memfaultd --disable-data-collection")
+    # Wait for the service to restart. If we disable immediately, there is a race condition where
+    # memfaultd will try to read the config while the CLI is still writing to it.
+    qemu.wait_for_memfaultd_start()
+
+    qemu.exec_cmd("memfaultctl disable-data-collection")
     qemu.child().expect("Disabling data collection.")
 
     # Work-around for checking the state in the next line before memfaultd has even restarted:
@@ -24,7 +34,7 @@ def test_start(qemu: QEMU):
 
     qemu.systemd_wait_for_service_state("memfaultd.service", "active")
 
-    qemu.exec_cmd("memfaultd --disable-data-collection")
+    qemu.exec_cmd("memfaultctl disable-data-collection")
     qemu.child().expect("Data collection is already disabled.")
 
     # Check that the service restarted:
@@ -52,14 +62,14 @@ def test_via_memfaultctl(qemu: QEMU):
     qemu.exec_cmd("memfaultctl enable-data-collection")
     qemu.child().expect("Data collection is already enabled.")
 
+    # Wait for the service to restart. If we disable immediately, there is a race condition where
+    # memfaultd will try to read the config while the CLI is still writing to it.
+    qemu.wait_for_memfaultd_start()
+
     qemu.exec_cmd("memfaultctl disable-data-collection")
     qemu.child().expect("Disabling data collection.")
 
-    # Work-around for checking the state in the next line before memfaultd has even restarted:
-    # FIXME: track the journal logs instead of using `systemctl is-active`
-    time.sleep(0.5)
-
-    qemu.systemd_wait_for_service_state("memfaultd.service", "active")
+    qemu.wait_for_memfaultd_start()
 
     qemu.exec_cmd("memfaultctl disable-data-collection")
     qemu.child().expect("Data collection is already disabled.")

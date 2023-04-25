@@ -1,9 +1,7 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use chrono::{TimeZone, Utc};
 use eyre::Result;
-use libc::time_t;
 use memfaultc_sys::{
     memfaultd_queue_complete_read, memfaultd_queue_destroy, memfaultd_queue_read_head, QueueHandle,
 };
@@ -64,7 +62,6 @@ pub struct QueueMessage<'a> {
 #[repr(u8)]
 pub enum QueueMessageType {
     RebootEvent = b'R',
-    Attributes = b'A',
 }
 impl TryFrom<u8> for QueueMessageType {
     type Error = eyre::Error;
@@ -72,7 +69,6 @@ impl TryFrom<u8> for QueueMessageType {
     fn try_from(v: u8) -> Result<QueueMessageType> {
         match v {
             b'R' => Ok(QueueMessageType::RebootEvent),
-            b'A' => Ok(QueueMessageType::Attributes),
             _ => Err(eyre::eyre!("Invalid message.")),
         }
     }
@@ -112,38 +108,6 @@ impl<'a> Drop for QueueMessage<'a> {
             unsafe {
                 memfaultd_queue_complete_read(self.queue.handle);
             }
-        }
-    }
-}
-
-/// The message queued to send device attributes to Memfault. This contains the
-/// timestamp at which the attributes were set and a null terminated JSON blob.
-pub struct QueueMessageAttributes<'a> {
-    pub timestamp: chrono::DateTime<Utc>,
-    pub json: &'a str,
-}
-impl<'a> TryFrom<&'a QueueMessage<'a>> for QueueMessageAttributes<'a> {
-    type Error = eyre::Error;
-
-    fn try_from(v: &'a QueueMessage) -> Result<QueueMessageAttributes<'a>, eyre::Error> {
-        if v.get_type() == Some(QueueMessageType::Attributes) && v.msg.len() > 5 {
-            const SIZE_TIME_T: usize = std::mem::size_of::<time_t>();
-            let bytes: [u8; SIZE_TIME_T] = v.msg[1..SIZE_TIME_T + 1].try_into()?;
-            let timestamp_raw = time_t::from_ne_bytes(bytes);
-            let json = std::ffi::CStr::from_bytes_with_nul(&v.msg[SIZE_TIME_T + 1..])?;
-
-            // into() is required on 32 bit systems to convert a i32 to i64
-            #[allow(clippy::useless_conversion)]
-            let timestamp = Utc
-                .timestamp_opt(timestamp_raw.into(), 0)
-                .single()
-                .ok_or(eyre::eyre!("Invalid timestamp."))?;
-            Ok(QueueMessageAttributes {
-                timestamp,
-                json: json.to_str()?,
-            })
-        } else {
-            Err(eyre::eyre!("Invalid message"))
         }
     }
 }
@@ -223,23 +187,6 @@ mod tests {
 
         // Make sure message has not been deleted.
         assert!(queue.read().is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn attributes() -> Result<()> {
-        let mut queue = Queue::new::<&Path>(None, 1024)?;
-
-        let mut buf = b"A\x8C\xA1\xC0\x63\x00\x00\x00\x00{\"sole_value\":\"x\"}\0".to_owned();
-
-        buf[1..5].copy_from_slice(&0xDEADBEEFu32.to_ne_bytes());
-        assert!(queue.write(&buf));
-
-        let m = queue.read().unwrap();
-        let attribute_post = QueueMessageAttributes::try_from(&m).unwrap();
-
-        assert_eq!(attribute_post.timestamp.timestamp() as u32, 0xDEADBEEF);
-        assert_eq!(attribute_post.json, r##"{"sole_value":"x"}"##);
         Ok(())
     }
 

@@ -4,7 +4,7 @@
 import dataclasses
 import time
 import uuid
-from typing import Any, Callable, Optional, TypeVar
+from typing import Any, Callable, Dict, Literal, Optional, TypeVar, Union
 from unittest.mock import ANY
 
 import requests
@@ -71,6 +71,7 @@ class MemfaultServiceTester:
                 device_serial=device_serial, params=params, expect_status=ANY
             )
             assert len(events) >= count
+            events.sort(key=lambda x: x["time"])
             return events
 
         return self.poll_until_not_raising(_check, timeout_seconds=timeout_secs)
@@ -148,6 +149,35 @@ class MemfaultServiceTester:
         url = f"{self._project_url}/devices/{device_serial}/attributes"
         resp = self.session.get(url, params=params)
         assert resp.status_code == expect_status
+        return resp.json()["data"] if resp.ok else None
+
+    def patch_device_attributes(
+        self, *, device_serial: str, patch: Dict[str, Any], expect_status=204
+    ) -> None:
+        url = f"{self._project_url}/devices/{device_serial}/attributes"
+        resp = self.session.patch(
+            url, json=[{"string_key": k, "value": v} for k, v in patch.items()]
+        )
+        assert resp.status_code == expect_status, resp.json()
+
+    def create_custom_metric(
+        self,
+        *,
+        key: str,
+        data_type: Union[
+            Literal["INT"], Literal["FLOAT"], Literal["STRING", Literal["BOOL"]]
+        ],
+        expect_status=200,
+    ) -> dict:
+        url = f"{self._project_url}/custom-metrics"
+        resp = self.session.post(
+            url,
+            json={
+                "string_key": key,
+                "data_type": data_type,
+            },
+        )
+        assert resp.status_code == expect_status, resp.json()
         return resp.json()["data"] if resp.ok else None
 
     def log_files_get_list(self, device_serial: str, params=None):

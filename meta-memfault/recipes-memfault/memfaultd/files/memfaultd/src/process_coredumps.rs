@@ -76,11 +76,11 @@ mod test {
         coredump_fixture: CoredumpFixture,
         mock_uploader: MockUploader,
     ) {
-        let data_dir = coredump_fixture.data_dir.clone();
+        let tmp_dir = coredump_fixture.tmp_dir.clone();
         drop(coredump_fixture); // Drop the fixture so the directory is deleted.
 
         // NB: mock_uploader.upload is never called, so we don't need to expect anything
-        let result = process_coredumps_with(&data_dir, |path, gzipped| {
+        let result = process_coredumps_with(&tmp_dir, |path, gzipped| {
             mock_uploader.upload(path, gzipped)
         });
         assert!(result.is_ok());
@@ -103,7 +103,7 @@ mod test {
             .times(1)
             .returning(|_, _| Ok(()));
 
-        let result = process_coredumps_with(&coredump_fixture.data_dir, |path, gzipped| {
+        let result = process_coredumps_with(&coredump_fixture.tmp_dir, |path, gzipped| {
             mock_uploader.upload(path, gzipped)
         });
         assert!(result.is_ok());
@@ -127,7 +127,7 @@ mod test {
             .times(1)
             .returning(|_, _| Err(eyre!(RetriableError::ServerError { status_code: 503 })));
 
-        let result = process_coredumps_with(&coredump_fixture.data_dir, |path, gzipped| {
+        let result = process_coredumps_with(&coredump_fixture.tmp_dir, |path, gzipped| {
             mock_uploader.upload(path, gzipped)
         });
         assert!(matches!(result, Err(e) if e.downcast_ref::<RetriableError>().is_some()));
@@ -153,24 +153,27 @@ mod test {
 
     struct CoredumpFixture {
         #[allow(dead_code)]
-        tempdir: TempDir,
-        data_dir: PathBuf,
+        tmp_dir_handle: TempDir,
+        tmp_dir: PathBuf,
     }
 
     impl CoredumpFixture {
         fn new() -> CoredumpFixture {
-            let tempdir = tempdir().unwrap();
-            let data_dir = tempdir.path().to_owned();
-            create_dir_all(&data_dir).unwrap();
-            CoredumpFixture { tempdir, data_dir }
+            let tmp_dir_handle = tempdir().unwrap();
+            let tmp_dir = tmp_dir_handle.path().to_owned();
+            create_dir_all(&tmp_dir).unwrap();
+            CoredumpFixture {
+                tmp_dir_handle,
+                tmp_dir,
+            }
         }
         fn create_coredump_file(&mut self, filename: &str) -> PathBuf {
-            let path = self.data_dir.join(filename);
+            let path = self.tmp_dir.join(filename);
             File::create(&path).unwrap();
             path
         }
         fn count_coredumps(&self) -> usize {
-            read_dir(&self.data_dir).unwrap().count()
+            read_dir(&self.tmp_dir).unwrap().count()
         }
     }
 }

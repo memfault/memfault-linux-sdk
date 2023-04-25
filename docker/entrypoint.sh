@@ -16,13 +16,6 @@ else
     git -C "${openembedded_dir}" checkout "${YOCTO_RELEASE}" && git -C "${openembedded_dir}" pull --ff-only
 fi
 
-rust_bin_dir="${HOME}/yocto/sources/meta-rust-bin"
-if [ ! -d "${rust_bin_dir}" ]; then
-    git clone https://github.com/rust-embedded/meta-rust-bin.git --branch master "${rust_bin_dir}"
-else
-    git -C "${rust_bin_dir}" checkout master && git -C "${rust_bin_dir}" pull --ff-only
-fi
-
 swupdate_dir="${HOME}/yocto/sources/meta-swupdate"
 if [ ! -d "${swupdate_dir}" ]; then
     git clone https://github.com/sbabic/meta-swupdate.git --branch "${YOCTO_RELEASE}" "${swupdate_dir}"

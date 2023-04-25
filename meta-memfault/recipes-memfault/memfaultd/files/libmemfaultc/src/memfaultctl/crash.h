@@ -8,25 +8,17 @@
 //! @brief
 //!
 
-#include <stdbool.h>
-
-#include "memfaultctl.h"
-
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef enum ErrorType {
-  eErrorTypeSegFault,
-  eErrorTypeFPException,
-} eErrorType;
-
 /**
- * Creates a new process and force it to crash with error e.
+ * Triggers a floating point exception by dividing by zero.
  *
- * @return 0 on success.
+ * Note that this still needs to be in C as Rust protects against divide-by-zero.
+ * at runtime.
  */
-void memfault_trigger_crash(eErrorType e);
+void memfault_trigger_fp_exception(void);
 
 #ifdef __cplusplus
 }

@@ -14,8 +14,8 @@
 extern "C" {
 #endif
 
-bool memfaultd_restart_service_if_running(const char *service_name);
-bool memfaultd_kill_service(const char *service_name, int signal);
+bool memfaultd_restart_systemd_service_if_running(const char *service_name);
+bool memfaultd_kill_systemd_service(const char *service_name, int signal);
 
 #ifdef __cplusplus
 }

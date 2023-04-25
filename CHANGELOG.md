@@ -6,6 +6,81 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2023-04-25
+
+### tldr
+
+This release includes a number of changes that will require changes in your
+project:
+
+- **Edit your `bblayers.conf`** to stop using `meta-rust-bin` layer from the
+  rust-embedded GitHub account and use the version provided in the
+  `memfault-linux-sdk` repository.
+- **Edit `memfault.conf`** to replace `data_dir` by `persist_dir` and carefully
+  review `tmp_dir` (which defaults to `persist_dir`) and associated options to
+  control maximum usage and minimum headroom. You will most likely need to set
+  your own values.
+- If you were calling `memfaultd --enable-data-collection` before, you need to
+  replace it by `memfaultctl enable-data-collection` now.
+
+### Added
+
+- Memfaultd will now consider the amount of disk space and inodes remaining on
+  disk when writing logs, storing coredumps and when cleaning the MAR staging
+  area. See new options `tmp_dir_min_headroom_kib`, `tmp_dir_min_inodes` and
+  `tmp_dir_max_usage_kib` in the [configuration file][reference-configuration].
+- Logging is now rate limited on device (defaults to 500 lines per minute - see
+  [`max_lines_per_minute][reference-logging]).
+- We simplified the configuration options relative to data storage. Users are
+  now expected to set a `persist_dir` option that must be persisted across
+  reboots and a `tmp_dir` option that can be cleared on reboot (a temp
+  filesystem in RAM). Refer to [Memfault Integration Guide -
+  Storage][integration-storage] for more details.
+- Option `logs.compression_level` to set the logs compression level.
+
+### Changed
+
+- Memfault Linux SDK now ships with a version of `meta-rust-bin` using a renamed
+  Yocto class `cargo_bin`. This was required due to `meta-rust-bin` being
+  incompatible with some poky packages. We will track the upstream bug and
+  switch back to upstream `meta-rust-bin` when possible (see meta-rust-bin#135).
+- `memfaultd` does not include the commands `enable-dev-mode` and
+  `enable-data-collection` anymore (they were deprecated in 1.2.0.)
+- We now consider logging to be ready for production use and have turned on
+  `plugin_logging` by default.
+- Some CMake improvements to build with older versions of GCC.
+- Rewrote more `memfaultctl` commands to rust: `trigger-coredump`,
+  `show-settings`, `sync`, `write-attributes`, `enable-dev-mode` and
+  `enable-data-collection`.
+
+### Removed
+
+- Configuration options `logs.tmp_folder`, `mar.storage_max_usage_kib`,
+  `coredump.storage_max_usage_kib` and `coredump.storage_min_headroom_kib` have
+  been removed and are replaced by the new options listed above.
+- `memfaultd --enable-data-collection` and `--enable-dev-mode` (as well as
+  `--disable...`) have been removed.
+
+### Fixed
+
+- Bug causing coredump-handler to not capture coredumps in development mode.
+- Bug causing coredump-handler to create a ratelimiter in the wrong place and
+  fail the capture when it did not have permission to create the file.
+- Fluent-bit connector will drop all logs when data collection is not enabled.
+- Fluent-bit recommended configuration now includes a `Retry_Limit`.
+- Wait until memfaultd is ready to write PID file.
+- Fixed occasional error message `error sending on closed channel` on shutdown.
+- Fix bug where `memfaultd` and `memfaultctl` would not properly report their
+  version number.
+- Show immediate error to the user when `memfaultctl write-attributes` is called
+  but data collection is disabled.
+- Fix build error when logging was disabled.
+
+[reference-configuration]:
+  https://docs.memfault.com/docs/linux/reference-memfaultd-configuration#top-level-etcmemfaultdconf-configuration
+[reference-logging]:
+  https://docs.memfault.com/docs/linux/reference-memfaultd-configuration#logs
+
 ## [1.3.2] - 2023-04-06
 
 ### Changed
@@ -349,3 +424,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.3.1-kirkstone
 [1.3.2]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.3.2-kirkstone
+[1.4.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.4.0-kirkstone

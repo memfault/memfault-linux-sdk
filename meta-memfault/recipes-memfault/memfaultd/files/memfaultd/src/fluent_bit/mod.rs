@@ -3,7 +3,7 @@
 // See License.txt for details
 //! fluent-bit
 //!
-//! Provides FluentBitReceiver to start listening to TCP connections from
+//! Provides FluentBitConnectionHandler to handle to TCP connections from
 //! fluent-bit. A threadpool is used to limit the number of active connections at
 //! a given time.
 //!
@@ -16,26 +16,20 @@
 //! consumed, the FluentBitReceiver will start to apply backpressure on
 //! fluent-bitbit server.
 //!
+use std::net::TcpStream;
+use std::sync::mpsc::{Receiver, SyncSender};
+use std::{collections::HashMap, net::SocketAddr};
+
 use chrono::{DateTime, Utc};
 use eyre::Result;
-use log::{trace, warn};
+use log::warn;
 use rmp_serde::Deserializer;
 use serde::{Deserialize, Serialize};
-use std::net::{TcpListener, TcpStream};
-use std::sync::mpsc::{Receiver, SyncSender};
-use std::thread;
-use std::{collections::HashMap, net::SocketAddr};
-use threadpool::ThreadPool;
 
 use crate::config::Config;
+use crate::util::tcp_server::{TcpConnectionHandler, TcpNullConnectionHandler, ThreadedTcpServer};
 
 mod decode_time;
-
-/// A TCP server compatible with fluent-bit tcp output plugin.
-/// Incoming messages will be delivered on `receiver`.
-pub struct FluentBitReceiver {
-    pub receiver: Receiver<FluentdMessage>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -50,59 +44,48 @@ pub struct FluentdMessage(
     pub HashMap<String, FluentdValue>,
 );
 
-impl FluentBitReceiver {
-    /// Create an instance and spawn threads to handle incoming connections.
-    pub fn start(config: FluentBitConfig) -> Result<Self> {
+#[derive(Clone)]
+pub struct FluentBitConnectionHandler {
+    sender: SyncSender<FluentdMessage>,
+}
+
+impl FluentBitConnectionHandler {
+    /// Starts the fluent-bit server with a handler delivers parsed messages to a receiver channel.
+    pub fn start(config: FluentBitConfig) -> Result<(ThreadedTcpServer, Receiver<FluentdMessage>)> {
         let (sender, receiver) = std::sync::mpsc::sync_channel(config.max_buffered_lines);
-
-        let listener = TcpListener::bind(config.bind_address)?;
-        thread::spawn(move || Self::run(listener, sender, config.max_connections));
-
-        Ok(FluentBitReceiver { receiver })
+        let server = ThreadedTcpServer::start(
+            config.bind_address,
+            config.max_connections,
+            FluentBitConnectionHandler { sender },
+        )?;
+        Ok((server, receiver))
     }
 
-    fn run(
-        listener: TcpListener,
-        sender: SyncSender<FluentdMessage>,
-        max_connections: usize,
-    ) -> Result<()> {
-        let pool = ThreadPool::new(max_connections);
-
-        for stream in listener.incoming() {
-            match stream {
-                Ok(stream) => {
-                    trace!(
-                        "Connection from {:?} - Threads {}/{}",
-                        stream.peer_addr(),
-                        pool.active_count(),
-                        pool.max_count()
-                    );
-                    let thread_sender = sender.clone();
-                    pool.execute(move || {
-                        if let Err(e) = Self::handle_connection(stream, thread_sender) {
-                            warn!("Error while handling connection: {}", e)
-                        }
-                    })
-                }
-                Err(e) => {
-                    warn!("fluentbit listener error {}", e);
-                    break;
-                }
-            }
-        }
-        trace!("done listening - waiting for pool to terminate");
-        pool.join();
-        trace!("pool joined.");
-
-        Ok(())
+    /// Starts the fluent-bit server with a handler that drops all data.
+    /// This is used in case data collection is disabled. We want to keep servicing fluent-bit in
+    /// this scenario, to avoid it retrying and buffering up data.
+    pub fn start_null(config: FluentBitConfig) -> Result<ThreadedTcpServer> {
+        ThreadedTcpServer::start(
+            config.bind_address,
+            config.max_connections,
+            TcpNullConnectionHandler {},
+        )
     }
+}
 
-    fn handle_connection(stream: TcpStream, sender: SyncSender<FluentdMessage>) -> Result<()> {
+impl TcpConnectionHandler for FluentBitConnectionHandler {
+    fn handle_connection(&self, stream: TcpStream) -> Result<()> {
         let mut de = Deserializer::new(stream);
 
         loop {
             match FluentdMessage::deserialize(&mut de) {
-                Ok(msg) => sender.send(msg)?,
+                Ok(msg) => {
+                    if self.sender.send(msg).is_err() {
+                        // An error indicates that the channel has been closed, we should
+                        // kill this thread.
+                        break;
+                    }
+                }
                 Err(e) => {
                     match e {
                         rmp_serde::decode::Error::InvalidMarkerRead(e)
@@ -112,6 +95,7 @@ impl FluentBitReceiver {
                         }
                         _ => warn!("FluentD decoding error: {:?}", e),
                     }
+                    // After any deserialization error, we want to kill the connection.
                     break;
                 }
             }
@@ -138,12 +122,15 @@ impl From<&Config> for FluentBitConfig {
 
 #[cfg(test)]
 mod tests {
+    use std::net::TcpListener;
     use std::{
-        io::Write, net::Shutdown, sync::mpsc::sync_channel, thread::JoinHandle, time::Duration,
+        io::Write, net::Shutdown, sync::mpsc::sync_channel, thread, thread::JoinHandle,
+        time::Duration,
     };
 
-    use crate::test_utils::setup_logger;
     use rstest::{fixture, rstest};
+
+    use crate::test_utils::setup_logger;
 
     use super::*;
 
@@ -267,7 +254,8 @@ mod tests {
         let client = TcpStream::connect(local_address).unwrap();
         let (server, _) = listener.accept().unwrap();
 
-        let thread = thread::spawn(move || FluentBitReceiver::handle_connection(server, sender));
+        let handler = FluentBitConnectionHandler { sender };
+        let thread = thread::spawn(move || handler.handle_connection(server));
 
         FluentBitFixture {
             client,

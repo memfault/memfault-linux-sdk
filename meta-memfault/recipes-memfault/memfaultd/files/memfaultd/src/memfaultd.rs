@@ -10,15 +10,17 @@ use std::time::Duration;
 
 use eyre::Result;
 use eyre::{eyre, Context};
-use log::{debug, error, info, trace, warn};
+use log::{error, info, trace, warn};
 
 use memfaultc_sys::QueueHandle;
 
 use crate::mar::clean::MarStagingCleaner;
 use crate::network::client::NetworkClientImpl;
 use crate::network::{NetworkClient, NetworkConfig};
-use crate::queue::{Queue, QueueMessage, QueueMessageAttributes, QueueMessageType};
+use crate::queue::{Queue, QueueMessage, QueueMessageType};
 use crate::retriable_error::IgnoreNonRetriableError;
+use crate::util::disk_size::DiskSize;
+use crate::util::pid_file::write_memfaultd_pid_file;
 use crate::util::task::{loop_with_exponential_error_backoff, LoopContinuation};
 use crate::{config::Config, mar::upload::collect_and_upload};
 
@@ -27,9 +29,10 @@ use crate::process_coredumps::process_coredumps_with;
 
 #[cfg(feature = "logging")]
 use crate::{
-    fluent_bit::FluentBitReceiver, logs::completed_log::CompletedLog,
-    logs::fluent_bit_adapter::FluentBitAdapter, logs::log_collector::LogCollector,
+    fluent_bit::{FluentBitConfig, FluentBitConnectionHandler},
+    logs::{CompletedLog, FluentBitAdapter, HeadroomLimiter, LogCollector, LogCollectorConfig},
     mar::mar_entry::MarEntryBuilder,
+    util::disk_size::get_disk_space,
 };
 
 #[no_mangle]
@@ -37,19 +40,20 @@ use crate::{
 pub extern "C" fn memfaultd_rust_process_loop(
     user_config: *const libc::c_char,
     queue: QueueHandle,
+    daemon: bool,
 ) -> bool {
     trace!("memfaultd_rust_process_loop()");
 
     let config_path = unsafe { CStr::from_ptr(user_config).to_str().ok().map(Path::new) };
 
-    if let Err(e) = process_loop(config_path, queue) {
+    if let Err(e) = process_loop(config_path, queue, daemon) {
         error!("Fatal: {:#}", e);
         return false;
     }
     true
 }
 
-fn process_loop(user_config: Option<&Path>, queue: QueueHandle) -> Result<()> {
+fn process_loop(user_config: Option<&Path>, queue: QueueHandle, daemon: bool) -> Result<()> {
     // Register a flag which will be set when one of these signals is received.
     let term_signals = [
         signal_hook::consts::SIGINT,
@@ -83,7 +87,8 @@ fn process_loop(user_config: Option<&Path>, queue: QueueHandle) -> Result<()> {
 
     let mar_cleaner = Arc::new(MarStagingCleaner::new(
         &config.mar_staging_path(),
-        config.config_file.mar.storage_max_usage as u64,
+        config.tmp_dir_max_size(),
+        config.tmp_dir_min_headroom(),
     ));
 
     // List all the enabled plugins
@@ -101,45 +106,71 @@ fn process_loop(user_config: Option<&Path>, queue: QueueHandle) -> Result<()> {
 
     #[cfg(feature = "logging")]
     {
-        let network_config = NetworkConfig::from(&config);
-        let mar_staging_path = config.mar_staging_path();
-        let fluent_bit_receiver = FluentBitReceiver::start((&config).into())?;
-        let mar_cleaner = mar_cleaner.clone();
-        let on_log_completion = move |CompletedLog {
-                                          path,
-                                          cid,
-                                          next_cid,
-                                          compression,
-                                      }|
-              -> Result<()> {
-            // Prepare the MAR entry
-            let mar_builder = MarEntryBuilder::new_log(path, cid, next_cid, compression)?;
+        use log::debug;
 
-            mar_cleaner.clean(mar_builder.estimated_entry_size())?;
+        let fluent_bit_config = FluentBitConfig::from(&config);
+        if config.config_file.enable_data_collection {
+            let (_, fluent_bit_receiver) = FluentBitConnectionHandler::start(fluent_bit_config)?;
+            let mar_cleaner = mar_cleaner.clone();
 
-            // Move the log in the mar_staging area and add a manifest
-            let mar_entry = mar_builder.save(&mar_staging_path, &network_config)?;
-            debug!("New MAR entry generated: {}", mar_entry.path.display());
+            let network_config = NetworkConfig::from(&config);
+            let mar_staging_path = config.mar_staging_path();
+            let on_log_completion = move |CompletedLog {
+                                              path,
+                                              cid,
+                                              next_cid,
+                                              compression,
+                                          }|
+                  -> Result<()> {
+                // Prepare the MAR entry
+                let mar_builder = MarEntryBuilder::new_log(path, cid, next_cid, compression)?;
 
-            Ok(())
-        };
-        let mut log_collector = LogCollector::open((&config).into(), on_log_completion)?;
-        log_collector.spawn_collect_from(FluentBitAdapter::new(
-            fluent_bit_receiver,
-            &config.config_file.fluent_bit.extra_fluentd_attributes,
-        ));
+                mar_cleaner.clean(mar_builder.estimated_entry_size())?;
 
-        plugin_tasks.push(Box::new(move |forced_sync| {
-            // Check if we have received a signal to force-sync and reset the flag.
-            if forced_sync {
-                trace!("Flushing logs");
-                log_collector.flush_logs()
-            } else {
-                // If not force-flushing - we still want to make sure this file
-                // did not get too old.
-                log_collector.rotate_if_needed()
-            }
-        }));
+                // Move the log in the mar_staging area and add a manifest
+                let mar_entry = mar_builder.save(&mar_staging_path, &network_config)?;
+                debug!("New MAR entry generated: {}", mar_entry.path.display());
+
+                Ok(())
+            };
+            let log_config = LogCollectorConfig::from(&config);
+            let headroom_limiter = {
+                let tmp_folder = log_config.log_tmp_path.clone();
+                HeadroomLimiter::new(
+                    DiskSize {
+                        bytes: config.config_file.tmp_dir_min_headroom as u64,
+                        inodes: config.config_file.tmp_dir_min_inodes as u64,
+                    },
+                    move || get_disk_space(&tmp_folder),
+                )
+            };
+            let mut log_collector =
+                LogCollector::open(log_config, on_log_completion, headroom_limiter)?;
+            log_collector.spawn_collect_from(FluentBitAdapter::new(
+                fluent_bit_receiver,
+                &config.config_file.fluent_bit.extra_fluentd_attributes,
+            ));
+
+            plugin_tasks.push(Box::new(move |forced_sync| {
+                // Check if we have received a signal to force-sync and reset the flag.
+                if forced_sync {
+                    trace!("Flushing logs");
+                    log_collector.flush_logs()?;
+                } else {
+                    // If not force-flushing - we still want to make sure this file
+                    // did not get too old.
+                    log_collector.rotate_if_needed()?;
+                }
+                Ok(())
+            }));
+        } else {
+            FluentBitConnectionHandler::start_null(fluent_bit_config)?;
+        }
+    }
+
+    if daemon {
+        // All subcomponents are ready, write the pid file now to indicate we've started up completely:
+        write_memfaultd_pid_file()?;
     }
 
     loop_with_exponential_error_backoff(
@@ -147,22 +178,27 @@ fn process_loop(user_config: Option<&Path>, queue: QueueHandle) -> Result<()> {
             // Reset the forced sync flag before doing any work so we can detect
             // if it's set again while we run and RerunImmediately.
             let forced = force_sync.swap(false, Ordering::Relaxed);
+            let enable_data_collection = config.config_file.enable_data_collection;
 
-            trace!("Process pending uploads");
-            process_pending_uploads(&mut queue, &client)?;
+            if enable_data_collection {
+                trace!("Process pending uploads");
+                process_pending_uploads(&mut queue, &client)?;
+            }
 
             for task in &mut plugin_tasks {
                 task(forced)?;
             }
 
-            mar_cleaner.clean(0).unwrap();
+            mar_cleaner.clean(DiskSize::ZERO).unwrap();
 
-            trace!("Collect MAR entries...");
-            collect_and_upload(
-                &config.mar_staging_path(),
-                &client,
-                config.config_file.mar.mar_file_max_size,
-            )?;
+            if enable_data_collection {
+                trace!("Collect MAR entries...");
+                collect_and_upload(
+                    &config.mar_staging_path(),
+                    &client,
+                    config.config_file.mar.mar_file_max_size,
+                )?;
+            }
             Ok(())
         },
         || match (
@@ -210,12 +246,6 @@ fn process_pending_uploads(queue: &mut Queue, client: &impl NetworkClient) -> Re
 fn process_queue_message(client: &impl NetworkClient, message: &QueueMessage) -> Result<()> {
     match message.get_type() {
         Some(QueueMessageType::RebootEvent) => client.post_event(message.get_payload_cstr()?),
-        Some(QueueMessageType::Attributes) => {
-            let attr_message = QueueMessageAttributes::try_from(message)?;
-            client
-                .patch_attributes(attr_message.timestamp, attr_message.json)
-                .and(Ok(()))
-        }
         None => Err(eyre!(
             "Invalid queue message with size {} and type {}",
             message.msg.len(),
@@ -226,9 +256,6 @@ fn process_queue_message(client: &impl NetworkClient, message: &QueueMessage) ->
 
 #[cfg(test)]
 mod test {
-    use std::str::FromStr;
-
-    use chrono::{DateTime, Utc};
     use mockall::predicate::eq;
     use rstest::{fixture, rstest};
 
@@ -240,29 +267,6 @@ mod test {
     fn mock_client() -> MockNetworkClient {
         let _ = stderrlog::new().module("memfaultd").verbosity(10).init();
         MockNetworkClient::new()
-    }
-
-    #[rstest]
-    fn test_write_attributes(mut mock_client: MockNetworkClient) -> Result<()> {
-        let mut queue = Queue::new::<&str>(None, 1024)?;
-        let buf =
-            b"A\x8C\xA1\xC0\x63\x00\x00\x00\x00[{\"string_key\":\"some_key_name\",\"value\":42}]\0"
-                .to_owned();
-        queue.write(&buf);
-
-        mock_client
-            .expect_patch_attributes()
-            .with(
-                eq(DateTime::<Utc>::from_str("2023-01-13T00:10:52Z")?),
-                eq(r#"[{"string_key":"some_key_name","value":42}]"#),
-            )
-            .times(1)
-            .returning(|_, _| Ok(()));
-
-        let r = process_queue_message(&mock_client, &queue.read().unwrap());
-        println!("Result: {:#?}", r);
-        assert!(r.is_ok());
-        Ok(())
     }
 
     #[rstest]

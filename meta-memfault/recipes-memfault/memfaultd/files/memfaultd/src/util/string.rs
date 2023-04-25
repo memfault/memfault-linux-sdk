@@ -36,6 +36,15 @@ impl Ellipsis for String {
     }
 }
 
+/// Capitalize the first letter of a string
+pub fn capitalize(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        None => String::new(),
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -74,5 +83,12 @@ mod test {
         let mut s = String::from(input);
         s.truncate_with_ellipsis(len_bytes);
         assert_eq!(&s, expected);
+    }
+
+    #[rstest]
+    #[case("capital")]
+    #[case("Capital")]
+    fn test_capitalize(#[case] input: &str) {
+        assert_eq!(capitalize(input), "Capital");
     }
 }

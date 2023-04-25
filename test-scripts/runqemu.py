@@ -28,9 +28,15 @@ def get_host_arch() -> str:
 
 BASE_IMAGE_FILENAME = f"base-image-{get_machine()}.wic"
 
+SYSTEM_PARTITION_A_INDEX = 2
+
 
 def qemu_get_image_wic_path(filename: str) -> pathlib.Path:
     return get_build_dir() / "tmp" / "deploy" / "images" / get_machine() / filename
+
+
+def qemu_get_system_partition_a_index() -> int:
+    return SYSTEM_PARTITION_A_INDEX
 
 
 _DEFAULT_IMAGE_WIC_PATH = qemu_get_image_wic_path(BASE_IMAGE_FILENAME)

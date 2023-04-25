@@ -25,9 +25,9 @@ extern "C" {
 time_t *memfaultd_rate_limiter_get_history(sMemfaultdRateLimiter *handle);
 }
 
-char *memfaultd_generate_rw_filename(sMemfaultd *memfaultd, const char *filename) {
+char *memfaultd_generate_tmp_filename(sMemfaultd *memfaultd, const char *filename) {
   const char *path = mock()
-                       .actualCall("memfaultd_generate_rw_filename")
+                       .actualCall("memfaultd_generate_tmp_filename")
                        .withPointerParameter("memfaultd", memfaultd)
                        .withStringParameter("filename", filename)
                        .returnStringValue();

@@ -1,6 +1,3 @@
-# Enable logging support (it's disabled by default)
-PACKAGECONFIG_append = " plugin_logging"
-
 do_install_append() {
     mkdir -p ${D}${sysconfdir}
     echo "{" > ${D}${sysconfdir}/memfaultd.conf

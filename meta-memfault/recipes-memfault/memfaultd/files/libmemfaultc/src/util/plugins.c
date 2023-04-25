@@ -14,7 +14,6 @@
 #include "memfault/core/math.h"
 
 sMemfaultdPluginDef g_plugins[] = {
-  {.name = "attributes", .init = memfaultd_attributes_init, .ipc_name = "ATTRIBUTES"},
   {.name = "reboot", .init = memfaultd_reboot_init},
 #ifdef PLUGIN_SWUPDATE
   {.name = "swupdate", .init = memfaultd_swupdate_init},
