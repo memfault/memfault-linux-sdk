@@ -36,7 +36,6 @@
 #include "memfault/util/ipc.h"
 #include "memfault/util/pid.h"
 #include "memfault/util/plugins.h"
-#include "memfault/util/runtime_config.h"
 #include "memfault/util/string.h"
 #include "memfault/util/systemd.h"
 #include "memfault/util/version.h"
@@ -59,7 +58,7 @@ struct Memfaultd {
 
 static sMemfaultd *s_handle;
 
-extern bool memfaultd_rust_process_loop(const char *, sMemfaultdQueue *);
+extern bool memfaultd_rust_process_loop(const char *, sMemfaultdQueue *, bool daemonize);
 
 /**
  * @brief Displays usage information
@@ -69,12 +68,6 @@ static void prv_memfaultd_usage(void) {
   printf("Usage: memfaultd [OPTION]...\n\n");
   printf("      --config-file <file>       : Configuration file\n");
   printf("      --daemonize                : Daemonize process\n");
-  printf("      --enable-data-collection   : Enable data collection, will restart the main "
-         "memfaultd service\n");
-  printf("      --disable-data-collection  : Disable data collection, will restart the main "
-         "memfaultd service\n");
-  printf("      --enable-dev-mode          : Enable developer mode (restarts memfaultd)\n");
-  printf("      --disable-dev-mode         : Disable developer mode (restarts memfaultd)\n");
   printf("  -h, --help                     : Display this help and exit\n");
   printf("  -s, --show-settings            : Show settings\n");
   printf("  -v, --version                  : Show version information\n");
@@ -87,7 +80,6 @@ static void prv_memfaultd_usage(void) {
  * @return false Failed
  */
 static bool prv_memfaultd_daemonize_process(void) {
-  char pid[11] = "";
   if (getuid() != 0) {
     fprintf(stderr, "memfaultd:: Cannot daemonize as non-root user, aborting.\n");
   }
@@ -103,44 +95,32 @@ static bool prv_memfaultd_daemonize_process(void) {
   fprintf(stderr, "Not linux - not daemonizing.");
 #endif
 
-  const int fd = open(PID_FILE, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
-  if (fd == -1) {
-    if (errno == EEXIST) {
-      fprintf(stderr, "memfaultd:: Daemon already running, aborting.\n");
-      return false;
-    }
-    fprintf(stderr, "memfaultd:: Failed to open PID file, aborting.\n");
-    return false;
-  }
-
-  snprintf(pid, sizeof(pid), "%d\n", getpid());
-
-  if (write(fd, pid, sizeof(pid)) == -1) {
-    fprintf(stderr, "memfaultd:: Failed to write PID file, aborting.\n");
-    close(fd);
-    unlink(PID_FILE);
-  }
-
-  close(fd);
-
   return true;
 }
 
-static void memfaultd_create_data_dir(sMemfaultd *handle) {
-  const char *data_dir;
-  if (!memfaultd_get_string(handle, "", "data_dir", &data_dir) || strlen(data_dir) == 0) {
-    return;
-  }
-
+static void prv_mkdir(const char *path) {
   struct stat sb;
-  if (stat(data_dir, &sb) == 0 && S_ISDIR(sb.st_mode)) {
+  if (stat(path, &sb) == 0 && S_ISDIR(sb.st_mode)) {
     return;
   }
 
-  if (mkdir(data_dir, 0755) == -1) {
-    fprintf(stderr, "memfault:: Failed to create memfault base_dir '%s'\n", data_dir);
+  if (mkdir(path, 0755) == -1) {
+    fprintf(stderr, "memfault:: Failed to create directory: '%s'\n", path);
     return;
   }
+}
+
+static void prv_create_directories(sMemfaultd *handle) {
+  const char *persist_dir, *tmp_dir;
+  if (!memfaultd_get_string(handle, "", "persist_dir", &persist_dir) || strlen(persist_dir) == 0) {
+    return;
+  }
+  prv_mkdir(persist_dir);
+
+  if (!memfaultd_get_string(handle, "", "tmp_dir", &tmp_dir) || strlen(persist_dir) == 0) {
+    return;
+  }
+  prv_mkdir(tmp_dir);
 }
 
 static void *prv_ipc_process_thread(void *arg) {
@@ -209,38 +189,21 @@ cleanup:
  */
 int memfaultd_main(int argc, char *argv[]) {
   bool daemonize = false;
-  bool enable_comms = false;
-  bool disable_comms = false;
   bool display_config = false;
-  bool enable_devmode = false;
-  bool disable_devmode = false;
 
   s_handle = calloc(sizeof(sMemfaultd), 1);
   s_handle->config_file = CONFIG_FILE;
 
   static struct option sMemfaultdLongOptions[] = {
-    {"config-file", required_argument, NULL, 'c'},
-    {"disable-data-collection", no_argument, NULL, 'd'},
-    {"disable-dev-mode", no_argument, NULL, 'm'},
-    {"enable-data-collection", no_argument, NULL, 'e'},
-    {"enable-dev-mode", no_argument, NULL, 'M'},
-    {"help", no_argument, NULL, 'h'},
-    {"show-settings", no_argument, NULL, 's'},
-    {"version", no_argument, NULL, 'v'},
-    {"daemonize", no_argument, NULL, 'Z'},
-    {NULL, 0, NULL, 0}};
+    {"config-file", required_argument, NULL, 'c'}, {"help", no_argument, NULL, 'h'},
+    {"show-settings", no_argument, NULL, 's'},     {"version", no_argument, NULL, 'v'},
+    {"daemonize", no_argument, NULL, 'Z'},         {NULL, 0, NULL, 0}};
 
   int opt;
   while ((opt = getopt_long(argc, argv, "c:dehsvZ", sMemfaultdLongOptions, NULL)) != -1) {
     switch (opt) {
       case 'c':
         s_handle->config_file = optarg;
-        break;
-      case 'd':
-        disable_comms = true;
-        break;
-      case 'e':
-        enable_comms = true;
         break;
       case 'h':
         prv_memfaultd_usage();
@@ -254,12 +217,6 @@ int memfaultd_main(int argc, char *argv[]) {
       case 'Z':
         daemonize = true;
         break;
-      case 'M':
-        enable_devmode = true;
-        break;
-      case 'm':
-        disable_devmode = true;
-        break;
       default:
         exit(EXIT_FAILURE);
     }
@@ -270,25 +227,7 @@ int memfaultd_main(int argc, char *argv[]) {
     exit(EXIT_FAILURE);
   }
 
-  memfaultd_create_data_dir(s_handle);
-
-  if (enable_comms || disable_comms) {
-    if (enable_comms && disable_comms) {
-      fprintf(stderr, "memfaultd:: Unable to enable and disable comms simultaneously\n");
-      exit(EXIT_FAILURE);
-    }
-    exit(memfault_set_runtime_bool_and_reload(s_handle->config, CONFIG_KEY_DATA_COLLECTION,
-                                              "data collection", enable_comms));
-  }
-
-  if (enable_devmode || disable_devmode) {
-    if (enable_devmode && disable_devmode) {
-      fprintf(stderr, "memfaultd:: Unable to enable and disable dev-mode simultaneously\n");
-      exit(EXIT_FAILURE);
-    }
-    exit(memfault_set_runtime_bool_and_reload(s_handle->config, CONFIG_KEY_DEV_MODE,
-                                              "developer mode", enable_devmode));
-  }
+  prv_create_directories(s_handle);
 
   if (!(s_handle->settings = memfaultd_device_settings_init())) {
     fprintf(stderr, "memfaultd:: Failed to load all required device settings, aborting.\n");
@@ -309,7 +248,7 @@ int memfaultd_main(int argc, char *argv[]) {
   int queue_size = 0;
   memfaultd_get_integer(s_handle, NULL, "queue_size_kib", &queue_size);
 
-  char *queue_file = memfaultd_generate_rw_filename(s_handle, "queue");
+  char *queue_file = memfaultd_generate_tmp_filename(s_handle, "queue");
   if (!(s_handle->queue = memfaultd_queue_init(queue_file, queue_size * 1024))) {
     fprintf(stderr, "memfaultd:: Failed to create queue object, aborting.\n");
     exit(EXIT_FAILURE);
@@ -348,7 +287,8 @@ int memfaultd_main(int argc, char *argv[]) {
 
   // Run the main loop in Rust.
   // This will register a signal handler and stop when SIGINT/SIGTERM is received.
-  const bool success = memfaultd_rust_process_loop(s_handle->config_file, s_handle->queue);
+  const bool success =
+    memfaultd_rust_process_loop(s_handle->config_file, s_handle->queue, daemonize);
 
   // shutdown() the read-side of the socket to abort any in-progress recv()
   // calls. This will terminate the ipc_thread.
@@ -409,8 +349,12 @@ const sMemfaultdDeviceSettings *memfaultd_get_device_settings(sMemfaultd *memfau
   return memfaultd->settings;
 }
 
-char *memfaultd_generate_rw_filename(sMemfaultd *handle, const char *filename) {
-  return memfaultd_config_generate_rw_filename(handle->config, filename);
+char *memfaultd_generate_persisted_filename(sMemfaultd *handle, const char *filename) {
+  return memfaultd_config_generate_persisted_filename(handle->config, filename);
+}
+
+char *memfaultd_generate_tmp_filename(sMemfaultd *handle, const char *filename) {
+  return memfaultd_config_generate_tmp_filename(handle->config, filename);
 }
 
 bool memfaultd_is_dev_mode(sMemfaultd *handle) { return handle->dev_mode; }

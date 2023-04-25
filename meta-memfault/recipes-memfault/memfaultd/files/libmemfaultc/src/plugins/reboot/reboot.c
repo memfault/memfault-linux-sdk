@@ -100,7 +100,7 @@ static sMemfaultdTxData *prv_reboot_build_event(sMemfaultd *memfaultd,
  */
 static void prv_reboot_write_reboot_reason(sMemfaultd *memfaultd,
                                            eMemfaultRebootReason reboot_reason) {
-  char *file = memfaultd_generate_rw_filename(memfaultd, "lastrebootreason");
+  char *file = memfaultd_generate_persisted_filename(memfaultd, "lastrebootreason");
   if (!file) {
     fprintf(stderr, "reboot:: Failed to get reboot reason file\n");
     return;
@@ -155,7 +155,7 @@ static bool prv_reboot_read_and_clear_reboot_reason_from_file(
  */
 static bool prv_reboot_read_and_clear_reboot_reason_internal(sMemfaultd *memfaultd,
                                                              eMemfaultRebootReason *reboot_reason) {
-  char *file = memfaultd_generate_rw_filename(memfaultd, "lastrebootreason");
+  char *file = memfaultd_generate_persisted_filename(memfaultd, "lastrebootreason");
   if (!file) {
     fprintf(stderr, "reboot:: Failed to allocate lastrebootreason path string\n");
     return false;
@@ -315,7 +315,7 @@ static sMemfaultdPluginCallbackFns s_fns = {
 static void prv_run_if_untracked_boot_id(sMemfaultd *memfaultd,
                                          void (*cb)(sMemfaultd *memfaultd, const char *boot_id)) {
   char *last_tracked_boot_id_file =
-    memfaultd_generate_rw_filename(memfaultd, "last_tracked_boot_id");
+    memfaultd_generate_tmp_filename(memfaultd, "last_tracked_boot_id");
   if (last_tracked_boot_id_file == NULL) {
     fprintf(stderr, "reboot:: Failed to get last_tracked_boot_id file\n");
     goto cleanup;

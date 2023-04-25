@@ -6,7 +6,6 @@ use std::io::Read;
 use std::path;
 use std::str;
 
-use chrono::Utc;
 use eyre::eyre;
 use eyre::Context;
 use eyre::Result;
@@ -38,7 +37,6 @@ pub struct NetworkClientImpl {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Method {
     POST,
-    PATCH,
 }
 
 impl NetworkClientImpl {
@@ -117,7 +115,6 @@ impl NetworkClientImpl {
             .request(
                 match method {
                     Method::POST => reqwest::Method::POST,
-                    Method::PATCH => reqwest::Method::PATCH,
                 },
                 url,
             )
@@ -186,15 +183,6 @@ impl NetworkClientImpl {
 }
 
 impl NetworkClient for NetworkClientImpl {
-    fn patch_attributes(&self, timestamp: chrono::DateTime<Utc>, json: &str) -> Result<()> {
-        let path = format!(
-            "/api/v0/attributes?device_serial={}&captured_date={}",
-            self.config.device_id,
-            urlencoding::encode(&timestamp.to_rfc3339())
-        );
-        self.fetch(Method::PATCH, &path, json).and(Ok(()))
-    }
-
     fn post_event(&self, payload: &str) -> Result<()> {
         self.fetch(Method::POST, "/api/v0/events", payload)
             .and(Ok(()))

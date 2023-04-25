@@ -37,7 +37,7 @@ struct MemfaultdConfig {
  * @param handle
  */
 static void prv_config_write_config(sMemfaultdConfig *handle) {
-  char *runtime_path = memfaultd_config_generate_rw_filename(handle, "runtime.conf");
+  char *runtime_path = memfaultd_config_generate_persisted_filename(handle, "runtime.conf");
   if (!runtime_path) {
     return;
   }
@@ -182,20 +182,39 @@ static void prv_config_merge_objects(json_object *a, json_object *b) {
   }
 }
 
-char *memfaultd_config_generate_rw_filename(sMemfaultdConfig *handle, const char *filename) {
-  const char *data_dir;
+char *prv_config_generate_rw_filename(sMemfaultdConfig *handle, bool persisted,
+                                      const char *filename) {
+  const char *base_dir = NULL;
   char *file = NULL;
-  if (memfaultd_config_get_string(handle, "", "data_dir", &data_dir) && strlen(data_dir) != 0) {
-    file = malloc(strlen(data_dir) + strlen(filename) + 1 + 1);
+
+  if (persisted) {
+    memfaultd_config_get_string(handle, "", "persist_dir", &base_dir);
+  } else {
+    if (!memfaultd_config_get_optional_string(handle, "", "tmp_dir", &base_dir) ||
+        strlen(base_dir) == 0) {
+      memfaultd_config_get_string(handle, "", "persist_dir", &base_dir);
+    }
+  }
+
+  if (base_dir != NULL && strlen(base_dir) != 0) {
+    file = malloc(strlen(base_dir) + strlen(filename) + 1 + 1);
     if (!file) {
       return NULL;
     }
-    strcpy(file, data_dir);
+    strcpy(file, base_dir);
     strcat(file, "/");
     strcat(file, filename);
   }
 
   return file;
+}
+
+char *memfaultd_config_generate_persisted_filename(sMemfaultdConfig *handle, const char *filename) {
+  return prv_config_generate_rw_filename(handle, true, filename);
+}
+
+char *memfaultd_config_generate_tmp_filename(sMemfaultdConfig *handle, const char *filename) {
+  return prv_config_generate_rw_filename(handle, false, filename);
 }
 
 /**
@@ -229,7 +248,7 @@ sMemfaultdConfig *memfaultd_config_init(const char *file) {
     close(fd);
   }
 
-  char *runtime_path = memfaultd_config_generate_rw_filename(handle, "runtime.conf");
+  char *runtime_path = memfaultd_config_generate_persisted_filename(handle, "runtime.conf");
 
   if (!runtime_path) {
     // No runtime config, warn but continue.
@@ -320,35 +339,61 @@ void memfaultd_config_set_boolean(sMemfaultdConfig *handle, const char *parent_k
   prv_config_set_object(handle, parent_key, key, json_object_new_boolean(val));
 }
 
-/**
- * @brief Get string from config object
- *
- * @param handle config object
- * @param parent_key Parent key name, NULL for root object
- * @param key Key name to set
- * @param val Value returned
- * @return true Successfully added string to config
- * @return false Failed to add string
- */
-bool memfaultd_config_get_string(sMemfaultdConfig *handle, const char *parent_key, const char *key,
-                                 const char **val) {
+bool prv_config_get_string(sMemfaultdConfig *handle, const char *parent_key, const char *key,
+                           const char **val, bool print_warnings) {
   json_object *object;
 
   if (!(object = prv_config_find_object(handle->runtime, parent_key, key)) &&
       !(object = prv_config_find_object(handle->base, parent_key, key))) {
-    fprintf(stderr, "config:: Failed to find config object %s:%s \n", parent_key ? parent_key : "",
-            key ? key : "");
+    if (print_warnings) {
+      fprintf(stderr, "config:: Failed to find config object %s:%s \n",
+              parent_key ? parent_key : "", key ? key : "");
+    }
     return false;
   }
 
   if (json_object_get_type(object) != json_type_string) {
-    fprintf(stderr, "config:: Object is not of type %s %s:%s \n", "string",
-            parent_key ? parent_key : "", key ? key : "");
+    if (print_warnings) {
+      fprintf(stderr, "config:: Object is not of type %s %s:%s \n", "string",
+              parent_key ? parent_key : "", key ? key : "");
+    }
     return false;
   }
 
   *val = json_object_get_string(object);
   return true;
+}
+
+/**
+ * @brief Get string from config object
+ *
+ * @param handle config object
+ * @param parent_key Parent key name, NULL for root object
+ * @param key Key name to read
+ * @param val Value returned
+ * @return true Successfully read string
+ * @return false Failed to read string
+ */
+bool memfaultd_config_get_string(sMemfaultdConfig *handle, const char *parent_key, const char *key,
+                                 const char **val) {
+  return prv_config_get_string(handle, parent_key, key, val, true);
+}
+
+/**
+ * @brief Get optional string from config object.
+ * Same as memfaultd_config_get_string but will not print a warning on
+ * stderr if the key is not found.
+ *
+ * @param handle config object
+ * @param parent_key Parent key name, NULL for root object
+ * @param key Key name to read
+ * @param val Value returned
+ * @return true Successfully read string
+ * @return false Failed to read string
+ */
+bool memfaultd_config_get_optional_string(sMemfaultdConfig *handle, const char *parent_key,
+                                          const char *key, const char **val) {
+  return prv_config_get_string(handle, parent_key, key, val, false);
 }
 
 /**

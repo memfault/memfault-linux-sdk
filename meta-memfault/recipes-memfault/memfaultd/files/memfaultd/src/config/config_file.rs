@@ -2,17 +2,24 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroU32;
 use std::time::Duration;
 use std::{net::SocketAddr, path::PathBuf};
 
-use crate::util::serialization::*;
 use crate::util::*;
+use crate::util::{path::AbsolutePath, serialization::*};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct MemfaultdConfig {
     #[serde(rename = "queue_size_kib", with = "kib_to_usize")]
     pub queue_size: usize,
-    pub data_dir: PathBuf,
+    pub persist_dir: AbsolutePath,
+    pub tmp_dir: Option<AbsolutePath>,
+    #[serde(rename = "tmp_dir_min_headroom_kib", with = "kib_to_usize")]
+    pub tmp_dir_min_headroom: usize,
+    pub tmp_dir_min_inodes: usize,
+    #[serde(rename = "tmp_dir_max_usage_kib", with = "kib_to_usize")]
+    pub tmp_dir_max_usage: usize,
     #[serde(rename = "refresh_interval_seconds", with = "seconds_to_duration")]
     pub refresh_interval: Duration,
     pub enable_data_collection: bool,
@@ -69,10 +76,6 @@ pub struct CoredumpPlugin {
     pub rate_limit_count: u32,
     #[serde(rename = "rate_limit_duration_seconds", with = "seconds_to_duration")]
     pub rate_limit_duration: Duration,
-    #[serde(rename = "storage_min_headroom_kib", with = "kib_to_usize")]
-    pub storage_min_headroom: usize,
-    #[serde(rename = "storage_max_usage_kib", with = "kib_to_usize")]
-    pub storage_max_usage: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -91,16 +94,14 @@ pub struct LogsConfig {
     #[serde(rename = "rotate_after_seconds", with = "seconds_to_duration")]
     pub rotate_after: Duration,
 
-    pub tmp_folder: PathBuf,
-
     #[serde(with = "number_to_compression")]
     pub compression_level: Compression,
+
+    pub max_lines_per_minute: NonZeroU32,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct MarConfig {
-    #[serde(rename = "storage_max_usage_kib", with = "kib_to_usize")]
-    pub storage_max_usage: usize,
     #[serde(rename = "mar_file_max_size_kib", with = "kib_to_usize")]
     pub mar_file_max_size: usize,
 }
@@ -110,12 +111,30 @@ use serde_json::Value;
 use std::fs;
 use std::path::Path;
 
+pub struct JsonConfigs {
+    /// Built-in configuration and System configuration
+    pub base: Value,
+    /// Runtime configuration
+    pub runtime: Value,
+}
+
 impl MemfaultdConfig {
-    const DEFAULT_CONFIG_PATH: &'static str = "/etc/memfaultd.conf";
+    pub const DEFAULT_CONFIG_PATH: &'static str = "/etc/memfaultd.conf";
 
     pub fn load(config_path: Option<&Path>) -> eyre::Result<MemfaultdConfig> {
+        let JsonConfigs {
+            base: mut config,
+            runtime,
+        } = Self::parse_configs(config_path)?;
+        Self::merge_into(&mut config, runtime);
+        // Transform the JSON object into a typed structure.
+        Ok(serde_json::from_value(config)?)
+    }
+
+    /// Parse config file from given path and returns (builtin+system config, runtime config).
+    pub fn parse_configs(config_path: Option<&Path>) -> eyre::Result<JsonConfigs> {
         // Initialize with the builtin config file.
-        let mut config: Value = Self::parse(include_str!("../../../libmemfaultc/builtin.conf"))?;
+        let mut base: Value = Self::parse(include_str!("../../../libmemfaultc/builtin.conf"))?;
 
         // Select config file to read
         let user_config_path = config_path.unwrap_or_else(|| Path::new(Self::DEFAULT_CONFIG_PATH));
@@ -124,17 +143,50 @@ impl MemfaultdConfig {
         let user_config = Self::parse(std::fs::read_to_string(user_config_path)?.as_str())?;
 
         // Merge the two JSON objects together
-        Self::merge_into(&mut config, user_config);
+        Self::merge_into(&mut base, user_config);
 
         // Load the runtime config but only if the file exists. (Missing runtime config is not an error.)
-        let runtime_config_path = Self::generate_runtime_config_path(&config)?;
-        if runtime_config_path.exists() {
-            let runtime = Self::parse(fs::read_to_string(runtime_config_path)?.as_str())?;
-            Self::merge_into(&mut config, runtime);
-        }
+        let runtime_config_path = Self::runtime_config_path_from_json(&base)?;
+        let runtime = if runtime_config_path.exists() {
+            Self::parse(fs::read_to_string(runtime_config_path)?.as_str())?
+        } else {
+            Value::Object(serde_json::Map::new())
+        };
 
-        // Transform the JSON object into a typed structure.
-        Ok(serde_json::from_value(config)?)
+        Ok(JsonConfigs { base, runtime })
+    }
+
+    /// Set and write boolean in runtime config.
+    pub fn set_and_write_bool_to_runtime_config(&self, key: &str, value: bool) -> eyre::Result<()> {
+        let config_string = match fs::read_to_string(self.runtime_config_path()) {
+            Ok(config_string) => config_string,
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    "{}".to_string()
+                } else {
+                    return Err(eyre::eyre!("Failed to read runtime config: {}", e));
+                }
+            }
+        };
+
+        let mut config_val = Self::parse(&config_string)?;
+        config_val[key] = Value::Bool(value);
+
+        self.write_value_to_runtime_config(config_val)
+    }
+
+    /// Write config to runtime config file.
+    ///
+    /// This is used to write the config to a file that can be read by the memfaultd process.
+    fn write_value_to_runtime_config(&self, value: Value) -> eyre::Result<()> {
+        let runtime_config_path = self.runtime_config_path();
+        fs::write(&runtime_config_path, value.to_string())?;
+
+        Ok(())
+    }
+
+    pub fn runtime_config_path(&self) -> PathBuf {
+        PathBuf::from(self.persist_dir.clone()).join("runtime.conf")
     }
 
     // Parse a Memfaultd JSON configuration file (with optional C-style comments) and return a serde_json::Value object.
@@ -163,15 +215,15 @@ impl MemfaultdConfig {
         }
     }
 
-    // Generate the path to the runtime config file from a serde_json::Value object. This should include the "data_dir" field.
-    fn generate_runtime_config_path(config: &Value) -> eyre::Result<PathBuf> {
-        let mut data_dir = PathBuf::from(
-            config["data_dir"]
+    // Generate the path to the runtime config file from a serde_json::Value object. This should include the "persist_dir" field.
+    fn runtime_config_path_from_json(config: &Value) -> eyre::Result<PathBuf> {
+        let mut persist_dir = PathBuf::from(
+            config["persist_dir"]
                 .as_str()
-                .ok_or(eyre::eyre!("Config['data_dir'] must be a string."))?,
+                .ok_or(eyre::eyre!("Config['persist_dir'] must be a string."))?,
         );
-        data_dir.push("runtime.conf");
-        Ok(data_dir)
+        persist_dir.push("runtime.conf");
+        Ok(persist_dir)
     }
 }
 
@@ -193,6 +245,8 @@ mod test {
     use rstest::rstest;
 
     use super::*;
+
+    use crate::test_utils::set_snapshot_suffix;
 
     #[test]
     fn test_merge() {
@@ -252,5 +306,42 @@ mod test {
         // And that the configuration generated is what we expect.
         // Use `cargo insta review` to quickly approve changes.
         insta::assert_json_snapshot!(name, content)
+    }
+
+    #[rstest]
+    fn will_reject_invalid_tmp_path() {
+        let input_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("src/config/test-config")
+            .join("with_invalid_path")
+            .with_extension("json");
+        let result = MemfaultdConfig::load(Some(&input_path));
+        dbg!("result: {:?}", &result);
+        assert!(result.is_err());
+    }
+
+    #[rstest]
+    #[case("no_file", None)]
+    #[case("empty_object", Some("{}"))]
+    #[case("other_key", Some(r##"{"key2":false}"##))]
+    fn test_set_and_write_bool_to_runtime_config(
+        #[case] test_name: &str,
+        #[case] config_string: Option<&str>,
+    ) {
+        let mut config = MemfaultdConfig::test_fixture();
+        let temp_data_dir = tempfile::tempdir().unwrap();
+        config.persist_dir = AbsolutePath::try_from(temp_data_dir.path().to_path_buf()).unwrap();
+
+        if let Some(config_string) = config_string {
+            std::fs::write(config.runtime_config_path(), config_string).unwrap();
+        }
+
+        config
+            .set_and_write_bool_to_runtime_config("key", true)
+            .unwrap();
+
+        let disk_config_string = std::fs::read_to_string(config.runtime_config_path()).unwrap();
+
+        set_snapshot_suffix!("{}", test_name);
+        insta::assert_json_snapshot!(disk_config_string);
     }
 }

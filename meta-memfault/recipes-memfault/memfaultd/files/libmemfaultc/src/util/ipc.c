@@ -45,16 +45,3 @@ bool memfaultd_ipc_sendmsg(uint8_t *msg, size_t len) {
   close(fd);
   return (size_t)result == len;
 }
-
-bool memfaultd_send_flush_queue_signal(void) {
-  int pid = memfaultd_get_pid();
-  if (pid == -1) {
-    fprintf(stderr, "Unable to read memfaultd PID file.\n");
-    return false;
-  }
-  if (kill(pid, SIGUSR1) < 0) {
-    fprintf(stderr, "Unable to send USR1 signal to memfaultd: %s\n", strerror(errno));
-    return false;
-  }
-  return true;
-}

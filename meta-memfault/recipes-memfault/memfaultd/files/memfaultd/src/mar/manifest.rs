@@ -3,13 +3,15 @@
 // See License.txt for details
 use std::time::Duration;
 
+use crate::build_info::VERSION;
 use chrono::Utc;
 use eyre::Result;
-use memfaultc_sys::build_info::memfaultd_sdk_version;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{
+    metrics::MetricStringKey,
     network::NetworkConfig,
     util::serialization::milliseconds_to_duration,
     util::system::{get_system_clock, read_system_boot_id, Clock},
@@ -73,6 +75,8 @@ pub enum Metadata {
         cid: Cid,
         next_cid: Cid,
     },
+    #[serde(rename = "device-attributes")]
+    DeviceAttributes { attributes: Vec<DeviceAttribute> },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -93,6 +97,29 @@ pub struct Cid {
     uuid: Uuid,
 }
 
+#[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
+pub struct DeviceAttribute {
+    string_key: MetricStringKey,
+    value: Value,
+}
+
+impl DeviceAttribute {
+    pub fn new(string_key: MetricStringKey, value: Value) -> Self {
+        Self { string_key, value }
+    }
+}
+
+impl<K: AsRef<str>, V: Into<Value>> TryFrom<(K, V)> for DeviceAttribute {
+    type Error = String;
+
+    fn try_from(value: (K, V)) -> std::result::Result<Self, Self::Error> {
+        Ok(DeviceAttribute {
+            string_key: str::parse(value.0.as_ref())?,
+            value: value.1.into(),
+        })
+    }
+}
+
 impl Metadata {
     pub fn new_log(
         log_file_name: String,
@@ -111,9 +138,13 @@ impl Metadata {
             },
             producer: LinuxLogsProducer {
                 id: "memfaultd".into(),
-                version: memfaultd_sdk_version().to_owned(),
+                version: VERSION.to_owned(),
             },
         }
+    }
+
+    pub fn new_device_attributes(attributes: Vec<DeviceAttribute>) -> Self {
+        Self::DeviceAttributes { attributes }
     }
 }
 
@@ -171,9 +202,10 @@ impl Manifest {
         }
     }
 
-    pub fn attachments(&self) -> impl Iterator<Item = String> {
+    pub fn attachments(&self) -> Vec<String> {
         match &self.metadata {
-            Metadata::LinuxLogs { log_file_name, .. } => std::iter::once(log_file_name.clone()),
+            Metadata::LinuxLogs { log_file_name, .. } => vec![log_file_name.clone()],
+            Metadata::DeviceAttributes { .. } => vec![],
         }
     }
 }
@@ -202,5 +234,21 @@ mod tests {
             super::Metadata::new_log("/var/log/syslog".into(), this_cid, next_cid, compression),
         );
         insta::assert_json_snapshot!(name, manifest, { ".metadata.producer.version" => "tests"});
+    }
+
+    #[rstest]
+    fn serialization_of_device_attributes() {
+        let config = NetworkConfig::test_fixture();
+        let manifest = Manifest::new(
+            &config,
+            CollectionTime::test_fixture(),
+            super::Metadata::new_device_attributes(vec![
+                ("my_string", "foo").try_into().unwrap(),
+                ("my_int", 123).try_into().unwrap(),
+                ("my_float", 123.456).try_into().unwrap(),
+                ("my_bool", true).try_into().unwrap(),
+            ]),
+        );
+        insta::assert_json_snapshot!(manifest, { ".metadata.producer.version" => "tests"});
     }
 }

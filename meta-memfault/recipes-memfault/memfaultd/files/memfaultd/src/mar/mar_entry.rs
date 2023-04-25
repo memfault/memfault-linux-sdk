@@ -7,7 +7,7 @@
 //!
 //! A MAR entry is a folder with a unique name, a manifest and some optional attachments.
 //!
-use crate::mar::manifest::CompressionAlgorithm;
+use crate::{mar::manifest::CompressionAlgorithm, util::disk_size::DiskSize};
 use eyre::{eyre, Context, Result};
 use std::collections::VecDeque;
 use std::fs::{self, File};
@@ -114,15 +114,22 @@ impl MarEntry {
 }
 
 impl MarEntryBuilder {
+    pub fn new(metadata: Metadata, attachments: Vec<PathBuf>) -> Result<Self> {
+        Ok(Self {
+            collection_time: CollectionTime::now()?,
+            metadata,
+            attachments,
+        })
+    }
+
     pub fn new_log(
         file: PathBuf,
         cid: Uuid,
         next_cid: Uuid,
         compression: CompressionAlgorithm,
     ) -> Result<Self> {
-        Ok(Self {
-            collection_time: CollectionTime::now()?,
-            metadata: Metadata::new_log(
+        Self::new(
+            Metadata::new_log(
                 file.file_name()
                     .ok_or(eyre!("Logfile should be a file."))?
                     .to_str()
@@ -132,8 +139,8 @@ impl MarEntryBuilder {
                 next_cid,
                 compression,
             ),
-            attachments: vec![file],
-        })
+            vec![file],
+        )
     }
 
     /// Consume this builder, writes the manifest and moves the attachment to the
@@ -182,7 +189,7 @@ impl MarEntryBuilder {
         })
     }
 
-    pub fn estimated_entry_size(&self) -> u64 {
+    pub fn estimated_entry_size(&self) -> DiskSize {
         let attachments_size: u64 = self
             .attachments
             .iter()
@@ -192,7 +199,10 @@ impl MarEntryBuilder {
 
         // Add a bit extra for the overhead of the manifest.json and directory inode:
         const OVERHEAD_SIZE_ESTIMATE: u64 = 4096;
-        attachments_size + OVERHEAD_SIZE_ESTIMATE
+        DiskSize {
+            bytes: attachments_size + OVERHEAD_SIZE_ESTIMATE,
+            inodes: attachments_size + 1,
+        }
     }
 }
 

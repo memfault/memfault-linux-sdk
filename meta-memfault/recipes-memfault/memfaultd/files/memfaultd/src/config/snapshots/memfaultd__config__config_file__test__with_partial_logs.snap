@@ -4,7 +4,11 @@ expression: content
 ---
 {
   "queue_size_kib": 1024,
-  "data_dir": "/media/memfault",
+  "persist_dir": "/media/memfault",
+  "tmp_dir": null,
+  "tmp_dir_min_headroom_kib": 10240,
+  "tmp_dir_min_inodes": 100,
+  "tmp_dir_max_usage_kib": 102400,
   "refresh_interval_seconds": 3600,
   "enable_data_collection": false,
   "enable_dev_mode": false,
@@ -30,9 +34,7 @@ expression: content
     "compression": "gzip",
     "coredump_max_size_kib": 96000,
     "rate_limit_count": 5,
-    "rate_limit_duration_seconds": 3600,
-    "storage_min_headroom_kib": 10240,
-    "storage_max_usage_kib": 0
+    "rate_limit_duration_seconds": 3600
   },
   "fluent-bit": {
     "extra_fluentd_attributes": [],
@@ -43,11 +45,10 @@ expression: content
   "logs": {
     "rotate_size_kib": 10240,
     "rotate_after_seconds": 3600,
-    "tmp_folder": "tmplogs",
-    "compression_level": 1
+    "compression_level": 1,
+    "max_lines_per_minute": 500
   },
   "mar": {
-    "storage_max_usage_kib": 102400,
     "mar_file_max_size_kib": 10240
   }
 }

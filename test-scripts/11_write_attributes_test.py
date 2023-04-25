@@ -1,6 +1,7 @@
 #
 # Copyright (c) Memfault, Inc.
 # See License.txt for details
+import pytest
 from memfault_service_tester import MemfaultServiceTester
 from qemu import QEMU
 
@@ -13,14 +14,6 @@ from qemu import QEMU
 def test(
     qemu: QEMU, memfault_service_tester: MemfaultServiceTester, qemu_device_id: str
 ):
-    qemu.exec_cmd("memfaultctl enable-data-collection")
-
-    # Start following memfaultd logs
-    qemu.exec_cmd("journalctl -u memfaultd -n 0 -f &")
-
-    # Wait until memfaultd has started
-    qemu.child().expect("Started memfaultd daemon.")
-
     # Write attributes
     qemu.exec_cmd(
         'memfaultctl write-attributes a_string=running a_bool=false a_boolish_string=\\"true\\" a_float=42.42'
@@ -51,3 +44,9 @@ def test(
     memfault_service_tester.poll_until_not_raising(
         _check, timeout_seconds=60, poll_interval_seconds=1
     )
+
+
+@pytest.mark.parametrize("data_collection_enabled", [False])
+def test_fails_with_data_collection_disabled(qemu: QEMU, data_collection_enabled: bool):
+    qemu.exec_cmd("memfaultctl write-attributes foo=bar")
+    qemu.child().expect("Cannot write attributes because data collection is disabled")

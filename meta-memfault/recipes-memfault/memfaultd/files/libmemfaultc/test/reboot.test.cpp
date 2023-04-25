@@ -46,9 +46,18 @@ int __real_access(const char *pathname, int mode) {
 }
 }
 
-char *memfaultd_generate_rw_filename(sMemfaultd *memfaultd, const char *filename) {
+char *memfaultd_generate_persisted_filename(sMemfaultd *memfaultd, const char *filename) {
   const char *path = mock()
-                       .actualCall("memfaultd_generate_rw_filename")
+                       .actualCall("memfaultd_generate_persisted_filename")
+                       .withPointerParameter("memfaultd", memfaultd)
+                       .withStringParameter("filename", filename)
+                       .returnStringValue();
+  return strdup(path);  // original returns malloc'd string
+}
+
+char *memfaultd_generate_tmp_filename(sMemfaultd *memfaultd, const char *filename) {
+  const char *path = mock()
+                       .actualCall("memfaultd_generate_tmp_filename")
                        .withPointerParameter("memfaultd", memfaultd)
                        .withStringParameter("filename", filename)
                        .returnStringValue();
@@ -201,7 +210,7 @@ TEST_BASE(MemfaultdRebootUtest) {
 
   void expect_lastrebootreason_file_generate_call(const char *path) {
     mock()
-      .expectOneCall("memfaultd_generate_rw_filename")
+      .expectOneCall("memfaultd_generate_persisted_filename")
       .withPointerParameter("memfaultd", g_stub_memfaultd)
       .withStringParameter("filename", "lastrebootreason")
       .andReturnValue(tmp_reboot_file);
@@ -209,7 +218,7 @@ TEST_BASE(MemfaultdRebootUtest) {
 
   void expect_last_tracked_boot_id_file_generate_call() {
     mock()
-      .expectOneCall("memfaultd_generate_rw_filename")
+      .expectOneCall("memfaultd_generate_tmp_filename")
       .withPointerParameter("memfaultd", g_stub_memfaultd)
       .withStringParameter("filename", "last_tracked_boot_id")
       .andReturnValue("/last_tracked_boot_id");

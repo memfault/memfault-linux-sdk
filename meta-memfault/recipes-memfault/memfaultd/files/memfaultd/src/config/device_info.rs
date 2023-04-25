@@ -23,7 +23,7 @@ impl std::fmt::Display for DeviceInfoWarning {
 }
 
 impl DeviceInfo {
-    fn parse(output: &[u8]) -> eyre::Result<(DeviceInfo, Vec<DeviceInfoWarning>)> {
+    pub fn parse(output: &[u8]) -> eyre::Result<(DeviceInfo, Vec<DeviceInfoWarning>)> {
         let mut warnings = vec![];
 
         let mut di = DeviceInfo {

@@ -3,8 +3,8 @@
 // See License.txt for details
 extern crate cmake;
 
-use std::{env, path::Path};
-use std::{io::Write, path::PathBuf};
+use std::env;
+use std::path::PathBuf;
 use walkdir::WalkDir;
 
 struct LinkedLibrary {
@@ -45,31 +45,33 @@ fn main() {
 
     // Pass version information to memfaultd
     let mut version_file_path = PathBuf::from(&env::var("CARGO_MANIFEST_DIR").unwrap());
-    version_file_path.push("../../../../VERSION");
+    version_file_path.push("../VERSION");
+    println!("cargo:rerun-if-changed={}", version_file_path.display());
+
     let version_content =
         std::fs::read_to_string(version_file_path).unwrap_or_else(|_| String::new());
 
-    let version = version_content
-        .lines()
-        .map(|l| l.split_once(':'))
-        .find_map(|split| match split {
-            Some(("VERSION", value)) => Some(value.trim().replace(' ', "")),
-            _ => None,
-        })
-        .unwrap_or_else(|| String::from("dev"));
-    // Pass the version to C Code
-    config.cflag(format!("-DVERSION={}", version));
+    let get_value_for_key = |key: &str, default: &str| -> String {
+        version_content
+            .lines()
+            .map(|l| l.split_once(':'))
+            .find_map(|split| match split {
+                Some((k, value)) if k == key => Some(value.trim().replace(' ', "")),
+                _ => None,
+            })
+            .unwrap_or_else(|| String::from(default))
+    };
 
-    // Save build-time information (eg: VERSION) in a `.rs` file which is
-    // included at compile time (see memfaultc-sys/src/lib.rs)
-    let dst = Path::new(&env::var("OUT_DIR").unwrap()).join("buildinfo.rs");
-    let mut buildtime = std::fs::File::create(dst).expect("cannot create buildtime.txt");
-    write!(
-        buildtime,
-        "pub fn memfaultd_sdk_version() -> &'static str {{ \"{}\" }}",
-        version
-    )
-    .unwrap();
+    // Pass the version to C Code
+    config.cflag(format!("-DVERSION={}", get_value_for_key("VERSION", "dev")));
+    config.cflag(format!(
+        "-DGITCOMMIT={}",
+        get_value_for_key("GIT COMMIT", "unknown")
+    ));
+    config.cflag(format!(
+        "-DBUILDID={}",
+        get_value_for_key("BUILD ID", "unknown")
+    ));
 
     // Activate optional plugins if required
     if env::var("CARGO_FEATURE_COREDUMP").is_ok() {
@@ -141,4 +143,6 @@ fn main() {
             },
         )
         .for_each(|e| println!("cargo:rerun-if-changed={}", e.path().display()));
+
+    println!("cargo:rerun-if-changed=build.rs");
 }

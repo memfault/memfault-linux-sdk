@@ -38,6 +38,7 @@ add_memfaultd_cpputest_target(test_reboot
     ${SRC_DIR}/util/reboot_reason.c
 )
 target_compile_definitions(test_reboot PUBLIC HAVE_SYSTEMD)
+target_link_libraries(test_reboot dl)
 if (MACOS_BUILD)
     target_include_directories(test_reboot SYSTEM PRIVATE macos-stubs)
     target_sources(test_reboot PRIVATE macos-stubs/systemd/systemd-stub.c)
@@ -119,7 +120,3 @@ add_memfaultd_cpputest_target(test_rate_limiter
     rate_limiter.test.cpp
     ${SRC_DIR}/util/rate_limiter.c
 )
-
-add_memfaultd_cpputest_target(test_parse_attributes
-    parse_attributes.test.cpp
-    ${SRC_DIR}/memfaultctl/parse_attributes.c)

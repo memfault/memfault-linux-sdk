@@ -9,11 +9,17 @@ mod fluent_bit;
 mod logs;
 pub mod mar;
 mod memfaultd;
+pub mod metrics;
 mod network;
 #[cfg(feature = "coredump")]
 mod process_coredumps;
 mod queue;
 mod retriable_error;
+mod service;
 #[cfg(test)]
 mod test_utils;
-mod util;
+pub mod util;
+
+pub mod build_info {
+    include!(concat!(env!("OUT_DIR"), "/build_info.rs"));
+}

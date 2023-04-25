@@ -4,11 +4,12 @@
 //! An adapter to connect FluentBit to our LogCollector.
 //!
 use std::collections::HashMap;
+use std::sync::mpsc::Receiver;
 
 use log::warn;
 use serde_json::{json, Value};
 
-use crate::fluent_bit::{FluentBitReceiver, FluentdMessage, FluentdValue};
+use crate::fluent_bit::{FluentdMessage, FluentdValue};
 
 const ALWAYS_INCLUDE_KEYS: &[&str] = &["MESSAGE", "_PID", "_SYSTEMD_UNIT", "PRIORITY"];
 
@@ -16,14 +17,14 @@ const ALWAYS_INCLUDE_KEYS: &[&str] = &["MESSAGE", "_PID", "_SYSTEMD_UNIT", "PRIO
 /// Will filter fluent-bit messages to keep only log messages and convert them
 /// to a serde_json::Value ready to be written to disk.
 pub struct FluentBitAdapter {
-    fb: FluentBitReceiver,
+    receiver: Receiver<FluentdMessage>,
     extra_fields: Vec<String>,
 }
 
 impl FluentBitAdapter {
-    pub fn new(fb: FluentBitReceiver, extra_fluent_bit_fields: &[String]) -> Self {
+    pub fn new(receiver: Receiver<FluentdMessage>, extra_fluent_bit_fields: &[String]) -> Self {
         Self {
-            fb,
+            receiver,
             extra_fields: extra_fluent_bit_fields.to_owned(),
         }
     }
@@ -61,7 +62,7 @@ impl Iterator for FluentBitAdapter {
     /// Messages can be filtered out by returning None here.
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            let msg_r = self.fb.receiver.recv();
+            let msg_r = self.receiver.recv();
             match msg_r {
                 Ok(msg) => {
                     let value = FluentBitAdapter::convert_message(&msg, &self.extra_fields);

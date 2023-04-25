@@ -60,19 +60,12 @@ typedef bool (*memfaultd_plugin_init)(sMemfaultd *memfaultd, sMemfaultdPluginCal
 
 typedef enum {
   kMemfaultdTxDataType_RebootEvent = 'R',
-  kMemfaultdTxDataType_Attributes = 'A',
 } eMemfaultdTxDataType;
 
 typedef struct __attribute__((__packed__)) MemfaultdTxData {
   uint8_t type;  // eMemfaultdTxDataType
   uint8_t payload[];
 } sMemfaultdTxData;
-
-typedef struct __attribute__((__packed__)) MemfaultdTxDataAttributes {
-  uint8_t type;  // eMemfaultdTxDataType
-  time_t timestamp;
-  char json[];
-} sMemfaultdTxDataAttributes;
 
 int memfaultd_main(int argc, char *argv[]);
 
@@ -89,7 +82,8 @@ bool memfaultd_get_objects(sMemfaultd *memfaultd, const char *parent_key,
 
 const sMemfaultdDeviceSettings *memfaultd_get_device_settings(sMemfaultd *memfaultd);
 
-char *memfaultd_generate_rw_filename(sMemfaultd *memfaultd, const char *filename);
+char *memfaultd_generate_persisted_filename(sMemfaultd *memfaultd, const char *filename);
+char *memfaultd_generate_tmp_filename(sMemfaultd *memfaultd, const char *filename);
 
 bool memfaultd_is_dev_mode(sMemfaultd *memfaultd);
 

@@ -1,8 +1,14 @@
 #
 # Copyright (c) Memfault, Inc.
 # See License.txt for details
+import pytest
 from memfault_service_tester import MemfaultServiceTester
 from qemu import QEMU
+
+
+@pytest.fixture()
+def memfault_extra_config() -> object:
+    return {"enable_data_collection": True, "collectd_plugin": {"interval_seconds": 5}}
 
 
 # Assumptions:
@@ -13,12 +19,6 @@ from qemu import QEMU
 def test(
     qemu: QEMU, memfault_service_tester: MemfaultServiceTester, qemu_device_id: str
 ):
-    qemu.exec_cmd(
-        'echo \'{"collectd_plugin": {"interval_seconds": 5}}\' > /media/memfault/runtime.conf'
-    )
-    qemu.exec_cmd("memfaultd --enable-data-collection")
-
-    qemu.systemd_wait_for_service_state("memfaultd.service", "active")
     qemu.systemd_wait_for_service_state("collectd.service", "active")
 
     def _check():

@@ -10,11 +10,11 @@ YOCTOROOT = "${@os.path.abspath(os.path.join("${TOPDIR}", os.pardir))}"
 BBLAYERS ?= " \
     ${YOCTOROOT}/sources/memfault-linux-sdk/meta-memfault \
     ${YOCTOROOT}/sources/memfault-linux-sdk/meta-memfault-example \
+    ${YOCTOROOT}/sources/memfault-linux-sdk/meta-rust-bin \
     ${YOCTOROOT}/sources/meta-openembedded/meta-multimedia \
     ${YOCTOROOT}/sources/meta-openembedded/meta-networking \
     ${YOCTOROOT}/sources/meta-openembedded/meta-oe \
     ${YOCTOROOT}/sources/meta-openembedded/meta-python \
-    ${YOCTOROOT}/sources/meta-rust-bin \
     ${YOCTOROOT}/sources/meta-swupdate \
     ${YOCTOROOT}/sources/poky/meta \
     ${YOCTOROOT}/sources/poky/meta-poky \

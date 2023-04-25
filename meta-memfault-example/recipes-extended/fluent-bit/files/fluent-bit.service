@@ -2,7 +2,7 @@
 Description=fluent-bit
 Documentation=https://docs.fluentbit.io/manual/
 Requires=network.target
-After=network.target
+After=network.target memfaultd.service
 
 [Service]
 Type=simple

@@ -34,7 +34,7 @@
 #endif
 
 static char *prv_create_output_dir(sMemfaultdConfig *config) {
-  char *path = memfaultd_config_generate_rw_filename(config, "core");
+  char *path = memfaultd_config_generate_tmp_filename(config, "core");
   if (path == NULL) {
     return path;
   }
@@ -55,10 +55,8 @@ static char *prv_create_output_dir(sMemfaultdConfig *config) {
 static size_t prv_calculate_available_space(sMemfaultdConfig *config, const char *core_dir) {
   sMemfaultStorageQuota quota = {0};
 
-  memfaultd_config_get_integer(config, "coredump_plugin", "storage_min_headroom_kib",
-                               (int *)&quota.min_headroom);
-  memfaultd_config_get_integer(config, "coredump_plugin", "storage_max_usage_kib",
-                               (int *)&quota.max_usage);
+  memfaultd_config_get_integer(config, "", "tmp_dir_min_headroom_kib", (int *)&quota.min_headroom);
+  memfaultd_config_get_integer(config, "", "tmp_dir_max_usage_kib", (int *)&quota.max_usage);
   memfaultd_config_get_integer(config, "coredump_plugin", "coredump_max_size_kib",
                                (int *)&quota.max_size);
 
@@ -151,12 +149,8 @@ int memfault_core_handler_main(int argc, char *argv[]) {
     goto cleanup;
   }
 
-  // Check the rate limiter up front:
-  if ((rate_limiter = coredump_create_rate_limiter(config)) == NULL) {
-    status_code = kMemfaultCoreHandlerStatus_OOM;
-    memfaultd_log(kMemfaultdLogLevel_Error, "Failed to create rate limiter");
-    goto cleanup;
-  }
+  // Check the rate limiter up front - create_rate_limiter returns NULL when disabled
+  rate_limiter = coredump_create_rate_limiter(config);
   if (!memfaultd_rate_limiter_check_event(rate_limiter)) {
     memfaultd_log(kMemfaultdLogLevel_Info, "Limit reached, not processing corefile");
     goto cleanup;
@@ -164,7 +158,7 @@ int memfault_core_handler_main(int argc, char *argv[]) {
 
   if ((device_settings = memfaultd_device_settings_init()) == NULL) {
     status_code = kMemfaultCoreHandlerStatus_DeviceSettingsFailure;
-    memfaultd_log(kMemfaultdLogLevel_Error, "Failed to create rate limiter");
+    memfaultd_log(kMemfaultdLogLevel_Error, "Failed to get device settings");
     goto cleanup;
   }
 

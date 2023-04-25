@@ -10,6 +10,7 @@
 #include <CppUTest/TestHarness.h>
 #include <CppUTestExt/MockSupport.h>
 #include <json-c/json.h>
+#include <string.h>
 #include <unistd.h>
 
 #include <fstream>
@@ -31,16 +32,16 @@ const sMemfaultdDeviceSettings *memfaultd_get_device_settings(sMemfaultd *memfau
     .returnConstPointerValue();
 }
 
-bool memfaultd_restart_service_if_running(const char *service_name) {
+bool memfaultd_restart_systemd_service_if_running(const char *service_name) {
   return mock()
     .actualCall("memfaultd_utils_restart_service_if_running")
     .withStringParameter("service_name", service_name)
     .returnBoolValue();
 }
 
-bool memfaultd_kill_service(const char *service_name, int signal) {
+bool memfaultd_kill_systemd_service(const char *service_name, int signal) {
   return mock()
-    .actualCall("memfaultd_kill_service")
+    .actualCall("memfaultd_kill_systemd_service")
     .withStringParameter("service_name", service_name)
     .withIntParameter("signal", signal)
     .returnBoolValue();

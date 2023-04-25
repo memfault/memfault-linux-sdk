@@ -1,0 +1,28 @@
+---
+source: memfaultd/src/cli/memfaultctl/show_settings.rs
+expression: output
+---
+Base configuration (/etc/memfaultd.conf):
+{
+  "project_key": "xyz"
+}
+
+Runtime configuration:
+{
+  "enable_data_collection": true
+}
+
+Device configuration from memfault-device-info:
+  MEMFAULT_DEVICE_ID=X
+  MEMFAULT_HARDWARE_VERSION=Y
+
+WARNING: Skipped line: 'blahblahblah' (Expect '=' separated key/value pairs.)
+
+Memfault version:
+  VERSION=1.2.3
+  GIT COMMIT=abcdef
+  BUILD ID=123456
+
+Plugin enabled:
+  reboot
+  coredump

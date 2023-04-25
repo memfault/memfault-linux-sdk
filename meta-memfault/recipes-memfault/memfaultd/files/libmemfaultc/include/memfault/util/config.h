@@ -34,13 +34,16 @@ void memfaultd_config_set_boolean(sMemfaultdConfig *handle, const char *parent_k
 
 bool memfaultd_config_get_string(sMemfaultdConfig *handle, const char *parent_key, const char *key,
                                  const char **val);
+bool memfaultd_config_get_optional_string(sMemfaultdConfig *handle, const char *parent_key,
+                                          const char *key, const char **val);
 bool memfaultd_config_get_integer(sMemfaultdConfig *handle, const char *parent_key, const char *key,
                                   int *val);
 bool memfaultd_config_get_boolean(sMemfaultdConfig *handle, const char *parent_key, const char *key,
                                   bool *val);
 bool memfaultd_config_get_objects(sMemfaultdConfig *handle, const char *parent_key,
                                   sMemfaultdConfigObject **objects, int *len);
-char *memfaultd_config_generate_rw_filename(sMemfaultdConfig *handle, const char *filename);
+char *memfaultd_config_generate_persisted_filename(sMemfaultdConfig *handle, const char *filename);
+char *memfaultd_config_generate_tmp_filename(sMemfaultdConfig *handle, const char *filename);
 
 #ifdef __cplusplus
 }

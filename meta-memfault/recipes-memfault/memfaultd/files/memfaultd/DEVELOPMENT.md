@@ -84,3 +84,15 @@ Or from the host:
 
 VSCode rust plugin will not find the `Cargo.toml` file unless you open the
 `meta-memfault/recipes-memfault/memfaultd/files/memfaultd/` directly.
+
+### Generating `compile_commands.json` for the `clangd` C language server
+
+To make [clangd](https://clangd.llvm.org) work, for example in conjunction with
+[`coc-clangd`](https://github.com/clangd/coc-clangd) (for Neovim), you'll need
+to generate a `compile_commands.json` file:
+
+```console
+cd files/libmemfaultc
+mkdir -p build
+cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=1 ..
+```
