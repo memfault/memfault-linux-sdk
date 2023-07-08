@@ -11,7 +11,7 @@
 # Switch to https - git no longer recommended
 SRC_URI = "git://github.com/fluent/fluent-bit.git;nobranch=1;protocol=https"
 # Freeze revision
-SRCREV = "9444fdc5ee858a42b58b9a97010d997096e63634"
+SRCREV = "baef212885e797514704847fa135829ce6c07a42"
 
 # We do not use YAML and WASM runtime does not compile on 32 bit
 EXTRA_OECMAKE += "-DFLB_CONFIG_YAML=Off -DFLB_WASM=Off"
