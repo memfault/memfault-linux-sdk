@@ -140,7 +140,7 @@ mod tests {
         connection.client.shutdown(Shutdown::Both).unwrap();
 
         // Make sure there is nothing received
-        let received = connection.receiver.recv_timeout(Duration::from_millis(10));
+        let received = connection.receiver.recv();
         assert!(received.is_err());
 
         // The handler should return without an error
@@ -154,18 +154,15 @@ mod tests {
         message: FluentBitMessageFixture,
     ) {
         connection.client.write_all(&message.bytes).unwrap();
+        connection.client.shutdown(Shutdown::Both).unwrap();
 
         // Make sure message is received
-        let received = connection
-            .receiver
-            .recv_timeout(Duration::from_millis(10))
-            .unwrap();
+        let received = connection.receiver.recv().unwrap();
         assert_eq!(received.0, message.msg.0);
         assert_eq!(
             serde_json::to_string(&received.1).unwrap(),
             serde_json::to_string(&message.msg.1).unwrap()
         );
-        connection.client.shutdown(Shutdown::Both).unwrap();
 
         // The handler should return without an error
         assert!(connection.thread.join().is_ok());
@@ -185,12 +182,10 @@ mod tests {
         // Make sure the other thread has time to do something
         thread::sleep(Duration::from_millis(5));
         connection.client.write_all(buf2).unwrap();
+        connection.client.shutdown(Shutdown::Both).unwrap();
 
         // Make sure message is received
-        let received = connection
-            .receiver
-            .recv_timeout(Duration::from_millis(10))
-            .unwrap();
+        let received = connection.receiver.recv().unwrap();
         assert_eq!(received.0, message.msg.0);
         assert_eq!(
             serde_json::to_string(&received.1).unwrap(),
@@ -198,7 +193,6 @@ mod tests {
         );
 
         // The handler should return without an error
-        connection.client.shutdown(Shutdown::Both).unwrap();
         assert!(connection.thread.join().is_ok());
     }
 
@@ -212,16 +206,11 @@ mod tests {
         let mut buf = message.bytes.clone();
         buf.extend(message2.bytes);
         connection.client.write_all(&buf).unwrap();
+        connection.client.shutdown(Shutdown::Both).unwrap();
 
         // Make sure two messages are received
-        let received1 = connection
-            .receiver
-            .recv_timeout(Duration::from_millis(10))
-            .unwrap();
-        let received2 = connection
-            .receiver
-            .recv_timeout(Duration::from_millis(10))
-            .unwrap();
+        let received1 = connection.receiver.recv().unwrap();
+        let received2 = connection.receiver.recv().unwrap();
         assert_eq!(received1.0, message.msg.0);
         assert_eq!(
             serde_json::to_string(&received1.1).unwrap(),
@@ -235,7 +224,6 @@ mod tests {
         );
 
         // The handler should return without an error
-        connection.client.shutdown(Shutdown::Both).unwrap();
         assert!(connection.thread.join().is_ok());
     }
 

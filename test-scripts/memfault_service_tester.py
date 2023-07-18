@@ -193,3 +193,8 @@ class MemfaultServiceTester:
         )
         assert rv.status_code == 200
         return rv.text
+
+    def get_device(self, device_serial: str) -> dict:
+        rv = self.session.get(f"{self._project_url}/devices/{device_serial}")
+        assert rv.status_code == 200
+        return rv.json()["data"]

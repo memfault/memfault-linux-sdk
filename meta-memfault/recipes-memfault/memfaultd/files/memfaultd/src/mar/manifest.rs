@@ -1,9 +1,8 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
-use crate::build_info::VERSION;
 use chrono::Utc;
 use eyre::Result;
 use serde::{Deserialize, Serialize};
@@ -11,8 +10,12 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{
+    build_info::VERSION,
     metrics::MetricStringKey,
+    metrics::MetricValue,
+    network::DeviceConfigRevision,
     network::NetworkConfig,
+    reboot::RebootReason,
     util::serialization::milliseconds_to_duration,
     util::system::{get_system_clock, read_system_boot_id, Clock},
 };
@@ -52,6 +55,8 @@ pub enum CompressionAlgorithm {
     None,
     #[serde(rename = "zlib")]
     Zlib,
+    #[serde(rename = "gzip")]
+    Gzip,
 }
 
 impl CompressionAlgorithm {
@@ -77,6 +82,21 @@ pub enum Metadata {
     },
     #[serde(rename = "device-attributes")]
     DeviceAttributes { attributes: Vec<DeviceAttribute> },
+    #[serde(rename = "device-config")]
+    DeviceConfig { revision: DeviceConfigRevision },
+    #[serde(rename = "elf-coredump")]
+    ElfCoredump {
+        coredump_file_name: String,
+        #[serde(skip_serializing_if = "CompressionAlgorithm::is_none")]
+        compression: CompressionAlgorithm,
+    },
+    #[serde(rename = "linux-reboot")]
+    LinuxReboot { reason: RebootReason },
+    #[serde(rename = "linux-heartbeat")]
+    LinuxHeartbeat {
+        #[serde(serialize_with = "crate::util::serialization::sorted_map::sorted_map")]
+        metrics: HashMap<MetricStringKey, MetricValue>,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -121,6 +141,13 @@ impl<K: AsRef<str>, V: Into<Value>> TryFrom<(K, V)> for DeviceAttribute {
 }
 
 impl Metadata {
+    pub fn new_coredump(coredump_file_name: String, compression: CompressionAlgorithm) -> Self {
+        Self::ElfCoredump {
+            coredump_file_name,
+            compression,
+        }
+    }
+
     pub fn new_log(
         log_file_name: String,
         cid: Uuid,
@@ -145,6 +172,14 @@ impl Metadata {
 
     pub fn new_device_attributes(attributes: Vec<DeviceAttribute>) -> Self {
         Self::DeviceAttributes { attributes }
+    }
+
+    pub fn new_device_config(revision: DeviceConfigRevision) -> Self {
+        Self::DeviceConfig { revision }
+    }
+
+    pub fn new_reboot(reason: RebootReason) -> Self {
+        Self::LinuxReboot { reason }
     }
 }
 
@@ -204,21 +239,50 @@ impl Manifest {
 
     pub fn attachments(&self) -> Vec<String> {
         match &self.metadata {
+            Metadata::ElfCoredump {
+                coredump_file_name, ..
+            } => vec![coredump_file_name.clone()],
             Metadata::LinuxLogs { log_file_name, .. } => vec![log_file_name.clone()],
             Metadata::DeviceAttributes { .. } => vec![],
+            Metadata::DeviceConfig { .. } => vec![],
+            Metadata::LinuxHeartbeat { .. } => vec![],
+            Metadata::LinuxReboot { .. } => vec![],
         }
     }
 }
 
 #[cfg(test)]
+impl Metadata {
+    pub fn test_fixture() -> Self {
+        Metadata::new_device_config(0)
+    }
+}
+
+#[cfg(test)]
 mod tests {
-    use crate::mar::manifest::CompressionAlgorithm;
+    use std::collections::HashMap;
+
+    use crate::{mar::CompressionAlgorithm, metrics::MetricValue};
     use rstest::rstest;
     use uuid::uuid;
 
     use crate::network::NetworkConfig;
 
     use super::{CollectionTime, Manifest};
+
+    #[rstest]
+    #[case("coredump-gzip", CompressionAlgorithm::Gzip)]
+    #[case("coredump-none", CompressionAlgorithm::None)]
+    fn serialization_of_coredump(#[case] name: &str, #[case] compression: CompressionAlgorithm) {
+        let config = NetworkConfig::test_fixture();
+
+        let manifest = Manifest::new(
+            &config,
+            CollectionTime::test_fixture(),
+            super::Metadata::new_coredump("/tmp/core.elf".into(), compression),
+        );
+        insta::assert_json_snapshot!(name, manifest, { ".metadata.producer.version" => "tests"});
+    }
 
     #[rstest]
     #[case("log-zlib", CompressionAlgorithm::Zlib)]
@@ -248,6 +312,44 @@ mod tests {
                 ("my_float", 123.456).try_into().unwrap(),
                 ("my_bool", true).try_into().unwrap(),
             ]),
+        );
+        insta::assert_json_snapshot!(manifest, { ".metadata.producer.version" => "tests"});
+    }
+
+    #[rstest]
+    fn serialization_of_device_configc() {
+        let config = NetworkConfig::test_fixture();
+        let manifest = Manifest::new(
+            &config,
+            CollectionTime::test_fixture(),
+            super::Metadata::new_device_config(42),
+        );
+        insta::assert_json_snapshot!(manifest, { ".metadata.producer.version" => "tests"});
+    }
+
+    #[rstest]
+    fn serialization_of_reboot() {
+        let config = NetworkConfig::test_fixture();
+        let manifest = Manifest::new(
+            &config,
+            CollectionTime::test_fixture(),
+            super::Metadata::new_reboot(super::RebootReason::UserShutdown),
+        );
+        insta::assert_json_snapshot!(manifest, { ".metadata.producer.version" => "tests"});
+    }
+
+    #[rstest]
+    fn serialization_of_linux_heartbeat() {
+        let config = NetworkConfig::test_fixture();
+        let manifest = Manifest::new(
+            &config,
+            CollectionTime::test_fixture(),
+            super::Metadata::LinuxHeartbeat {
+                metrics: HashMap::from([
+                    ("n1".parse().unwrap(), MetricValue::Number(1.0)),
+                    ("n2".parse().unwrap(), MetricValue::Number(42.0)),
+                ]),
+            },
         );
         insta::assert_json_snapshot!(manifest, { ".metadata.producer.version" => "tests"});
     }

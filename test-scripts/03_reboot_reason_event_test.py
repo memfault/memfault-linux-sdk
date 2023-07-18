@@ -34,7 +34,7 @@ def test_reboot_reason_already_tracked(qemu: QEMU):
     qemu.exec_cmd("systemctl restart memfaultd")
 
     # Make sure it does not double-count the last reboot
-    qemu.child().expect("reboot:: boot_id already tracked")
+    qemu.child().expect("boot_id already tracked")
 
 
 def test_reboot_reason_api(

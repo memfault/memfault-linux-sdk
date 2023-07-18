@@ -13,8 +13,6 @@ the C libraries during the build process.
 ```sh
 apt install \
   cpputest \
-  libjson-c-dev \
-  uuid-dev \
   libsystemd-dev \
   libconfig-dev
 ```

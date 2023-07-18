@@ -18,10 +18,10 @@ use crate::retriable_error::RetriableError;
 use crate::util::io::StreamLen;
 use crate::util::string::Ellipsis;
 
-use super::requests::MarUploadMetadata;
-use super::requests::UploadCommitRequest;
 use super::requests::UploadPrepareRequest;
 use super::requests::UploadPrepareResponse;
+use super::requests::{DeviceConfigRequest, MarUploadMetadata};
+use super::requests::{DeviceConfigResponse, UploadCommitRequest};
 use super::NetworkClient;
 use super::NetworkConfig;
 
@@ -212,6 +212,17 @@ impl NetworkClient for NetworkClientImpl {
         )
         .wrap_err("MAR Upload Error")
         .and(Ok(()))
+    }
+
+    fn fetch_device_config(&self) -> Result<super::requests::DeviceConfigResponse> {
+        let request = DeviceConfigRequest::from(&self.config);
+        self.fetch(
+            Method::POST,
+            "/api/v0/device-config",
+            &serde_json::to_string(&request)?,
+        )?
+        .json::<DeviceConfigResponse>()
+        .wrap_err("Fetch device-config error")
     }
 }
 

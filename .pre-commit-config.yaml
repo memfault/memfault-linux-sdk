@@ -98,7 +98,7 @@ repos:
         files: (tasks|test-scripts)/.*\.(py|pyi)$
 
   - repo: https://github.com/AleksaC/circleci-cli-py
-    rev: v0.1.15932
+    rev: v0.1.27054
     hooks:
       - id: circle-ci-validator
         files: \.circleci/.*\.yml$

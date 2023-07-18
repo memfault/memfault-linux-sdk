@@ -4,10 +4,11 @@
 //! Cli commands for modifying the Memfaultd config file.
 
 use crate::config::Config;
-use crate::service::{MemfaultdService, MemfaultdServiceManager};
+use crate::service_manager::{MemfaultdService, MemfaultdServiceManager};
 use crate::util::string::capitalize;
 
 use eyre::Result;
+use urlencoding::encode;
 
 /// Set the developer mode flag in the config file and restart memfaultd.
 pub fn set_developer_mode(
@@ -15,11 +16,15 @@ pub fn set_developer_mode(
     service_manager: &impl MemfaultdServiceManager,
     enable_dev_mode: bool,
 ) -> Result<()> {
-    if check_already_set(
+    let already_set = check_already_set(
         "developer mode",
         config.config_file.enable_dev_mode,
         enable_dev_mode,
-    ) {
+    );
+
+    print_server_side_developer_mode_url(config);
+
+    if already_set {
         return Ok(());
     }
 
@@ -30,6 +35,15 @@ pub fn set_developer_mode(
         enable_dev_mode,
         service_manager,
     )
+}
+
+fn print_server_side_developer_mode_url(config: &Config) {
+    let device_serial = encode(&config.device_info.device_id);
+    let project_key = encode(&config.config_file.project_key);
+    println!(
+        "⚠️ Enable 'server-side developer mode' to bypass rate limits in Memfault cloud:\n\
+        https://mflt.io/developer-mode?d={device_serial}&p={project_key}"
+    );
 }
 
 /// Set the data collection flag in the config file and restart memfaultd.
@@ -85,7 +99,7 @@ fn write_bool_to_config_and_restart_memfaultd(
 mod test {
     use super::*;
 
-    use crate::{service::MockMemfaultdServiceManager, util::path::AbsolutePath};
+    use crate::{service_manager::MockMemfaultdServiceManager, util::path::AbsolutePath};
 
     use rstest::rstest;
     use tempfile::tempdir;

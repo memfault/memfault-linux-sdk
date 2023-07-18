@@ -1,6 +1,7 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
+use eyre::{eyre, Context};
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
 use std::time::Duration;
@@ -11,8 +12,6 @@ use crate::util::{path::AbsolutePath, serialization::*};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct MemfaultdConfig {
-    #[serde(rename = "queue_size_kib", with = "kib_to_usize")]
-    pub queue_size: usize,
     pub persist_dir: AbsolutePath,
     pub tmp_dir: Option<AbsolutePath>,
     #[serde(rename = "tmp_dir_min_headroom_kib", with = "kib_to_usize")]
@@ -20,22 +19,24 @@ pub struct MemfaultdConfig {
     pub tmp_dir_min_inodes: usize,
     #[serde(rename = "tmp_dir_max_usage_kib", with = "kib_to_usize")]
     pub tmp_dir_max_usage: usize,
-    #[serde(rename = "refresh_interval_seconds", with = "seconds_to_duration")]
-    pub refresh_interval: Duration,
+    #[serde(rename = "upload_interval_seconds", with = "seconds_to_duration")]
+    pub upload_interval: Duration,
+    #[serde(rename = "heartbeat_interval_seconds", with = "seconds_to_duration")]
+    pub heartbeat_interval: Duration,
     pub enable_data_collection: bool,
     pub enable_dev_mode: bool,
     pub software_version: String,
     pub software_type: String,
     pub project_key: String,
     pub base_url: String,
-    pub swupdate_plugin: SwUpdateConfig,
-    pub reboot_plugin: RebootPlugin,
-    pub collectd_plugin: CollectdPlugin,
-    pub coredump_plugin: CoredumpPlugin,
+    pub swupdate: SwUpdateConfig,
+    pub reboot: RebootConfig,
+    pub coredump: CoredumpConfig,
     #[serde(rename = "fluent-bit")]
     pub fluent_bit: FluentBitConfig,
     pub logs: LogsConfig,
     pub mar: MarConfig,
+    pub http_server: HttpServerConfig,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -45,22 +46,11 @@ pub struct SwUpdateConfig {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct RebootPlugin {
+pub struct RebootConfig {
     pub last_reboot_reason_file: PathBuf,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct CollectdPlugin {
-    pub header_include_output_file: PathBuf,
-    pub footer_include_output_file: PathBuf,
-    pub non_memfaultd_chain: String,
-    #[serde(rename = "write_http_buffer_size_kib", with = "kib_to_usize")]
-    pub write_http_buffer_size: usize,
-    #[serde(rename = "interval_seconds", with = "seconds_to_duration")]
-    pub interval: Duration,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
 pub enum CoredumpCompression {
     #[serde(rename = "gzip")]
     Gzip,
@@ -69,7 +59,7 @@ pub enum CoredumpCompression {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct CoredumpPlugin {
+pub struct CoredumpConfig {
     pub compression: CoredumpCompression,
     #[serde(rename = "coredump_max_size_kib", with = "kib_to_usize")]
     pub coredump_max_size: usize,
@@ -84,6 +74,11 @@ pub struct FluentBitConfig {
     pub bind_address: SocketAddr,
     pub max_buffered_lines: usize,
     pub max_connections: usize,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct HttpServerConfig {
+    pub bind_address: SocketAddr,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -119,9 +114,7 @@ pub struct JsonConfigs {
 }
 
 impl MemfaultdConfig {
-    pub const DEFAULT_CONFIG_PATH: &'static str = "/etc/memfaultd.conf";
-
-    pub fn load(config_path: Option<&Path>) -> eyre::Result<MemfaultdConfig> {
+    pub fn load(config_path: &Path) -> eyre::Result<MemfaultdConfig> {
         let JsonConfigs {
             base: mut config,
             runtime,
@@ -132,15 +125,14 @@ impl MemfaultdConfig {
     }
 
     /// Parse config file from given path and returns (builtin+system config, runtime config).
-    pub fn parse_configs(config_path: Option<&Path>) -> eyre::Result<JsonConfigs> {
+    pub fn parse_configs(config_path: &Path) -> eyre::Result<JsonConfigs> {
         // Initialize with the builtin config file.
-        let mut base: Value = Self::parse(include_str!("../../../libmemfaultc/builtin.conf"))?;
-
-        // Select config file to read
-        let user_config_path = config_path.unwrap_or_else(|| Path::new(Self::DEFAULT_CONFIG_PATH));
+        let mut base: Value = Self::parse(include_str!("../../builtin.conf"))
+            .wrap_err("Error parsing built-in configuration file")?;
 
         // Read and parse the user config file.
-        let user_config = Self::parse(std::fs::read_to_string(user_config_path)?.as_str())?;
+        let user_config = Self::parse(std::fs::read_to_string(config_path)?.as_str())
+            .wrap_err(eyre!("Error reading {}", config_path.display()))?;
 
         // Merge the two JSON objects together
         Self::merge_into(&mut base, user_config);
@@ -148,7 +140,10 @@ impl MemfaultdConfig {
         // Load the runtime config but only if the file exists. (Missing runtime config is not an error.)
         let runtime_config_path = Self::runtime_config_path_from_json(&base)?;
         let runtime = if runtime_config_path.exists() {
-            Self::parse(fs::read_to_string(runtime_config_path)?.as_str())?
+            Self::parse(fs::read_to_string(&runtime_config_path)?.as_str()).wrap_err(eyre!(
+                "Error reading runtime configuration {}",
+                runtime_config_path.display()
+            ))?
         } else {
             Value::Object(serde_json::Map::new())
         };
@@ -180,7 +175,7 @@ impl MemfaultdConfig {
     /// This is used to write the config to a file that can be read by the memfaultd process.
     fn write_value_to_runtime_config(&self, value: Value) -> eyre::Result<()> {
         let runtime_config_path = self.runtime_config_path();
-        fs::write(&runtime_config_path, value.to_string())?;
+        fs::write(runtime_config_path, value.to_string())?;
 
         Ok(())
     }
@@ -215,6 +210,16 @@ impl MemfaultdConfig {
         }
     }
 
+    pub fn generate_tmp_filename(&self, filename: &str) -> PathBuf {
+        // Fall back to persist dir if tmp_dir is not set.
+        let tmp_dir = self.tmp_dir.as_ref().unwrap_or(&self.persist_dir);
+        PathBuf::from(tmp_dir.clone()).join(filename)
+    }
+
+    pub fn generate_persist_filename(&self, filename: &str) -> PathBuf {
+        PathBuf::from(self.persist_dir.clone()).join(filename)
+    }
+
     // Generate the path to the runtime config file from a serde_json::Value object. This should include the "persist_dir" field.
     fn runtime_config_path_from_json(config: &Value) -> eyre::Result<PathBuf> {
         let mut persist_dir = PathBuf::from(
@@ -236,7 +241,7 @@ impl MemfaultdConfig {
         let tmp = tempdir().unwrap();
         let config_path = tmp.path().join("memfaultd.conf");
         write(&config_path, "{}").unwrap();
-        MemfaultdConfig::load(Some(&config_path)).unwrap()
+        MemfaultdConfig::load(&config_path).unwrap()
     }
 }
 
@@ -302,7 +307,7 @@ mod test {
             .join(name)
             .with_extension("json");
         // Verifies that the file is parsable
-        let content = MemfaultdConfig::load(Some(&input_path)).unwrap();
+        let content = MemfaultdConfig::load(&input_path).unwrap();
         // And that the configuration generated is what we expect.
         // Use `cargo insta review` to quickly approve changes.
         insta::assert_json_snapshot!(name, content)
@@ -314,8 +319,7 @@ mod test {
             .join("src/config/test-config")
             .join("with_invalid_path")
             .with_extension("json");
-        let result = MemfaultdConfig::load(Some(&input_path));
-        dbg!("result: {:?}", &result);
+        let result = MemfaultdConfig::load(&input_path);
         assert!(result.is_err());
     }
 

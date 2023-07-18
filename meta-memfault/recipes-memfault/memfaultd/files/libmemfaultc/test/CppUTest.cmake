@@ -5,6 +5,9 @@ pkg_check_modules(CPPUTEST REQUIRED IMPORTED_TARGET cpputest)
 add_library(cpputest_runner AllTests.cpp)
 target_include_directories(cpputest_runner PUBLIC ${CPPUTEST_INCLUDE_DIRS})
 
+if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+    set(MACOS_BUILD 1)
+endif()
 
 set(SANITIZE_FLAGS
     -fsanitize=address

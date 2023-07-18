@@ -12,9 +12,7 @@ dpkg --add-architecture i386
 apt-get update
 apt-get install -y \
     gcc-multilib g++-multilib \
-    libjson-c-dev:i386 \
     libsystemd-dev:i386 \
-    uuid-dev:i386 \
     zlib1g-dev:i386
 
 # Install a more up to date version of cpputest (debian buster installs 3.8-7)

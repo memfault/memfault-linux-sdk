@@ -34,6 +34,14 @@ impl PartialEq<AbsolutePath> for PathBuf {
     }
 }
 
+impl std::ops::Deref for AbsolutePath {
+    type Target = Path;
+    #[inline]
+    fn deref(&self) -> &Path {
+        self.0.as_path()
+    }
+}
+
 /// Splits the filename at the first dot.
 /// This is similar to the nighly-only std::path::Path::file_prefix.
 #[allow(dead_code)]

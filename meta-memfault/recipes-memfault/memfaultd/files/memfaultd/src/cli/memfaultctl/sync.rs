@@ -3,8 +3,8 @@
 // See License.txt for details
 use eyre::Result;
 
-use crate::util::ipc::send_flush_queue_signal;
+use crate::util::ipc::send_flush_signal;
 
 pub fn sync() -> Result<()> {
-    send_flush_queue_signal()
+    send_flush_signal()
 }

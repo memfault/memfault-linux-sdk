@@ -17,7 +17,7 @@ def test_customer_reboot_reason_user_reset(
     qemu.exec_cmd("journalctl --follow --unit=memfaultd.service &")
 
     # 6 == kMfltRebootReason_ButtonReset
-    # /media/last_reboot_reason is the default reboot_plugin.last_reboot_reason_file file path
+    # /media/last_reboot_reason is the default reboot.last_reboot_reason_file file path
     qemu.exec_cmd("echo 6 > /media/last_reboot_reason")
 
     qemu.exec_cmd("reboot")

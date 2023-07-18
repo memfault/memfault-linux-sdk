@@ -2,7 +2,7 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 use crate::{
-    mar::mar_entry::MarEntry,
+    mar::MarEntry,
     util::disk_size::{get_disk_space, get_size, DiskSize},
 };
 use eyre::{eyre, Result, WrapErr};

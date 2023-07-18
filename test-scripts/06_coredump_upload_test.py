@@ -22,8 +22,8 @@ def test(
     qemu.exec_cmd("journalctl --follow --unit=memfaultd.service &")
     qemu.child().expect("Started memfaultd daemon")
 
-    # Stream logs from memfault-core-handler
-    qemu.exec_cmd("journalctl --follow -t memfault-core-handler &")
+    # Stream logs from kernel: memfault-core-handler logs to dmsg
+    qemu.exec_cmd("journalctl --follow -t kernel &")
 
     # Trigger the coredump
     qemu.exec_cmd("memfaultctl trigger-coredump")
@@ -33,7 +33,6 @@ def test(
 
     # Ensure memfaultd has transmitted the corefile
     qemu.exec_cmd("memfaultctl sync")
-    qemu.child().expect("Uploading coredump")
 
     # Check that the backend created the coredump:
     memfault_service_tester.poll_elf_coredumps_until_count(

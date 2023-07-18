@@ -1,7 +1,7 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use std::fs::OpenOptions;
+use std::fs::{remove_file, OpenOptions};
 use std::io::{ErrorKind, Write};
 use std::path::Path;
 use std::process::id;
@@ -11,7 +11,7 @@ use nix::unistd::Pid;
 
 const PID_FILE: &str = "/var/run/memfaultd.pid";
 
-pub fn write_memfaultd_pid_file() -> Result<()> {
+pub fn write_pid_file() -> Result<()> {
     let file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -43,4 +43,8 @@ pub fn get_pid_from_file() -> Result<Pid> {
             Err(e.into())
         }
     }
+}
+
+pub fn remove_pid_file() -> Result<()> {
+    remove_file(PID_FILE).wrap_err("Failed to remove PID file")
 }

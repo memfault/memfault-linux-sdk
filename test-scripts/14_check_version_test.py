@@ -6,6 +6,9 @@ import re
 from qemu import QEMU
 
 
+# Note: this test will normally fail in development because there is no VERSION
+# file in the dev repo It will work in CI because we use the prepare-sdk script
+# to build the environment, including a VERSION file.
 def test_version(qemu: QEMU):
     for cmd in [
         "memfaultctl --version",

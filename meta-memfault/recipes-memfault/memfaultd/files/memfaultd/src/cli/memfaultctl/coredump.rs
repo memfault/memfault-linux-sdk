@@ -31,7 +31,7 @@ pub fn trigger_coredump(config: &Config, error_type: ErrorStrategy) -> Result<()
 
 #[cfg(feature = "coredump")]
 fn trigger_coredump_inner(config: &Config, error_type: ErrorStrategy) -> Result<()> {
-    use crate::util::ipc::send_flush_queue_signal;
+    use crate::util::ipc::send_flush_signal;
 
     trigger_crash(error_type)?;
 
@@ -41,7 +41,7 @@ fn trigger_coredump_inner(config: &Config, error_type: ErrorStrategy) -> Result<
         // Give the kernel and memfault-core-handler time to process the coredump
         std::thread::sleep(std::time::Duration::from_secs(3));
 
-        send_flush_queue_signal()?;
+        send_flush_signal()?;
     }
 
     Ok(())
@@ -49,14 +49,16 @@ fn trigger_coredump_inner(config: &Config, error_type: ErrorStrategy) -> Result<
 
 #[cfg(not(feature = "coredump"))]
 fn trigger_coredump_inner(_config: &Config, _error_type: ErrorStrategy) -> Result<()> {
-    println!("You must enable PLUGIN_COREDUMP when building memfault SDK to report coredumps.");
+    println!(
+        "You must enable the coredump feature when building memfault SDK to report coredumps."
+    );
 
     Ok(())
 }
 
 #[cfg(feature = "coredump")]
 fn trigger_crash(error_type: ErrorStrategy) -> Result<()> {
-    use memfaultc_sys::memfault_trigger_fp_exception;
+    use memfaultc_sys::coredump::memfault_trigger_fp_exception;
     use nix::unistd::{fork, ForkResult};
 
     println!("Triggering coredump ...");

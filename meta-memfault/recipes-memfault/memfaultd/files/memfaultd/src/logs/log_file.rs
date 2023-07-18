@@ -4,7 +4,7 @@
 //! Contains LogFile and LogFileControl traits and their real implementations.
 //!
 use crate::logs::completed_log::CompletedLog;
-use crate::mar::manifest::CompressionAlgorithm;
+use crate::mar::CompressionAlgorithm;
 use eyre::{Result, WrapErr};
 use flate2::write::ZlibEncoder;
 use flate2::Compression;

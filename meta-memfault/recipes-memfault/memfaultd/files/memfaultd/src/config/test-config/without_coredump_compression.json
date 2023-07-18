@@ -1,5 +1,5 @@
 {
-  "coredump_plugin": {
+  "coredump": {
     "compression": "none"
   }
 }

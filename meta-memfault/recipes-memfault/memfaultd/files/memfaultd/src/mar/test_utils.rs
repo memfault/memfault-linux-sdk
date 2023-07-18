@@ -9,7 +9,7 @@ use std::{
     path::PathBuf,
 };
 
-use crate::mar::manifest::CompressionAlgorithm;
+use crate::mar::{CompressionAlgorithm, DeviceAttribute};
 use tempfile::{tempdir, TempDir};
 use uuid::Uuid;
 
@@ -46,6 +46,29 @@ impl MarCollectorFixture {
         path
     }
 
+    pub fn create_device_attributes_entry(
+        &mut self,
+        attributes: Vec<DeviceAttribute>,
+        timestamp: SystemTime,
+    ) -> PathBuf {
+        let path = self.create_empty_entry();
+        let manifest_path = path.join("manifest.json");
+
+        let manifest_file = File::create(manifest_path).unwrap();
+
+        let mut collection_time = CollectionTime::test_fixture();
+        collection_time.timestamp = timestamp.into();
+
+        let manifest = Manifest::new(
+            &self.config,
+            collection_time,
+            Metadata::new_device_attributes(attributes),
+        );
+        serde_json::to_writer(BufWriter::new(manifest_file), &manifest).unwrap();
+
+        path
+    }
+
     pub fn create_logentry_with_size(&mut self, size: u64) -> PathBuf {
         self.create_logentry_with_size_and_age(size, SystemTime::now())
     }
@@ -62,7 +85,7 @@ impl MarCollectorFixture {
         let log_path = path.join(&log_name);
         create_file_with_size(&log_path, size).unwrap();
 
-        let manifest_file = File::create(&manifest_path).unwrap();
+        let manifest_file = File::create(manifest_path).unwrap();
 
         let mut collection_time = CollectionTime::test_fixture();
         collection_time.timestamp = timestamp.into();
@@ -99,7 +122,7 @@ impl MarCollectorFixture {
         permissions.set_mode(0o0);
         set_permissions(&log_path, permissions).unwrap();
 
-        let manifest_file = File::create(&manifest_path).unwrap();
+        let manifest_file = File::create(manifest_path).unwrap();
         let manifest = Manifest::new(
             &self.config,
             CollectionTime::test_fixture(),
@@ -118,7 +141,7 @@ impl MarCollectorFixture {
     pub fn create_entry_with_bogus_json(&mut self) -> PathBuf {
         let path = self.create_empty_entry();
         let manifest_path = path.join("manifest.json");
-        File::create(&manifest_path)
+        File::create(manifest_path)
             .unwrap()
             .write_all(b"BOGUS")
             .unwrap();
@@ -128,7 +151,7 @@ impl MarCollectorFixture {
     pub fn create_entry_without_directory_read_permission(&mut self) -> PathBuf {
         let path = self.create_empty_entry();
         let manifest_path = path.join("manifest.json");
-        File::create(&manifest_path)
+        File::create(manifest_path)
             .unwrap()
             .write_all(b"BOGUS")
             .unwrap();

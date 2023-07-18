@@ -1,0 +1,42 @@
+---
+source: memfaultd/src/collectd/payload.rs
+expression: metadatas
+---
+[
+  {
+    "name": "uptime/uptime",
+    "value": {
+      "Gauge": {
+        "value": 973577.0,
+        "timestamp": "2023-06-06T22:04:02.785Z"
+      }
+    }
+  },
+  {
+    "name": "memory/memory/inactive",
+    "value": {
+      "Gauge": {
+        "value": 11160961024.0,
+        "timestamp": "2023-06-06T22:04:02.785Z"
+      }
+    }
+  },
+  {
+    "name": "memory/memory/active",
+    "value": {
+      "Gauge": {
+        "value": 11797676032.0,
+        "timestamp": "2023-06-06T22:04:02.785Z"
+      }
+    }
+  },
+  {
+    "name": "memory/memory/wired",
+    "value": {
+      "Gauge": {
+        "value": 3427991552.0,
+        "timestamp": "2023-06-06T22:04:02.785Z"
+      }
+    }
+  }
+]

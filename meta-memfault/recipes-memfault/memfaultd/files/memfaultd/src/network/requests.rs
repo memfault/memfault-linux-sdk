@@ -104,3 +104,76 @@ impl<'a> MarUploadMetadata<'a> {
         }
     }
 }
+
+#[derive(Serialize, Deserialize, Debug)]
+struct DeviceConfigDeviceInfo<'a> {
+    device_serial: &'a str,
+    hardware_version: &'a str,
+    software_version: &'a str,
+    software_type: &'a str,
+}
+
+/// Device metadata required to prepare and commit uploads.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DeviceConfigRequest<'a> {
+    #[serde(borrow)]
+    device: DeviceConfigDeviceInfo<'a>,
+}
+
+impl<'a> From<&'a NetworkConfig> for DeviceConfigRequest<'a> {
+    fn from(config: &'a NetworkConfig) -> Self {
+        DeviceConfigRequest {
+            device: DeviceConfigDeviceInfo {
+                device_serial: config.device_id.as_str(),
+                hardware_version: config.hardware_version.as_str(),
+                software_type: config.software_type.as_str(),
+                software_version: config.software_version.as_str(),
+            },
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DeviceConfigResponse {
+    pub data: DeviceConfigResponseData,
+}
+
+pub type DeviceConfigRevision = u32;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DeviceConfigResponseData {
+    pub config: DeviceConfigResponseConfig,
+    pub revision: DeviceConfigRevision,
+    pub completed: Option<DeviceConfigRevision>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DeviceConfigResponseConfig {
+    pub memfault: DeviceConfigResponseMemfault,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DeviceConfigResponseMemfault {
+    pub sampling: DeviceConfigResponseSampling,
+}
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DeviceConfigResponseSampling {
+    #[serde(rename = "debugging.resolution")]
+    pub debugging_resolution: DeviceConfigResponseResolution,
+    #[serde(rename = "logging.resolution")]
+    pub logging_resolution: DeviceConfigResponseResolution,
+    #[serde(rename = "monitoring.resolution")]
+    pub monitoring_resolution: DeviceConfigResponseResolution,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum DeviceConfigResponseResolution {
+    #[serde(rename = "off")]
+    Off,
+    #[serde(rename = "low")]
+    Low,
+    #[serde(rename = "normal")]
+    Normal,
+    #[serde(rename = "high")]
+    High,
+}

@@ -86,6 +86,8 @@ impl From<Metadata> for DiskSize {
     }
 }
 
+// We need to cast to u64 here on some platforms.
+#[allow(clippy::unnecessary_cast)]
 pub fn get_disk_space(path: &Path) -> Result<DiskSize> {
     let mut stat: libc::statvfs = unsafe { mem::zeroed() };
     let cpath = CString::new(path.as_os_str().as_bytes()).map_err(|_| eyre!("Invalid path"))?;

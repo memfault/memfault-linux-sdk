@@ -16,6 +16,7 @@ extern "C" {
 
 bool memfaultd_restart_systemd_service_if_running(const char *service_name);
 bool memfaultd_kill_systemd_service(const char *service_name, int signal);
+char *memfaultd_get_systemd_bus_state();
 
 #ifdef __cplusplus
 }

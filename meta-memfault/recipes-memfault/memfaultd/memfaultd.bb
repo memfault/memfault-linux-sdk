@@ -21,74 +21,71 @@ inherit systemd cargo_bin
 
 SYSTEMD_SERVICE:${PN} = "memfaultd.service"
 
-DEPENDS = "json-c systemd vim-native cmake-native openssl"
+DEPENDS = "systemd vim-native cmake-native openssl"
 
-PACKAGECONFIG ??= "plugin_coredump plugin_collectd plugin_swupdate plugin_logging"
-PACKAGECONFIG[plugin_coredump] = ""
-PACKAGECONFIG[plugin_collectd] = ""
-PACKAGECONFIG[plugin_swupdate] = ""
-PACKAGECONFIG[plugin_logging] = ""
+PACKAGECONFIG ??= "coredump collectd swupdate logging"
+PACKAGECONFIG[coredump] = ""
+PACKAGECONFIG[collectd] = ""
+PACKAGECONFIG[swupdate] = ""
+PACKAGECONFIG[logging] = ""
 
-# Tell Cargo to disable all plugins and only enable the ones we will use.
+# Tell Cargo to disable all features and only enable the ones we will use.
 EXTRA_CARGO_FLAGS = "--no-default-features"
 
-# Plugin Coredump
+# Always include the systemd feature so we have a working service manager
+CARGO_FEATURES:append = " systemd"
+
+# Coredump
 CARGO_FEATURES:append = " \
-    ${@bb.utils.contains('PACKAGECONFIG', 'plugin_coredump', \
+    ${@bb.utils.contains('PACKAGECONFIG', 'coredump', \
         'coredump', \
         '', \
     d)} \
 "
-RDEPENDS:append:${PN} = " \
-    ${@bb.utils.contains('PACKAGECONFIG', 'plugin_coredump', \
-        'util-linux-libuuid', \
-        '', \
-    d)} \
-"
 
-# Plugin Collectd
+# Collectd
 CARGO_FEATURES:append = " \
-    ${@bb.utils.contains('PACKAGECONFIG', 'plugin_collectd', \
+    ${@bb.utils.contains('PACKAGECONFIG', 'collectd', \
         'collectd', \
         '', \
     d)} \
 "
 RRECOMMENDS:${PN} += " \
-    ${@bb.utils.contains('PACKAGECONFIG', 'plugin_collectd', \
+    ${@bb.utils.contains('PACKAGECONFIG', 'collectd', \
         'collectd', \
         '', \
     d)} \
 "
 
-# Plugin SWUpdate
+# SWUpdate
 CARGO_FEATURES:append = " \
-    ${@bb.utils.contains('PACKAGECONFIG', 'plugin_swupdate', \
+    ${@bb.utils.contains('PACKAGECONFIG', 'swupdate', \
         'swupdate', \
         '', \
     d)} \
 "
 DEPENDS:append = " \
-    ${@bb.utils.contains('PACKAGECONFIG', 'plugin_swupdate', \
+    ${@bb.utils.contains('PACKAGECONFIG', 'swupdate', \
         'libconfig', \
         '', \
     d)} \
 "
 RRECOMMENDS:${PN}:append = " \
-    ${@bb.utils.contains('PACKAGECONFIG', 'plugin_swupdate', \
+    ${@bb.utils.contains('PACKAGECONFIG', 'swupdate', \
         'swupdate swupdate-tools-ipc swupdate-tools-hawkbit', \
         '', \
     d)} \
 "
 
-# Plugin Logging
+# Logging
 CARGO_FEATURES:append = " \
-    ${@bb.utils.contains('PACKAGECONFIG', 'plugin_logging', \
+    ${@bb.utils.contains('PACKAGECONFIG', 'logging', \
         'logging', \
         '', \
     d)} \
 "
 RRECOMMENDS:${PN} += " \
-    ${@bb.utils.contains('PACKAGECONFIG', 'plugin_logging', \
+    ${@bb.utils.contains('PACKAGECONFIG', 'logging', \
         'fluent-bit', \
         '', \
     d)} \
@@ -106,7 +103,7 @@ do_install:append() {
     rm ${D}/usr/bin/memfaultctl
     ln -s /usr/bin/memfaultd ${D}/usr/bin/memfaultctl
 
-    # TODO: only install if plugin is enabled
+    # TODO: only install if feature is enabled
     rm ${D}/usr/bin/memfault-core-handler
     mkdir -p ${D}/usr/sbin
     ln -s /usr/bin/memfaultd ${D}/usr/sbin/memfault-core-handler

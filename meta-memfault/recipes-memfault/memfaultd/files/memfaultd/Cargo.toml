@@ -17,21 +17,25 @@ name= "memfault-core-handler"
 path= "src/bin/memfault-core-handler.rs"
 
 [dependencies]
-memfaultc-sys = { path= "../memfaultc-sys" }
+memfaultc-sys = { path= "../memfaultc-sys", features = ["systemd"] }
 argh = "0.1.10"
 chrono = { version = "0.4.23", features= ["serde"]}
 eyre = "0.6.8"
 libc = "0.2.138"
 log = "0.4.17"
+prctl = { version = "1.0.0", optional = true}
 reqwest = { version = "0.11", features = ["blocking", "json"] }
 rmp-serde = { version = "1.1.1", optional = true }
 rmpv = { version = "1.0.0", optional = true }
 serde = { version = "1.0.150", features = ["derive"] }
 serde_bytes = "0.11.8"
 serde_json = "1.0.89"
+serde_repr = "0.1"
 shuteye = "0.3.3"
 signal-hook = "0.3.14"
 stderrlog = "0.5.4"
+strum = { version = "0.24", features = ["derive"] }
+strum_macros = "0.24"
 tempfile = "3.3.0"
 thiserror = "1.0.38"
 threadpool = { version = "1.8.1", optional = true }
@@ -44,6 +48,8 @@ take_mut = "0.2.2"
 itertools = "0.10.5"
 governor = { version = "0.5.1", default-features = false, features = ["std"], optional = true}
 nix = { version = "0.26.2", default-features = false, features = ["process", "signal"]}
+kernlog = { version = "0.3.1", optional = true }
+tiny_http = {version = "0.12.0", optional = true }
 
 [dev-dependencies]
 tempfile = "3.3.0"
@@ -53,9 +59,8 @@ insta = {version= "1.26.0", features= ["json", "redactions"]}
 zip = { version = "0.6.3", default-features = false, features = ["deflate"] }
 
 [features]
-default = ["coredump", "collectd", "reboot", "swupdate", "logging" ]
-coredump = ["memfaultc-sys/coredump"]
-collectd = ["memfaultc-sys/collectd"]
-reboot = ["memfaultc-sys/reboot"]
+default = ["coredump", "collectd", "swupdate", "logging" ]
+coredump = ["memfaultc-sys/coredump", "dep:prctl", "dep:kernlog"]
+collectd = ["dep:tiny_http", "dep:threadpool"]
 swupdate = ["memfaultc-sys/swupdate"]
-logging = ["memfaultc-sys/logging", "dep:governor", "dep:rmp-serde", "dep:rmpv","dep:threadpool"]
+logging = ["dep:governor", "dep:rmp-serde", "dep:rmpv","dep:threadpool"]

@@ -8,14 +8,14 @@
 
 #pragma once
 
-#include "memfault/util/config.h"
 #include "memfault/util/rate_limiter.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-sMemfaultdRateLimiter *coredump_create_rate_limiter(sMemfaultdConfig *config);
+bool coredump_check_rate_limiter(const char *ratelimiter_filename, int rate_limit_count,
+                                 int rate_limit_duration_seconds);
 
 #ifdef __cplusplus
 }

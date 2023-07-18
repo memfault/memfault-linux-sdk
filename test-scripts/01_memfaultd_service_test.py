@@ -5,5 +5,5 @@ from qemu import QEMU
 
 
 def test_start(qemu: QEMU):
-    qemu.child().sendline("memfaultd -h")
-    qemu.child().expect("Usage: memfaultd \\[OPTION\\]...")
+    qemu.child().sendline("memfaultd --help")
+    qemu.child().expect("Usage: memfaultd ")

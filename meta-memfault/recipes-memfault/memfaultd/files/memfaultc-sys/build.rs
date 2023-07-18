@@ -4,13 +4,7 @@
 extern crate cmake;
 
 use std::env;
-use std::path::PathBuf;
 use walkdir::WalkDir;
-
-struct LinkedLibrary {
-    name: &'static str,
-    target_os: Option<&'static str>,
-}
 
 fn main() {
     let mut config = cmake::Config::new("../libmemfaultc");
@@ -28,71 +22,25 @@ fn main() {
     config.profile("");
 
     // Build a list of the library that we want to link into the final binary.
-    let mut libs = vec![
-        LinkedLibrary {
-            name: "libsystemd",
-            target_os: Some("linux"),
-        },
-        LinkedLibrary {
-            name: "json-c",
-            target_os: None,
-        },
-        LinkedLibrary {
-            name: "zlib",
-            target_os: None,
-        },
-    ];
+    let mut libs = vec![];
 
-    // Pass version information to memfaultd
-    let mut version_file_path = PathBuf::from(&env::var("CARGO_MANIFEST_DIR").unwrap());
-    version_file_path.push("../VERSION");
-    println!("cargo:rerun-if-changed={}", version_file_path.display());
-
-    let version_content =
-        std::fs::read_to_string(version_file_path).unwrap_or_else(|_| String::new());
-
-    let get_value_for_key = |key: &str, default: &str| -> String {
-        version_content
-            .lines()
-            .map(|l| l.split_once(':'))
-            .find_map(|split| match split {
-                Some((k, value)) if k == key => Some(value.trim().replace(' ', "")),
-                _ => None,
-            })
-            .unwrap_or_else(|| String::from(default))
-    };
-
-    // Pass the version to C Code
-    config.cflag(format!("-DVERSION={}", get_value_for_key("VERSION", "dev")));
-    config.cflag(format!(
-        "-DGITCOMMIT={}",
-        get_value_for_key("GIT COMMIT", "unknown")
-    ));
-    config.cflag(format!(
-        "-DBUILDID={}",
-        get_value_for_key("BUILD ID", "unknown")
-    ));
-
-    // Activate optional plugins if required
-    if env::var("CARGO_FEATURE_COREDUMP").is_ok() {
-        config.define("PLUGIN_COREDUMP", "1");
-        libs.push(LinkedLibrary {
-            name: "uuid",
-            target_os: None,
-        });
+    // We only build coredump parsing on Linux
+    if env::var("CARGO_FEATURE_COREDUMP").is_ok() && cfg!(target_os = "linux") {
+        config.define("WITH_COREDUMP", "1");
+        libs.push("zlib")
     }
-    if env::var("CARGO_FEATURE_COLLECTD").is_ok() {
-        config.define("PLUGIN_COLLECTD", "1");
+    if env::var("CARGO_FEATURE_SYSTEMD").is_ok() {
+        // Systemd is not available on macOS. We silently accept the feature so
+        // that the rust code can be checked but we don't actually build the C
+        // code.
+        if cfg!(not(target_os = "macos")) {
+            config.define("WITH_SYSTEMD", "1");
+            libs.push("libsystemd");
+        }
     }
     if env::var("CARGO_FEATURE_SWUPDATE").is_ok() {
-        config.define("PLUGIN_SWUPDATE", "1");
-        libs.push(LinkedLibrary {
-            name: "libconfig",
-            target_os: None,
-        });
-    }
-    if env::var("CARGO_FEATURE_LOGGING").is_ok() {
-        config.define("PLUGIN_LOGGING", "1");
+        config.define("WITH_SWUPDATE", "1");
+        libs.push("libconfig");
     }
 
     // Linting needs to run `cargo` (and thus execute this file) to verify the
@@ -106,23 +54,13 @@ fn main() {
 
     // Find required C libraries and tell Cargo how to link them
     let pkg_config = pkg_config::Config::new();
-    libs.iter()
-        .filter(|lib| {
-            // Filter out libraries that have a target_os specified different than current OS
-            if let Some(target_os) = lib.target_os {
-                if std::env::consts::OS != target_os {
-                    return false;
-                }
-            }
-            true
-        })
-        .for_each(|lib| {
-            // This line will print the required Cargo config if the library is found.
-            let r = pkg_config.probe(lib.name);
-            if let Err(e) = r {
-                println!("WARNING - Library {} was not found: {}", lib.name, e);
-            }
-        });
+    libs.iter().for_each(|lib| {
+        // This line will print the required Cargo config if the library is found.
+        let r = pkg_config.probe(lib);
+        if let Err(e) = r {
+            println!("WARNING - Library {} was not found: {}", lib, e);
+        }
+    });
 
     // Build the libmemfaultc library and link tell Cargo to link it in the project
     let dst = config.build();
