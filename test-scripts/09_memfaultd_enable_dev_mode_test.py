@@ -8,6 +8,7 @@ from qemu import QEMU
 def test_start(qemu: QEMU):
     qemu.exec_cmd("memfaultctl enable-dev-mode")
     qemu.child().expect("Enabling developer mode")
+    qemu.child().expect("https://mflt.io/developer-mode?")
     qemu.systemd_wait_for_service_state("memfaultctl.service", "active")
 
     qemu.exec_cmd("memfaultctl enable-dev-mode")

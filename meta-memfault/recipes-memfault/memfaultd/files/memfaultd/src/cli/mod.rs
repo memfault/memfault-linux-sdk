@@ -1,33 +1,54 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-mod cargs;
+use eyre::eyre;
+use std::path::Path;
+
+#[cfg(all(target_os = "linux", feature = "coredump"))]
 mod memfault_core_handler;
 mod memfaultctl;
 mod memfaultd;
+mod show_settings;
+mod version;
 
-pub fn main() {
+fn init_logger(verbose: bool) {
+    let default_level = if verbose { 4 } else { 2 };
+
     stderrlog::new()
-        .module(module_path!())
         .module("memfaultd")
-        .verbosity(2)
+        .verbosity(default_level)
         .init()
         .unwrap();
+}
 
-    let args = cargs::CArgs::new(std::env::args());
+pub fn main() {
+    let arg0 = std::env::args().next().unwrap();
+    let cmd_name = Path::new(&arg0)
+        .file_name()
+        .expect("<command name>")
+        .to_str()
+        .unwrap();
 
-    let exit_code = match args.name() {
-        "memfault-core-handler" => memfault_core_handler::main(args),
+    let result = match cmd_name {
+        #[cfg(all(target_os = "linux", feature = "coredump"))]
+        "memfault-core-handler" => memfault_core_handler::main(),
+        #[cfg(not(all(target_os = "linux", feature = "coredump")))]
+        "memfault-core-handler" => Err(eyre!(
+            "memfault-core-handler is not supported in this build"
+        )),
         "memfaultctl" => memfaultctl::main(),
-        "memfaultd" => memfaultd::main(args),
-        _ => {
-            eprintln!(
-                "Unknown command: {}. Should be memfaultd or memfaultctl.",
-                args.name()
-            );
-            1
-        }
+        "memfaultd" => memfaultd::main(),
+        _ => Err(eyre!(
+            "Unknown command: {}. Should be memfaultd/memfaultctl/memfault-core-handler.",
+            cmd_name
+        )),
     };
 
-    std::process::exit(exit_code);
+    match result {
+        Ok(_) => (),
+        Err(e) => {
+            eprintln!("{:#}", e);
+            std::process::exit(-1);
+        }
+    }
 }

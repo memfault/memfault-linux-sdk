@@ -1,7 +1,7 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use crate::mar::manifest::CompressionAlgorithm;
+use crate::mar::CompressionAlgorithm;
 use std::path::PathBuf;
 use uuid::Uuid;
 

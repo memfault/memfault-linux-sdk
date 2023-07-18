@@ -26,10 +26,7 @@ def test(
     qemu.exec_cmd("memfaultctl request-metrics")
 
     # Wait for message indicating that collectd has been poked
-    qemu.child().expect("collectd:: Requesting metrics from collectd now.")
-
-    # memfaultd waits one second + we want to make sure data has been flushed to memfault and processed
-    time.sleep(5)
+    qemu.child().expect("Restarting collectd to capture metrics now...")
 
     # Wait until we have received at least one valid report.
     def _check():

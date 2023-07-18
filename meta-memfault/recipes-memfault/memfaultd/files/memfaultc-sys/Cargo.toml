@@ -13,8 +13,7 @@ pkg-config = "0.3"
 walkdir = "2"
 
 [features]
+default = []
 coredump = []
-collectd = []
-reboot = []
+systemd = []
 swupdate = []
-logging = []

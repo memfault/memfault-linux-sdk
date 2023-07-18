@@ -9,9 +9,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-
-#ifdef HAVE_SYSTEMD
-  #include <systemd/sd-bus.h>
+#include <systemd/sd-bus.h>
 
 static const char *const systemd_service = "org.freedesktop.systemd1";
 
@@ -92,8 +90,6 @@ static bool prv_systemd_kill_service(sd_bus *bus, const char *service_name, int 
   return true;
 }
 
-#endif
-
 /**
  * @brief Restart service using systemd dbus API if already running
  *
@@ -103,7 +99,6 @@ static bool prv_systemd_kill_service(sd_bus *bus, const char *service_name, int 
  * @return false Failed to restart service
  */
 bool memfaultd_restart_systemd_service_if_running(const char *service_name) {
-#ifdef HAVE_SYSTEMD
   bool result = true;
 
   // Initialize connection to SystemD
@@ -121,7 +116,7 @@ bool memfaultd_restart_systemd_service_if_running(const char *service_name) {
   }
   if (strcmp("active", state) != 0 && strcmp("activating", state) != 0) {
     fprintf(stderr, "memfaultd:: %s is not active (%s). Not starting.\n", service_name, state);
-    result = false;
+    result = true;
     goto cleanup;
   }
 
@@ -137,10 +132,6 @@ cleanup:
   }
   sd_bus_unref(bus);
   return result;
-#else
-  fprintf(stderr, "memfaultd:: Pretending to restart %s (systemd disabled)\n", service_name);
-  return true;
-#endif
 }
 
 /**
@@ -153,7 +144,6 @@ cleanup:
  * @return false Failed to restart service
  */
 bool memfaultd_kill_systemd_service(const char *service_name, int signal) {
-#ifdef HAVE_SYSTEMD
   bool result = true;
 
   // Initialize connection to SystemD
@@ -172,9 +162,39 @@ bool memfaultd_kill_systemd_service(const char *service_name, int signal) {
 cleanup:
   sd_bus_unref(bus);
   return result;
-#else
-  fprintf(stderr, "memfaultd:: Pretending to signal(%i) %s (systemd disabled)\n", signal,
-          service_name);
-  return true;
-#endif
+}
+
+/**
+ * @brief Checks if the current systemd state matches the requested state
+ *
+ * @return NULL Failed to get current systemd state
+ *
+ * @note Caller must free returned string
+ */
+char *memfaultd_get_systemd_bus_state() {
+  sd_bus *bus = NULL;
+  sd_bus_error error = SD_BUS_ERROR_NULL;
+  char *cur_state = NULL;
+
+  const char *service = "org.freedesktop.systemd1";
+  const char *path = "/org/freedesktop/systemd1";
+  const char *interface = "org.freedesktop.systemd1.Manager";
+  const char *system_state = "SystemState";
+
+  const int bus_result = sd_bus_default_system(&bus);
+  if (bus_result < 0) {
+    fprintf(stderr, "reboot:: Failed to find systemd system bus: %s\n", strerror(-bus_result));
+    goto cleanup;
+  }
+
+  if (sd_bus_get_property_string(bus, service, path, interface, system_state, &error, &cur_state) <
+      0) {
+    fprintf(stderr, "reboot:: Failed to get system state: %s\n", error.name);
+    goto cleanup;
+  }
+
+cleanup:
+  sd_bus_error_free(&error);
+  sd_bus_unref(bus);
+  return cur_state;
 }

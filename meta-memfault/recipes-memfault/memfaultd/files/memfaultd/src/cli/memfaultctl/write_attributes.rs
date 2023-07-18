@@ -1,7 +1,7 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use crate::mar::manifest::DeviceAttribute;
+use crate::mar::DeviceAttribute;
 use crate::metrics::MetricStringKey;
 use argh::FromArgValue;
 use serde_json::Value;

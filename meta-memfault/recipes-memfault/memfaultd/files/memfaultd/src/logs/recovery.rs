@@ -14,7 +14,7 @@ use eyre::Result;
 use log::{debug, warn};
 use uuid::Uuid;
 
-use crate::mar::manifest::CompressionAlgorithm;
+use crate::mar::CompressionAlgorithm;
 use crate::util::fs::get_files_sorted_by_mtime;
 use crate::util::path::file_prefix;
 

@@ -28,6 +28,7 @@ for arch_and_cflag in "i386 -m32" "x86_64 -m64"; do
   cmake \
     "-DCMAKE_CXX_FLAGS=$2" \
     "-DCMAKE_C_FLAGS=$2" \
+    "-DWITH_COREDUMP=1 -DWITH_SWUPDATE=1 -DWITH_SYSTEMD=1" \
     -B "${TEST_BUILD_DIR}-$1" \
     /home/build/yocto/sources/memfault-linux-sdk/meta-memfault/recipes-memfault/memfaultd/files/libmemfaultc
   cd "${TEST_BUILD_DIR}-$1"

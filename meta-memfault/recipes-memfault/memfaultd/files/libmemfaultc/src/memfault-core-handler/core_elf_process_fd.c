@@ -17,7 +17,6 @@
 #include <time.h>
 
 #include "core_elf_transformer.h"
-#include "memfault/util/version.h"
 
 static void prv_log_coredump_request(int pid) {
   char cmdline_path[32];
@@ -48,10 +47,10 @@ static void prv_init_metadata(const sMemfaultProcessCoredumpCtx *ctx,
   const time_t now_epoch_s = time(NULL);
 
   *metadata = (sMemfaultCoreElfMetadata){
-    .linux_sdk_version = memfaultd_sdk_version,
+    .linux_sdk_version = ctx->sdk_version,
     .captured_time_epoch_s = now_epoch_s != -1 ? now_epoch_s : 0,
-    .device_serial = ctx->device_settings->device_id,
-    .hardware_version = ctx->device_settings->hardware_version,
+    .device_serial = ctx->device_id,
+    .hardware_version = ctx->hardware_version,
     .software_version = ctx->software_version,
     .software_type = ctx->software_type,
   };

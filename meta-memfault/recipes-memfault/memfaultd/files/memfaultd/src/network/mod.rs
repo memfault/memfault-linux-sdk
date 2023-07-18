@@ -11,8 +11,11 @@ use mockall::automock;
 use crate::config::Config;
 use crate::util::io::StreamLen;
 
-pub mod client;
+mod client;
+pub use client::NetworkClientImpl;
+
 mod requests;
+pub use requests::*;
 
 #[cfg_attr(test, automock)]
 pub trait NetworkClient {
@@ -24,9 +27,13 @@ pub trait NetworkClient {
 
     /// Upload a MAR file to Memfault
     fn upload_mar_file<F: Read + StreamLen + Send + 'static>(&self, file: F) -> Result<()>;
+
+    /// Fetch DeviceConfig from Memfault.
+    fn fetch_device_config(&self) -> Result<DeviceConfigResponse>;
 }
 
 /// Internal representation of what is needed to talk to the backend.
+#[derive(Clone)]
 pub struct NetworkConfig {
     pub project_key: String,
     pub base_url: String,

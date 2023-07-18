@@ -42,7 +42,7 @@ def test(
         assert d["a_float"] == 42.42
 
     memfault_service_tester.poll_until_not_raising(
-        _check, timeout_seconds=60, poll_interval_seconds=1
+        _check, timeout_seconds=2 * 60, poll_interval_seconds=1
     )
 
 

@@ -95,7 +95,7 @@ fn loop_with_exponential_error_backoff_internal<
                 );
 
                 count_errors_since_success += 1;
-                warn!("Network error while processing queue: {}", e);
+                warn!("Error in Memfaultd main loop: {}", e);
                 next_run
             }
         };

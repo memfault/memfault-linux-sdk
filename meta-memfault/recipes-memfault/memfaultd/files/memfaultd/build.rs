@@ -57,7 +57,7 @@ fn generate_build_info_rs() {
 
     let out_dir = env::var_os("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("build_info.rs");
-    write(&dest_path, build_info_rs_src).unwrap();
+    write(dest_path, build_info_rs_src).unwrap();
 }
 
 fn main() {

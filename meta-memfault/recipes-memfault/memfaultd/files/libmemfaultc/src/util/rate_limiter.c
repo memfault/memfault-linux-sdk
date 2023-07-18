@@ -14,8 +14,6 @@
 #include <string.h>
 #include <sys/time.h>
 
-#include "memfaultd.h"
-
 struct MemfaultdRateLimiter {
   int count;
   int duration;

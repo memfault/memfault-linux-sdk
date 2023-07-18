@@ -1,5 +1,10 @@
 {
   "cmake.sourceDirectory": "${workspaceFolder}/meta-memfault/recipes-memfault/memfaultd/files/libmemfaultc",
+  "cmake.configureArgs": [
+    /* "-DPLUGIN_COREDUMP=1", */
+    "-DWITH_SWUPDATE=1",
+    "-DWITH_SYSTEMD=1"
+  ],
   "python.linting.flake8Enabled": true,
   "python.linting.enabled": true,
   "python.formatting.provider": "black",

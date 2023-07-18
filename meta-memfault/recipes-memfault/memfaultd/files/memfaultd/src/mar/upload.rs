@@ -9,10 +9,12 @@ use eyre::{Context, Result};
 use itertools::Itertools;
 use log::{trace, warn};
 
-use crate::network::NetworkClient;
-use crate::util::zip::{zip_stream_len_empty, zip_stream_len_for_file, ZipEncoder, ZipEntryInfo};
-
-use super::mar_entry::{MarEntry, MarEntryIterator};
+use crate::{
+    config::{Resolution, Sampling},
+    mar::{MarEntry, Metadata},
+    network::NetworkClient,
+    util::zip::{zip_stream_len_empty, zip_stream_len_for_file, ZipEncoder, ZipEntryInfo},
+};
 
 /// Collect all valid MAR entries, upload them and delete them on success.
 ///
@@ -21,8 +23,17 @@ pub fn collect_and_upload(
     mar_staging: &Path,
     client: &impl NetworkClient,
     max_zip_size: usize,
+    sampling: Sampling,
 ) -> Result<()> {
-    let mut entries = MarEntry::iterate_from_container(mar_staging)?;
+    let mut entries = MarEntry::iterate_from_container(mar_staging)?
+        // Apply fleet sampling to the MAR entries
+        .filter(|entry_result| match entry_result {
+            Ok(entry) => {
+                applicable_resolution(&entry.manifest.metadata, &sampling) == Resolution::On
+            }
+            _ => true,
+        });
+
     upload_mar_entries(&mut entries, client, max_zip_size, |included_entries| {
         trace!("Uploaded {:?} - deleting...", included_entries);
         included_entries.iter().for_each(|f| {
@@ -30,6 +41,20 @@ pub fn collect_and_upload(
         })
     })?;
     Ok(())
+}
+
+/// Given the Metadata of a MAR entry and the fleet sampling configuration, return the applicable
+/// resolution.
+fn applicable_resolution(metadata: &Metadata, sampling: &Sampling) -> Resolution {
+    // See https://docs.memfault.com/docs/platform/fleet-sampling/#fleet-sampling-aspects
+    match metadata {
+        Metadata::DeviceAttributes { .. } => sampling.monitoring_resolution,
+        Metadata::DeviceConfig { .. } => Resolution::On, // Always upload device config
+        Metadata::ElfCoredump { .. } => sampling.debugging_resolution,
+        Metadata::LinuxHeartbeat { .. } => sampling.monitoring_resolution,
+        Metadata::LinuxLogs { .. } => sampling.logging_resolution,
+        Metadata::LinuxReboot { .. } => sampling.debugging_resolution,
+    }
 }
 
 /// Describes the contents for a single MAR file to upload.
@@ -46,7 +71,7 @@ struct MarZipContents {
 /// zip (and can be deleted after upload) and the list of ZipEntryInfos.
 /// Invalid folders will not trigger an error and they will not be included in the returned lists.
 fn gather_mar_entries_to_zip(
-    entries: &mut MarEntryIterator,
+    entries: &mut impl Iterator<Item = Result<MarEntry>>,
     max_zip_size: usize,
 ) -> Vec<MarZipContents> {
     let entry_paths_with_zip_infos = entries.filter_map(|entry_result| match entry_result {
@@ -123,7 +148,7 @@ impl TryFrom<&MarEntry> for Vec<ZipEntryInfo> {
 
 /// Progressively upload the MAR entries. The callback will be called for each batch that is uploaded.
 fn upload_mar_entries(
-    entries: &mut MarEntryIterator,
+    entries: &mut impl Iterator<Item = Result<MarEntry>>,
     client: &impl NetworkClient,
     max_zip_size: usize,
     callback: fn(entries: Vec<PathBuf>) -> (),
@@ -142,6 +167,7 @@ fn upload_mar_entries(
 #[cfg(test)]
 mod tests {
     use rstest::{fixture, rstest};
+    use std::time::SystemTime;
 
     use crate::test_utils::setup_logger;
     use crate::{
@@ -260,7 +286,17 @@ mod tests {
         mar_fixture: MarCollectorFixture,
     ) {
         // We do not set an expectation on client => it will panic if client.upload_mar is called
-        collect_and_upload(&mar_fixture.mar_staging, &client, usize::MAX).unwrap();
+        collect_and_upload(
+            &mar_fixture.mar_staging,
+            &client,
+            usize::MAX,
+            Sampling {
+                debugging_resolution: Resolution::On,
+                logging_resolution: Resolution::On,
+                monitoring_resolution: Resolution::On,
+            },
+        )
+        .unwrap();
     }
 
     #[rstest]
@@ -281,7 +317,91 @@ mod tests {
             })
             .once()
             .returning(|_| Ok(()));
-        collect_and_upload(&mar_fixture.mar_staging, &client, usize::MAX).unwrap();
+        collect_and_upload(
+            &mar_fixture.mar_staging,
+            &client,
+            usize::MAX,
+            Sampling {
+                debugging_resolution: Resolution::Off,
+                logging_resolution: Resolution::On,
+                monitoring_resolution: Resolution::Off,
+            },
+        )
+        .unwrap();
+    }
+
+    #[rstest]
+    fn applies_fleet_sampling_on_logs(
+        _setup_logger: (),
+        client: MockNetworkClient,
+        mut mar_fixture: MarCollectorFixture,
+    ) {
+        mar_fixture.create_logentry();
+
+        // expect no upload
+
+        collect_and_upload(
+            &mar_fixture.mar_staging,
+            &client,
+            usize::MAX,
+            Sampling {
+                debugging_resolution: Resolution::Off,
+                logging_resolution: Resolution::Off,
+                monitoring_resolution: Resolution::Off,
+            },
+        )
+        .unwrap();
+    }
+
+    #[rstest]
+    fn uploading_device_attributes(
+        _setup_logger: (),
+        mut client: MockNetworkClient,
+        mut mar_fixture: MarCollectorFixture,
+    ) {
+        mar_fixture.create_device_attributes_entry(vec![], SystemTime::now());
+        client
+            .expect_upload_mar_file::<BufReader<ZipEncoder>>()
+            .withf(|buf_reader| {
+                let zip_encoder = buf_reader.get_ref();
+                assert_mar_content_matches(zip_encoder, vec!["<entry>/manifest.json"])
+            })
+            .once()
+            .returning(|_| Ok(()));
+        collect_and_upload(
+            &mar_fixture.mar_staging,
+            &client,
+            usize::MAX,
+            Sampling {
+                debugging_resolution: Resolution::Off,
+                logging_resolution: Resolution::Off,
+                monitoring_resolution: Resolution::On,
+            },
+        )
+        .unwrap();
+    }
+
+    #[rstest]
+    fn applies_fleet_sampling_on_device_attributes(
+        _setup_logger: (),
+        client: MockNetworkClient,
+        mut mar_fixture: MarCollectorFixture,
+    ) {
+        mar_fixture.create_device_attributes_entry(vec![], SystemTime::now());
+
+        // expect no upload
+
+        collect_and_upload(
+            &mar_fixture.mar_staging,
+            &client,
+            usize::MAX,
+            Sampling {
+                debugging_resolution: Resolution::Off,
+                logging_resolution: Resolution::Off,
+                monitoring_resolution: Resolution::Off,
+            },
+        )
+        .unwrap();
     }
 
     #[fixture]

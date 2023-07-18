@@ -2,7 +2,11 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 pub mod cli;
+#[cfg(feature = "collectd")]
+mod collectd;
 mod config;
+#[cfg(feature = "coredump")]
+mod coredump;
 #[cfg(feature = "logging")]
 mod fluent_bit;
 #[cfg(feature = "logging")]
@@ -11,11 +15,11 @@ pub mod mar;
 mod memfaultd;
 pub mod metrics;
 mod network;
-#[cfg(feature = "coredump")]
-mod process_coredumps;
-mod queue;
+mod reboot;
 mod retriable_error;
-mod service;
+mod service_manager;
+#[cfg(feature = "swupdate")]
+mod swupdate;
 #[cfg(test)]
 mod test_utils;
 pub mod util;

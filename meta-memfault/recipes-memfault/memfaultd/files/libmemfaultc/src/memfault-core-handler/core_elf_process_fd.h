@@ -11,8 +11,6 @@
 #include <stdbool.h>
 #include <unistd.h>
 
-#include "memfaultd.h"
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -21,9 +19,11 @@ typedef struct MemfaultProcessCoredumpCtx {
   int input_fd;
   pid_t pid;
 
-  sMemfaultdDeviceSettings *device_settings;
+  const char *device_id;
+  const char *hardware_version;
   const char *software_type;
   const char *software_version;
+  const char *sdk_version;
 
   const char *output_file;
   size_t max_size;

@@ -19,19 +19,8 @@
 #include <iostream>
 #include <sstream>
 
-#include "memfaultd.h"
-
 extern "C" {
 time_t *memfaultd_rate_limiter_get_history(sMemfaultdRateLimiter *handle);
-}
-
-char *memfaultd_generate_tmp_filename(sMemfaultd *memfaultd, const char *filename) {
-  const char *path = mock()
-                       .actualCall("memfaultd_generate_tmp_filename")
-                       .withPointerParameter("memfaultd", memfaultd)
-                       .withStringParameter("filename", filename)
-                       .returnStringValue();
-  return strdup(path);  //! original returns malloc'd string
 }
 
 TEST_BASE(MemfaultdRateLimiterUtest) {

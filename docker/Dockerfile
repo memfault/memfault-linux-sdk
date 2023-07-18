@@ -27,9 +27,7 @@ RUN apt-get install -y python3-pip
 # CppUnit testing dependencies for memfaultd's unit tests
 RUN apt-get install -y \
     cmake \
-    libjson-c-dev \
     libsystemd-dev \
-    uuid-dev \
     pkg-config
 
 # On Intel hardware only: Compile and install cpputest (32bit/64bit) and its dependencies

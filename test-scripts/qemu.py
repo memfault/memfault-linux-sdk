@@ -92,5 +92,5 @@ class QEMU:
     def wait_for_memfaultd_start(self, timeout: float = 3):
         """Wait for memfaultd to start - Note that this will return immediately if memfaultd was just started."""
         self.expect_journald_message(
-            "memfaultd", "Started memfaultd daemon", last_lines=10
+            "memfaultd", "Started memfaultd daemon", last_lines=10, timeout=timeout
         )

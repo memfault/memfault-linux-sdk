@@ -20,17 +20,18 @@ def memfault_extra_config() -> object:
 
 
 def test_mar_staging_is_cleaned_upon_log_rotation(qemu: QEMU):
-    # Push 10 * 1K lines to the systemd journal
-    for _ in range(10):
-        test_msg = "A" * 1024
-        qemu.exec_cmd(f"echo {test_msg} | systemd-cat")
+    qemu.exec_cmd(
+        "for i in `seq 10`; do (printf %1024s |tr ' ' 'A' | systemd-cat); done"
+    )
 
     # Wait a bit for logs to be processed by memfaultd:
     time.sleep(2)
 
     # The MAR staging area should not exceed storage_max_usage_kib:
-    qemu.exec_cmd("du -s /media/memfault/mar")
-    qemu.child().expect(re.compile(rb"(\d+)\s+/media/memfault/mar"), timeout=1)
+    qemu.exec_cmd(
+        "ls -lAR /media/memfault/mar| grep -v '^d' | awk '{total += $5} END {print total}'"
+    )
+    qemu.child().expect(re.compile(rb"(\d+)"), timeout=1)
     match = qemu.child().match
     assert match
-    assert int(match.group(1)) <= storage_max_usage_kib, match
+    assert int(match.group(1)) <= storage_max_usage_kib * 1024, match

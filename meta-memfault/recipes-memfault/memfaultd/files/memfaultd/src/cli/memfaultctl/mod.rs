@@ -2,28 +2,34 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 use argh::{FromArgs, TopLevelCommand};
-use memfaultc_sys::{cmd_reboot, cmd_request_metrics};
-use std::ffi::CString;
 use std::path::Path;
+use std::{thread::sleep, time::Duration};
 
 mod config_file;
 mod coredump;
-mod show_settings;
 mod sync;
 mod write_attributes;
 
-use crate::mar::manifest::{DeviceAttribute, Metadata};
-use crate::mar::mar_entry::MarEntryBuilder;
+use crate::{
+    cli::version::format_version,
+    mar::{DeviceAttribute, Metadata},
+    reboot::{write_reboot_reason_and_reboot, RebootReason},
+    service_manager::get_service_manager,
+};
+use crate::{
+    mar::MarEntryBuilder,
+    service_manager::{MemfaultdService, MemfaultdServiceManager},
+};
 
-use crate::build_info::{BUILD_ID, GIT_COMMIT, VERSION};
 use crate::cli::memfaultctl::config_file::{set_data_collection, set_developer_mode};
 use crate::cli::memfaultctl::coredump::{trigger_coredump, ErrorStrategy};
-use crate::cli::memfaultctl::show_settings::show_settings;
 use crate::cli::memfaultctl::sync::sync;
+use crate::cli::show_settings::show_settings;
 use crate::config::Config;
 use crate::network::NetworkConfig;
-use crate::service::SystemdServiceManager;
-use eyre::{eyre, Result, WrapErr};
+use eyre::{eyre, Result};
+
+use super::init_logger;
 
 #[derive(FromArgs)]
 /// A command line utility to adjust memfaultd configuration and trigger specific events for
@@ -41,6 +47,10 @@ struct MemfaultctlArgs {
     #[argh(switch, short = 'v')]
     #[allow(dead_code)]
     version: bool,
+
+    /// verbose output
+    #[argh(switch, short = 'V')]
+    verbose: bool,
 }
 
 /// Wrapper around argh to support flags acting as subcommands, like --version.
@@ -59,10 +69,7 @@ impl<T: FromArgs> FromArgs for WrappedArgs<T> {
 
         match CommandlikeFlags::from_args(command_name, args) {
             Ok(CommandlikeFlags { version: true }) => Err(argh::EarlyExit {
-                output: format!(
-                    "VERSION={}\nGIT COMMIT={}\nBUILD ID={}",
-                    VERSION, GIT_COMMIT, BUILD_ID
-                ),
+                output: format_version(),
                 status: Ok(()),
             }),
             _ => T::from_args(command_name, args).map(Self),
@@ -129,7 +136,7 @@ struct RequestMetricsArgs {}
 struct ShowSettingsArgs {}
 
 #[derive(FromArgs)]
-/// flush memfaultd queue to Memfault now
+/// Upload all pending data to Memfault now
 #[argh(subcommand, name = "sync")]
 struct SyncArgs {}
 
@@ -151,14 +158,6 @@ struct WriteAttributesArgs {
     attributes: Vec<DeviceAttribute>,
 }
 
-fn check_c_result(rv: i32) -> Result<()> {
-    if rv == 0 {
-        Ok(())
-    } else {
-        Err(eyre!("Error code {}", rv))
-    }
-}
-
 fn check_data_collection_enabled(config: &Config, do_what: &str) -> Result<()> {
     match config.config_file.enable_data_collection {
         true => Ok(()),
@@ -173,24 +172,17 @@ fn check_data_collection_enabled(config: &Config, do_what: &str) -> Result<()> {
     }
 }
 
-fn main_impl() -> Result<()> {
+pub fn main() -> Result<()> {
     let args: MemfaultctlArgs = from_env();
 
-    let config_file_cstring = args.config_file.as_ref().map(|config_file| {
-        CString::new(config_file.as_str()).expect("No NULs in config_file string.")
-    });
-
-    let config_file_cstring_ptr = config_file_cstring
-        .as_ref()
-        .map_or(std::ptr::null(), |cstring| cstring.as_ptr());
+    init_logger(args.verbose);
 
     let config_path = args.config_file.as_ref().map(Path::new);
-    let mut config =
-        Config::read_from_system(config_path).wrap_err(eyre!("Unable to load configuration"))?;
+    let mut config = Config::read_from_system(config_path)?;
     let network_config = NetworkConfig::from(&config);
     let mar_staging_path = config.mar_staging_path();
     // TODO MFLT-9693: Add support for other service managers
-    let service_manager = SystemdServiceManager;
+    let service_manager = get_service_manager();
 
     match args.command {
         MemfaultctlCommand::EnableDataCollection(_) => {
@@ -205,13 +197,24 @@ fn main_impl() -> Result<()> {
         MemfaultctlCommand::DisableDevMode(_) => {
             set_developer_mode(&mut config, &service_manager, false)
         }
-        MemfaultctlCommand::Reboot(cargs) => unsafe {
-            check_c_result(cmd_reboot(
-                config_file_cstring_ptr,
-                cargs.reason as libc::c_int,
-            ))
-        },
-        MemfaultctlCommand::RequestMetrics(_) => unsafe { check_c_result(cmd_request_metrics()) },
+        MemfaultctlCommand::Reboot(args) => {
+            let reason = RebootReason::from_repr(args.reason).ok_or_else(|| {
+                eyre!(
+                    "Invalid reboot reason {}.\nRefer to https://docs.memfault.com/docs/platform/reference-reboot-reason-ids",
+                    args.reason
+                )
+            })?;
+            write_reboot_reason_and_reboot(
+                &config.config_file.reboot.last_reboot_reason_file,
+                reason,
+            )
+        }
+        MemfaultctlCommand::RequestMetrics(_) => {
+            println!("Restarting collectd to capture metrics now...");
+            service_manager.restart_service_if_running(MemfaultdService::Collectd)?;
+            sleep(Duration::from_secs(1));
+            sync()
+        }
         MemfaultctlCommand::ShowSettings(_) => show_settings(config_path),
         MemfaultctlCommand::Synchronize(_) => sync(),
         MemfaultctlCommand::TriggerCoredump(TriggerCoredumpArgs { strategy }) => {
@@ -226,20 +229,11 @@ fn main_impl() -> Result<()> {
                 ))
             } else {
                 check_data_collection_enabled(&config, "write attributes")?;
-                MarEntryBuilder::new(Metadata::new_device_attributes(attributes), vec![])?
-                    .save(&mar_staging_path, &network_config)
+                MarEntryBuilder::new(&mar_staging_path)?
+                    .set_metadata(Metadata::new_device_attributes(attributes))
+                    .save(&network_config)
                     .map(|_entry| ())
             }
-        }
-    }
-}
-
-pub fn main() -> i32 {
-    match main_impl() {
-        Ok(_) => 0,
-        Err(e) => {
-            eprintln!("{}", e);
-            -1
         }
     }
 }

@@ -1,7 +1,11 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
+mod disk_backed;
+pub use disk_backed::*;
+mod die;
 pub mod disk_size;
+pub use die::*;
 pub mod fs;
 pub mod io;
 pub mod ipc;
