@@ -22,6 +22,7 @@ use std::ffi::CString;
 use std::os::raw::c_int;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
+use stderrlog::LogLevelNum;
 use uuid::Uuid;
 
 use super::init_logger;
@@ -55,10 +56,14 @@ pub fn main() -> Result<()> {
     // Let's log to the kernel log to aid debugging:
     // We fallback to standard output if verbose mode is enabled or if kernel is not available.
     if args.verbose {
-        init_logger(args.verbose);
+        init_logger(if args.verbose {
+            LogLevelNum::Trace
+        } else {
+            LogLevelNum::Info
+        });
     } else if let Err(e) = kernlog::init() {
         warn!("Cannot log to kernel logs, falling back to stderr: {}", e);
-        init_logger(false);
+        init_logger(LogLevelNum::Info);
     }
 
     if let Err(e) = dumpable_result {

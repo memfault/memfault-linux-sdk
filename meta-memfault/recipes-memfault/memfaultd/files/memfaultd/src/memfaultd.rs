@@ -11,7 +11,6 @@ use eyre::{eyre, Context};
 use log::{error, info, trace, warn};
 
 use crate::network::{NetworkClientImpl, NetworkConfig};
-use crate::util::pid_file::write_pid_file;
 use crate::util::task::{loop_with_exponential_error_backoff, LoopContinuation};
 use crate::util::UpdateStatus;
 use crate::{config::Config, mar::upload::collect_and_upload};
@@ -31,17 +30,26 @@ use crate::{
 
 const CONFIG_REFRESH_INTERVAL: Duration = Duration::from_secs(60 * 120);
 
-pub fn memfaultd_loop(config: Config, daemon: bool) -> Result<()> {
+#[derive(PartialEq, Eq)]
+pub enum MemfaultLoopResult {
+    Terminate,
+    Relaunch,
+}
+
+pub fn memfaultd_loop<C: Fn() -> Result<()>>(
+    config: Config,
+    ready_callback: C,
+) -> Result<MemfaultLoopResult> {
     // Register a flag which will be set when one of these signals is received.
-    let term_signals = [
-        signal_hook::consts::SIGINT,
-        signal_hook::consts::SIGTERM,
-        signal_hook::consts::SIGHUP,
-    ];
+    let term_signals = [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM];
     let term = Arc::new(AtomicBool::new(false));
     for signal in term_signals {
         signal_hook::flag::register(signal, Arc::clone(&term))?;
     }
+
+    // This flag will be set when we get the SIGHUP signal to reload (currently reload = restart)
+    let reload = Arc::new(AtomicBool::new(false));
+    signal_hook::flag::register(signal_hook::consts::SIGHUP, Arc::clone(&reload))?;
 
     // Register a flag to be set when we are woken up by SIGUSR1
     let force_sync = Arc::new(AtomicBool::new(false));
@@ -204,12 +212,19 @@ pub fn memfaultd_loop(config: Config, daemon: bool) -> Result<()> {
         error!("Unable to track reboot reason: {:#}", e);
     }
 
-    if daemon {
-        // All subcomponents are ready, write the pid file now to indicate we've started up completely:
-        write_pid_file()?;
-    }
+    ready_callback()?;
 
     let mut last_device_config_refresh = Option::<Instant>::None;
+
+    // If upload_interval is zero, we are only uploading on manual syncs.
+    let forced_sync_only = config.config_file.upload_interval.is_zero();
+    // If we are only uploading on manual syncs, we still need to run the mar cleaner periodically. In
+    // this case set the the upload interval to 15 minutes.
+    let upload_interval = if forced_sync_only {
+        Duration::from_secs(60 * 15)
+    } else {
+        config.config_file.upload_interval
+    };
     loop_with_exponential_error_backoff(
         || {
             // Reset the forced sync flag before doing any work so we can detect
@@ -217,10 +232,13 @@ pub fn memfaultd_loop(config: Config, daemon: bool) -> Result<()> {
             let forced = force_sync.swap(false, Ordering::Relaxed);
             let enable_data_collection = config.config_file.enable_data_collection;
 
+            // Refresh device config if needed. In cases where we are only syncing on demand, we
+            // short-circuit this check.
             if enable_data_collection
-                && (last_device_config_refresh.is_none()
-                    || last_device_config_refresh.unwrap() + CONFIG_REFRESH_INTERVAL
-                        < Instant::now()
+                && (!forced_sync_only
+                    && (last_device_config_refresh.is_none()
+                        || last_device_config_refresh.unwrap() + CONFIG_REFRESH_INTERVAL
+                            < Instant::now())
                     || forced)
             {
                 // Refresh device config from the server
@@ -247,7 +265,7 @@ pub fn memfaultd_loop(config: Config, daemon: bool) -> Result<()> {
 
             mar_cleaner.clean(DiskSize::ZERO).unwrap();
 
-            if enable_data_collection {
+            if enable_data_collection && !forced_sync_only || forced {
                 trace!("Collect MAR entries...");
                 collect_and_upload(
                     &config.mar_staging_path(),
@@ -259,7 +277,7 @@ pub fn memfaultd_loop(config: Config, daemon: bool) -> Result<()> {
             Ok(())
         },
         || match (
-            term.load(Ordering::Relaxed),
+            term.load(Ordering::Relaxed) || reload.load(Ordering::Relaxed),
             force_sync.load(Ordering::Relaxed),
         ) {
             // Stop when we receive a term signal
@@ -269,7 +287,7 @@ pub fn memfaultd_loop(config: Config, daemon: bool) -> Result<()> {
             // Otherwise, keep runnin normally
             (false, false) => LoopContinuation::KeepRunning,
         },
-        config.config_file.upload_interval,
+        upload_interval,
         Duration::new(60, 0),
     );
     info!("Memfaultd shutting down...");
@@ -278,5 +296,10 @@ pub fn memfaultd_loop(config: Config, daemon: bool) -> Result<()> {
             warn!("Error while shutting down: {}", e);
         }
     }
-    Ok(())
+
+    if reload.load(Ordering::Relaxed) {
+        Ok(MemfaultLoopResult::Relaunch)
+    } else {
+        Ok(MemfaultLoopResult::Terminate)
+    }
 }

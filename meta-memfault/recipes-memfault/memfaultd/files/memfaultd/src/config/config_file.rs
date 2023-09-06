@@ -220,7 +220,7 @@ impl MemfaultdConfig {
         PathBuf::from(self.persist_dir.clone()).join(filename)
     }
 
-    // Generate the path to the runtime config file from a serde_json::Value object. This should include the "persist_dir" field.
+    /// Generate the path to the runtime config file from a serde_json::Value object. This should include the "persist_dir" field.
     fn runtime_config_path_from_json(config: &Value) -> eyre::Result<PathBuf> {
         let mut persist_dir = PathBuf::from(
             config["persist_dir"]
@@ -256,44 +256,44 @@ mod test {
     #[test]
     fn test_merge() {
         let mut c =
-            serde_json::from_str(r##"{ "node": { "value": true, "valueB": false } }"##).unwrap();
-        let j = serde_json::from_str(r##"{ "node2": "xxx" }"##).unwrap();
+            serde_json::from_str(r#"{ "node": { "value": true, "valueB": false } }"#).unwrap();
+        let j = serde_json::from_str(r#"{ "node2": "xxx" }"#).unwrap();
 
         MemfaultdConfig::merge_into(&mut c, j);
 
         assert_eq!(
             serde_json::to_string(&c).unwrap(),
-            r##"{"node":{"value":true,"valueB":false},"node2":"xxx"}"##
+            r#"{"node":{"value":true,"valueB":false},"node2":"xxx"}"#
         );
     }
 
     #[test]
     fn test_merge_overwrite() {
         let mut c =
-            serde_json::from_str(r##"{ "node": { "value": true, "valueB": false } }"##).unwrap();
-        let j = serde_json::from_str(r##"{ "node": { "value": false }}"##).unwrap();
+            serde_json::from_str(r#"{ "node": { "value": true, "valueB": false } }"#).unwrap();
+        let j = serde_json::from_str(r#"{ "node": { "value": false }}"#).unwrap();
 
         MemfaultdConfig::merge_into(&mut c, j);
 
         assert_eq!(
             serde_json::to_string(&c).unwrap(),
-            r##"{"node":{"value":false,"valueB":false}}"##
+            r#"{"node":{"value":false,"valueB":false}}"#
         );
     }
 
     #[test]
     fn test_merge_overwrite_nested() {
         let mut c = serde_json::from_str(
-            r##"{ "node": { "value": true, "valueB": false, "valueC": { "a": 1, "b": 2 } } }"##,
+            r#"{ "node": { "value": true, "valueB": false, "valueC": { "a": 1, "b": 2 } } }"#,
         )
         .unwrap();
-        let j = serde_json::from_str(r##"{ "node": { "valueC": { "b": 42 } }}"##).unwrap();
+        let j = serde_json::from_str(r#"{ "node": { "valueC": { "b": 42 } }}"#).unwrap();
 
         MemfaultdConfig::merge_into(&mut c, j);
 
         assert_eq!(
             serde_json::to_string(&c).unwrap(),
-            r##"{"node":{"value":true,"valueB":false,"valueC":{"a":1,"b":42}}}"##
+            r#"{"node":{"value":true,"valueB":false,"valueC":{"a":1,"b":42}}}"#
         );
     }
 
@@ -326,7 +326,7 @@ mod test {
     #[rstest]
     #[case("no_file", None)]
     #[case("empty_object", Some("{}"))]
-    #[case("other_key", Some(r##"{"key2":false}"##))]
+    #[case("other_key", Some(r#"{"key2":false}"#))]
     fn test_set_and_write_bool_to_runtime_config(
         #[case] test_name: &str,
         #[case] config_string: Option<&str>,

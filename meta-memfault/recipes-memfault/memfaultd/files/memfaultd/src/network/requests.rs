@@ -58,27 +58,6 @@ pub struct UploadPrepareResponseData {
     pub token: String,
 }
 
-/// Request body to commit an upload
-#[derive(Serialize, Debug)]
-pub struct UploadCommitRequest<'a, 'b> {
-    file: UploadCommitRequestFile<'b>,
-    device: UploadDeviceMetadata<'a>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct UploadCommitRequestFile<'a> {
-    token: &'a str,
-}
-
-impl<'config, 'token> UploadCommitRequest<'config, 'token> {
-    pub fn prepare(config: &'config NetworkConfig, token: &'token str) -> Self {
-        Self {
-            file: UploadCommitRequestFile { token },
-            device: UploadDeviceMetadata::from(config),
-        }
-    }
-}
-
 #[derive(Serialize, Debug)]
 pub struct PreparedFile<'a> {
     token: &'a str,

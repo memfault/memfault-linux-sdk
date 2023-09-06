@@ -4,6 +4,7 @@ members = [
   "memfaultd",
   "memfaultc-sys"
 ]
+resolver = "2"
 
 [profile.release]
 # We do not handle FFI unwinding so we need to keep panic abort for now.

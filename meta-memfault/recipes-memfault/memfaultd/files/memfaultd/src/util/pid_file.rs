@@ -4,7 +4,6 @@
 use std::fs::{remove_file, OpenOptions};
 use std::io::{ErrorKind, Write};
 use std::path::Path;
-use std::process::id;
 
 use eyre::{Report, Result, WrapErr};
 use nix::unistd::Pid;
@@ -18,7 +17,7 @@ pub fn write_pid_file() -> Result<()> {
         .open(Path::new(PID_FILE));
 
     match file {
-        Ok(mut file) => writeln!(file, "{}", id()).wrap_err("Failed to write PID file"),
+        Ok(mut file) => writeln!(file, "{}", Pid::this()).wrap_err("Failed to write PID file"),
         Err(e) => {
             let msg = match e.kind() {
                 ErrorKind::AlreadyExists => "Daemon already running, aborting.",
@@ -26,6 +25,14 @@ pub fn write_pid_file() -> Result<()> {
             };
             Err(Report::new(e).wrap_err(msg))
         }
+    }
+}
+
+/// Returns true if (and only if) our PID file exists, is readable and contains our current PID.
+pub fn is_pid_file_about_me() -> bool {
+    match get_pid_from_file() {
+        Ok(pid) => pid == Pid::this(),
+        _ => false,
     }
 }
 
@@ -38,13 +45,15 @@ pub fn get_pid_from_file() -> Result<Pid> {
                 .wrap_err("Failed to parse PID file contents")?;
             Ok(Pid::from_raw(pid))
         }
-        Err(e) => {
-            eprintln!("Unable to read memfaultd PID file.");
-            Err(e.into())
-        }
+        Err(e) => Err(e.into()),
     }
 }
 
 pub fn remove_pid_file() -> Result<()> {
     remove_file(PID_FILE).wrap_err("Failed to remove PID file")
+}
+
+pub fn send_signal_to_pid(signal: nix::sys::signal::Signal) -> Result<()> {
+    let pid = get_pid_from_file()?;
+    nix::sys::signal::kill(pid, signal).wrap_err("Failed to send signal to memfaultd")
 }

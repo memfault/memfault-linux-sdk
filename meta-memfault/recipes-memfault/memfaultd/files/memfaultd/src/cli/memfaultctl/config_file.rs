@@ -3,9 +3,8 @@
 // See License.txt for details
 //! Cli commands for modifying the Memfaultd config file.
 
-use crate::config::Config;
-use crate::service_manager::{MemfaultdService, MemfaultdServiceManager};
 use crate::util::string::capitalize;
+use crate::{config::Config, service_manager::MemfaultdServiceManager};
 
 use eyre::Result;
 use urlencoding::encode;
@@ -92,7 +91,7 @@ fn write_bool_to_config_and_restart_memfaultd(
         .config_file
         .set_and_write_bool_to_runtime_config(key, value)?;
 
-    service_manager.restart_service_if_running(MemfaultdService::Memfaultd)
+    service_manager.restart_memfaultd_if_running()
 }
 
 #[cfg(test)]
@@ -120,8 +119,8 @@ mod test {
                 AbsolutePath::try_from(tmpdir.path().to_path_buf()).unwrap();
 
             mock_service_manager
-                .expect_restart_service_if_running()
-                .returning(|_| Ok(()));
+                .expect_restart_memfaultd_if_running()
+                .returning(|| Ok(()));
 
             Self {
                 config,

@@ -23,10 +23,11 @@ def test(
     # Wait a little bit for any "startup requests"
     time.sleep(3)
 
-    qemu.exec_cmd("memfaultctl request-metrics")
+    # Cycle Collectd to get metrics without waiting 10 seconds
+    qemu.exec_cmd("systemctl restart collectd")
+    time.sleep(3)
 
-    # Wait for message indicating that collectd has been poked
-    qemu.child().expect("Restarting collectd to capture metrics now...")
+    qemu.exec_cmd("memfaultctl request-metrics")
 
     # Wait until we have received at least one valid report.
     def _check():

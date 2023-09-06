@@ -2,15 +2,10 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 use eyre::Result;
-use nix::sys::signal::kill;
-use nix::sys::signal::Signal;
+use nix::sys::signal::Signal::SIGUSR1;
 
-use crate::util::pid_file::get_pid_from_file;
+use super::pid_file::send_signal_to_pid;
 
 pub fn send_flush_signal() -> Result<()> {
-    let pid = get_pid_from_file()?;
-
-    kill(pid, Signal::SIGUSR1)?;
-
-    Ok(())
+    send_signal_to_pid(SIGUSR1)
 }

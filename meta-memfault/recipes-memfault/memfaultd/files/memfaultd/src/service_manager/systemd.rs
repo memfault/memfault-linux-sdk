@@ -3,27 +3,10 @@
 // See License.txt for details
 use std::ffi::{CStr, CString};
 
-use crate::service_manager::{MemfaultdService, MemfaultdServiceManager, ServiceManagerStatus};
+use crate::service_manager::{MemfaultdServiceManager, ServiceManagerStatus};
 use memfaultc_sys::systemd::{
     memfaultd_get_systemd_bus_state, memfaultd_restart_systemd_service_if_running,
 };
-
-type SystemdService = CString;
-
-impl TryFrom<MemfaultdService> for SystemdService {
-    type Error = eyre::Error;
-
-    fn try_from(service: MemfaultdService) -> Result<Self, Self::Error> {
-        let service = match service {
-            MemfaultdService::Collectd => CString::new("collectd.service")?,
-            MemfaultdService::Memfaultd => CString::new("memfaultd.service")?,
-            MemfaultdService::SWUpdate => CString::new("swupdate.service")?,
-            MemfaultdService::SwUpdateSocket => CString::new("swupdate.socket")?,
-        };
-
-        Ok(service)
-    }
-}
 
 /// Systemd service manager
 ///
@@ -31,15 +14,15 @@ impl TryFrom<MemfaultdService> for SystemdService {
 pub struct SystemdServiceManager;
 
 impl MemfaultdServiceManager for SystemdServiceManager {
-    fn restart_service_if_running(&self, service: MemfaultdService) -> eyre::Result<()> {
-        let service_cstring = SystemdService::try_from(service)?;
+    fn restart_memfaultd_if_running(&self) -> eyre::Result<()> {
+        let service_cstring = CString::new("memfaultd.service")?;
         let restart_result =
             unsafe { memfaultd_restart_systemd_service_if_running(service_cstring.as_ptr()) };
 
         if restart_result {
             Ok(())
         } else {
-            Err(eyre::eyre!("Failed to restart {:?} service", service))
+            Err(eyre::eyre!("Failed to restart memfaultd service"))
         }
     }
 

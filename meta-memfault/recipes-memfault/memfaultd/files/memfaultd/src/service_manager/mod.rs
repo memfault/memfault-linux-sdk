@@ -6,33 +6,23 @@
 //! This module contains the trait for managing memfaultd services, as well as
 //! the implementation for systemd.
 //!
-mod mock_servicemanager;
+
+mod default;
+#[cfg(feature = "systemd")]
 mod systemd;
 
 /// Return the system manager that was configured at build time.
 pub fn get_service_manager() -> impl MemfaultdServiceManager {
-    #[cfg(target_os = "macos")]
-    {
-        use mock_servicemanager::MockServiceManager;
-        // SystemD C code does not build on macOS so we stub it out
-        MockServiceManager
-    }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(feature = "systemd")]
     {
         use systemd::SystemdServiceManager;
         SystemdServiceManager
     }
-}
-
-/// Memfaultd services
-///
-/// These are the services that memfaultd manages.
-#[derive(Debug, Clone, Copy)]
-pub enum MemfaultdService {
-    Collectd,
-    Memfaultd,
-    SWUpdate,
-    SwUpdateSocket,
+    #[cfg(not(feature = "systemd"))]
+    {
+        use default::DefaultServiceManager;
+        DefaultServiceManager
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +31,7 @@ pub enum ServiceManagerStatus {
     Running,
     Stopping,
     Stopped,
+    Unknown,
 }
 
 /// Trait for managing memfaultd services
@@ -48,7 +39,7 @@ pub enum ServiceManagerStatus {
 /// This trait is implemented for different service managers, such as systemd.
 #[cfg_attr(test, mockall::automock)]
 pub trait MemfaultdServiceManager {
-    fn restart_service_if_running(&self, service: MemfaultdService) -> eyre::Result<()>;
+    fn restart_memfaultd_if_running(&self) -> eyre::Result<()>;
     fn service_manager_status(&self) -> eyre::Result<ServiceManagerStatus>;
 }
 
