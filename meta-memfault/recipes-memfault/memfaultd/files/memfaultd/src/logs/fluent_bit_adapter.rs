@@ -90,20 +90,20 @@ mod tests {
 
     #[rstest]
     #[case("{}", "", "")]
-    #[case(r##"{"MESSAGE":"TEST" }"##, r##"{"MESSAGE":"TEST"}"##, "")]
+    #[case(r#"{"MESSAGE":"TEST" }"#, r#"{"MESSAGE":"TEST"}"#, "")]
     #[case(
-        r##"{"MESSAGE":"TEST", "SOME_EXTRA_KEY":"XX" }"##,
-        r##"{"MESSAGE":"TEST"}"##,
+        r#"{"MESSAGE":"TEST", "SOME_EXTRA_KEY":"XX" }"#,
+        r#"{"MESSAGE":"TEST"}"#,
         ""
     )]
     #[case(
-        r##"{"MESSAGE":"TEST", "SOME_EXTRA_KEY":"XX", "_PID": "44", "_SYSTEMD_UNIT": "some.service", "PRIORITY": "6" }"##,
-        r##"{"MESSAGE":"TEST","PRIORITY":"6","_PID":"44","_SYSTEMD_UNIT":"some.service"}"##,
+        r#"{"MESSAGE":"TEST", "SOME_EXTRA_KEY":"XX", "_PID": "44", "_SYSTEMD_UNIT": "some.service", "PRIORITY": "6" }"#,
+        r#"{"MESSAGE":"TEST","PRIORITY":"6","_PID":"44","_SYSTEMD_UNIT":"some.service"}"#,
          ""
     )]
     #[case(
-        r##"{"MESSAGE":"TEST", "SOME_EXTRA_KEY":"XX" }"##,
-        r##"{"MESSAGE":"TEST","SOME_EXTRA_KEY":"XX"}"##,
+        r#"{"MESSAGE":"TEST", "SOME_EXTRA_KEY":"XX" }"#,
+        r#"{"MESSAGE":"TEST","SOME_EXTRA_KEY":"XX"}"#,
         "SOME_EXTRA_KEY"
     )]
     fn test_filtering(

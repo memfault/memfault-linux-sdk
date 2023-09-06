@@ -3,22 +3,19 @@
 // See License.txt for details
 use argh::{FromArgs, TopLevelCommand};
 use std::path::Path;
-use std::{thread::sleep, time::Duration};
+use stderrlog::LogLevelNum;
 
 mod config_file;
 mod coredump;
 mod sync;
 mod write_attributes;
 
+use crate::mar::MarEntryBuilder;
 use crate::{
     cli::version::format_version,
     mar::{DeviceAttribute, Metadata},
     reboot::{write_reboot_reason_and_reboot, RebootReason},
     service_manager::get_service_manager,
-};
-use crate::{
-    mar::MarEntryBuilder,
-    service_manager::{MemfaultdService, MemfaultdServiceManager},
 };
 
 use crate::cli::memfaultctl::config_file::{set_data_collection, set_developer_mode};
@@ -175,13 +172,17 @@ fn check_data_collection_enabled(config: &Config, do_what: &str) -> Result<()> {
 pub fn main() -> Result<()> {
     let args: MemfaultctlArgs = from_env();
 
-    init_logger(args.verbose);
+    init_logger(if args.verbose {
+        LogLevelNum::Trace
+    } else {
+        LogLevelNum::Info
+    });
 
     let config_path = args.config_file.as_ref().map(Path::new);
     let mut config = Config::read_from_system(config_path)?;
     let network_config = NetworkConfig::from(&config);
     let mar_staging_path = config.mar_staging_path();
-    // TODO MFLT-9693: Add support for other service managers
+
     let service_manager = get_service_manager();
 
     match args.command {
@@ -209,12 +210,7 @@ pub fn main() -> Result<()> {
                 reason,
             )
         }
-        MemfaultctlCommand::RequestMetrics(_) => {
-            println!("Restarting collectd to capture metrics now...");
-            service_manager.restart_service_if_running(MemfaultdService::Collectd)?;
-            sleep(Duration::from_secs(1));
-            sync()
-        }
+        MemfaultctlCommand::RequestMetrics(_) => sync(),
         MemfaultctlCommand::ShowSettings(_) => show_settings(config_path),
         MemfaultctlCommand::Synchronize(_) => sync(),
         MemfaultctlCommand::TriggerCoredump(TriggerCoredumpArgs { strategy }) => {

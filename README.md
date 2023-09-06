@@ -46,7 +46,6 @@ Even though support for a broader diversity of setups is planned, this first
 versions of our SDK makes the following assumptions:
 
 - Your project uses [Yocto][yocto-homepage] as a build system.
-- It uses [systemd][systemd-homepage] as an init system.
 - It uses [SWUpdate][swupdate-homepage] for OTA (optional if you don't plan to
   integrate with OTA).
 
@@ -67,7 +66,6 @@ guide][docs-linux-ota].
 Metrics are also supported through [collectd][collectd-homepage]. Read more
 about it in the [Linux Metrics integration guide][docs-linux-metrics].
 
-[systemd-homepage]: https://systemd.io/
 [swupdate-homepage]: https://swupdate.org/
 [yocto-homepage]: https://www.yoctoproject.org/
 

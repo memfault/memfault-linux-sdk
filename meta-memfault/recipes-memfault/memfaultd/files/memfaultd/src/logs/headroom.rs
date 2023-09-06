@@ -320,12 +320,10 @@ mod tests {
 
         fixture.set_available_space(MIN_HEADROOM - 1);
         log_file_control.write_should_fail = true;
-        assert!(matches!(
-            fixture
-                .limiter
-                .check(Some(&log_timestamp), &mut log_file_control),
-            Ok(_)
-        ));
+        assert!(fixture
+            .limiter
+            .check(Some(&log_timestamp), &mut log_file_control)
+            .is_ok());
     }
 
     #[rstest]
@@ -340,12 +338,10 @@ mod tests {
             .unwrap();
         fixture.set_available_space(MIN_HEADROOM);
         log_file_control.write_should_fail = true;
-        assert!(matches!(
-            fixture
-                .limiter
-                .check(Some(&log_timestamp), &mut log_file_control),
-            Err(_)
-        ));
+        assert!(fixture
+            .limiter
+            .check(Some(&log_timestamp), &mut log_file_control)
+            .is_err());
     }
 
     struct FakeLogFileControl {

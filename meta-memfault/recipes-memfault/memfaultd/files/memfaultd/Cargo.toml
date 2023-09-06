@@ -17,14 +17,14 @@ name= "memfault-core-handler"
 path= "src/bin/memfault-core-handler.rs"
 
 [dependencies]
-memfaultc-sys = { path= "../memfaultc-sys", features = ["systemd"] }
+memfaultc-sys = { path= "../memfaultc-sys" }
 argh = "0.1.10"
 chrono = { version = "0.4.23", features= ["serde"]}
 eyre = "0.6.8"
 libc = "0.2.138"
 log = "0.4.17"
 prctl = { version = "1.0.0", optional = true}
-reqwest = { version = "0.11", features = ["blocking", "json"] }
+reqwest = { version = "0.11", default-features = false, features = ["blocking", "json", "rustls"] }
 rmp-serde = { version = "1.1.1", optional = true }
 rmpv = { version = "1.0.0", optional = true }
 serde = { version = "1.0.150", features = ["derive"] }
@@ -59,8 +59,11 @@ insta = {version= "1.26.0", features= ["json", "redactions"]}
 zip = { version = "0.6.3", default-features = false, features = ["deflate"] }
 
 [features]
-default = ["coredump", "collectd", "swupdate", "logging" ]
+default = ["coredump", "collectd", "swupdate", "logging", "systemd", "rust-tls" ]
 coredump = ["memfaultc-sys/coredump", "dep:prctl", "dep:kernlog"]
 collectd = ["dep:tiny_http", "dep:threadpool"]
 swupdate = ["memfaultc-sys/swupdate"]
 logging = ["dep:governor", "dep:rmp-serde", "dep:rmpv","dep:threadpool"]
+systemd = ["memfaultc-sys/systemd"]
+rust-tls = ["reqwest/rustls-tls"]
+openssl-tls = ["reqwest/native-tls"]

@@ -441,7 +441,7 @@ mod tests {
         let tmp = tempdir().unwrap();
         let tempdir_path = tmp.path();
 
-        let filenames_and_contents = vec![("hello.txt", "Hello World"), ("bye.txt", "Goodbye")];
+        let filenames_and_contents = [("hello.txt", "Hello World"), ("bye.txt", "Goodbye")];
 
         for (filename, contents) in filenames_and_contents.iter() {
             let file_path = tempdir_path.join(filename);

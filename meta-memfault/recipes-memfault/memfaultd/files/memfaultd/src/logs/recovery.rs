@@ -82,7 +82,7 @@ fn get_recovery(file_infos: Vec<FileInfo>, gen_uuid: fn() -> Uuid) -> Recovery {
 
     Recovery {
         to_delete: to_delete_infos.into_iter().map(|info| info.path).collect(),
-        to_recover: zip(to_recover_infos.iter_mut(), next_cids.into_iter())
+        to_recover: zip(to_recover_infos.iter_mut(), next_cids)
             .map(|(info, next_cid)| LogFileToRecover {
                 path: take(&mut info.path),
                 cid: info.uuid.unwrap(),

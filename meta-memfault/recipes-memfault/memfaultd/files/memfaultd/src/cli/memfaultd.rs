@@ -1,16 +1,19 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use std::{fs::create_dir_all, path::Path};
+use std::{
+    env::args_os, fs::create_dir_all, os::unix::process::CommandExt, path::Path, process::Command,
+};
 
 use crate::{
     config::Config,
-    memfaultd::memfaultd_loop,
-    util::pid_file::{get_pid_from_file, remove_pid_file},
+    memfaultd::{memfaultd_loop, MemfaultLoopResult},
+    util::pid_file::{get_pid_from_file, is_pid_file_about_me, remove_pid_file, write_pid_file},
 };
 
 use eyre::{eyre, Context, Result};
-use log::{info, warn};
+use log::{error, info, warn};
+use stderrlog::LogLevelNum;
 
 use crate::cli::show_settings::show_settings;
 use crate::cli::version::format_version;
@@ -40,13 +43,21 @@ struct MemfaultDArgs {
     #[argh(switch, short = 'V')]
     /// verbose output
     verbose: bool,
+
+    #[argh(switch, short = 'q')]
+    /// quiet - no output
+    quiet: bool,
 }
 
 pub fn main() -> Result<()> {
     let args: MemfaultDArgs = argh::from_env();
     let config_path = args.config_file.as_ref().map(Path::new);
 
-    init_logger(args.verbose);
+    init_logger(match (args.quiet, args.verbose) {
+        (true, _) => LogLevelNum::Off,
+        (false, true) => LogLevelNum::Trace,
+        _ => LogLevelNum::Info,
+    });
 
     if args.version {
         println!("{}", format_version());
@@ -81,14 +92,9 @@ pub fn main() -> Result<()> {
 
     #[cfg(feature = "swupdate")]
     {
-        use crate::service_manager::{
-            get_service_manager, MemfaultdService, MemfaultdServiceManager,
-        };
         use crate::swupdate::generate_swupdate_config;
 
         generate_swupdate_config(&config)?;
-        get_service_manager().restart_service_if_running(MemfaultdService::SWUpdate)?;
-        get_service_manager().restart_service_if_running(MemfaultdService::SwUpdateSocket)?;
     }
     #[cfg(feature = "coredump")]
     {
@@ -98,11 +104,28 @@ pub fn main() -> Result<()> {
         }
     }
 
-    if args.daemonize {
+    // Only daemonize when asked to AND not already running (aka don't fork when reloading)
+    let need_daemonize = args.daemonize && !is_pid_file_about_me();
+    if need_daemonize {
         daemonize()?;
     }
 
-    memfaultd_loop(config, args.daemonize)?;
+    let result = memfaultd_loop(config, || {
+        if need_daemonize {
+            // All subcomponents are ready, write the pid file now to indicate we've started up completely.
+            write_pid_file()?;
+        }
+        Ok(())
+    })?;
+    if result == MemfaultLoopResult::Relaunch {
+        // If reloading the config, execv ourselves (replace our program in memory by a new copy of us)
+        let mut args = args_os().collect::<Vec<_>>();
+        let arg0 = args.remove(0);
+
+        let err = Command::new(arg0).args(&args).exec();
+        // This next line will only be executed if we failed to exec().
+        error!("Unable to restart {:?}: {:?}", args, err);
+    };
 
     if args.daemonize {
         remove_pid_file()?
@@ -120,7 +143,7 @@ fn mkdir_if_needed(path: &Path) -> Result<()> {
 fn daemonize() -> Result<()> {
     #[cfg(target_os = "linux")]
     {
-        nix::unistd::daemon(false, true).wrap_err("Unable to daemonize")
+        nix::unistd::daemon(true, true).wrap_err("Unable to daemonize")
     }
     #[cfg(not(target_os = "linux"))]
     {

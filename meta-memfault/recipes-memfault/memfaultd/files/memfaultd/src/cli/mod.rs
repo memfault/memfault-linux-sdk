@@ -3,6 +3,7 @@
 // See License.txt for details
 use eyre::eyre;
 use std::path::Path;
+use stderrlog::LogLevelNum;
 
 #[cfg(all(target_os = "linux", feature = "coredump"))]
 mod memfault_core_handler;
@@ -11,12 +12,10 @@ mod memfaultd;
 mod show_settings;
 mod version;
 
-fn init_logger(verbose: bool) {
-    let default_level = if verbose { 4 } else { 2 };
-
+fn init_logger(verbose: LogLevelNum) {
     stderrlog::new()
         .module("memfaultd")
-        .verbosity(default_level)
+        .verbosity(verbose)
         .init()
         .unwrap();
 }

@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2023-09-06
+
+We dropped, or made optional, a number of dependencies. Memfault for Linux will
+be easier to integrate and run on a wider variety of configuration.
+
+### Changed
+
+- `memfaultd` does not require `systemd` anymore. On Yocto, the `systemd`
+  feature will be activated automatically if your distribution includes systemd.
+  When `systemd` is not used, `memfaultd` will not be able to detect "user
+  triggered" shutdown or reboot. You should use the [`last_reboot_reason` file
+  API][reboot-reason-api] to notify `memfaultd` before doing a normal shutdown.
+- `memfaultd` will now default to using a Rust TLS libary in place of OpenSSL.
+  This adds about 800kB to the `memfaultd` binary. If you do have OpenSSL on
+  your system and prefer to use it, you can set the `openssl-tls` option (in
+  your `PACKAGECONFIG` for the `memfaultd` recipe) to continue using OpenSSL.
+- `memfaultd` now supports an `upload_interval` set to 0. When `upload_interval`
+  is 0, `memfaultd` will never try to upload data on its own. Data will be
+  written to disk and deleted when the size or inode limits are exceeded. You
+  can still call `memfaultctl sync` (or send the SIGUSR1 signal) to force an
+  immediate upload.
+
+[reboot-reason-api]:
+  https://docs.memfault.com/docs/linux/reboot-reason-tracking#device-specific
+
+### Removed
+
+- Cleaned up some of the upload code to remove some dead paths and gain a bit of
+  code size.
+
+### Fixed
+
+- Fluent Bit changed their output format in version 2.1. This version of
+  `memfaultd` supports both the old and new format.
+
 ## [1.5.0] - 2023-07-18
 
 This release introduces [fleet-sampling][fleet-sampling] to the Linux SDK. It
@@ -546,3 +581,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.4.0-kirkstone
 [1.5.0]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.5.0-kirkstone
+[1.6.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.6.0-kirkstone

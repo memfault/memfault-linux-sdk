@@ -110,6 +110,8 @@ pub fn show_settings(config_path: Option<&Path>) -> Result<()> {
         "coredump",
         #[cfg(feature = "logging")]
         "logging",
+        #[cfg(feature = "systemd")]
+        "systemd",
     ];
 
     dump_settings(

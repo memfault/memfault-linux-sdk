@@ -3,7 +3,6 @@
 // See License.txt for details
 use std::fs::File;
 use std::io::Read;
-use std::path;
 use std::str;
 
 use eyre::eyre;
@@ -18,10 +17,10 @@ use crate::retriable_error::RetriableError;
 use crate::util::io::StreamLen;
 use crate::util::string::Ellipsis;
 
+use super::requests::DeviceConfigResponse;
 use super::requests::UploadPrepareRequest;
 use super::requests::UploadPrepareResponse;
 use super::requests::{DeviceConfigRequest, MarUploadMetadata};
-use super::requests::{DeviceConfigResponse, UploadCommitRequest};
 use super::NetworkClient;
 use super::NetworkConfig;
 
@@ -183,24 +182,6 @@ impl NetworkClientImpl {
 }
 
 impl NetworkClient for NetworkClientImpl {
-    fn post_event(&self, payload: &str) -> Result<()> {
-        self.fetch(Method::POST, "/api/v0/events", payload)
-            .and(Ok(()))
-    }
-
-    fn upload_coredump(&self, filepath: &path::Path, gzipped: bool) -> Result<()> {
-        let token = self.prepare_and_upload(File::open(filepath)?.try_into()?, gzipped)?;
-
-        let commit = UploadCommitRequest::prepare(&self.config, &token);
-        self.fetch(
-            Method::POST,
-            "/api/v0/upload/elf_coredump",
-            &serde_json::to_string(&commit)?,
-        )
-        .and(Ok(()))
-        .wrap_err("Coredump commit error")
-    }
-
     fn upload_mar_file<F: Read + StreamLen + Send + 'static>(&self, file: F) -> Result<()> {
         let token = self.prepare_and_upload(file.into(), false)?;
 
