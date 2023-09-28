@@ -27,7 +27,10 @@ expression: content
     "compression": "gzip",
     "coredump_max_size_kib": 96000,
     "rate_limit_count": 5,
-    "rate_limit_duration_seconds": 3600
+    "rate_limit_duration_seconds": 3600,
+    "capture_strategy": {
+      "type": "kernel_selection"
+    }
   },
   "fluent-bit": {
     "extra_fluentd_attributes": [],

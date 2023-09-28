@@ -15,7 +15,7 @@ use crate::{
 use crate::util::disk_size::DiskSize;
 
 pub use self::{
-    config_file::{CoredumpCompression, JsonConfigs, MemfaultdConfig},
+    config_file::{CoredumpCaptureStrategy, CoredumpCompression, JsonConfigs, MemfaultdConfig},
     device_config::{DeviceConfig, Resolution, Sampling},
     device_info::{DeviceInfo, DeviceInfoWarning},
 };
@@ -42,13 +42,16 @@ const DEVICE_CONFIG_FILE: &str = "device_config.json";
 const COREDUMP_RATE_LIMITER_FILENAME: &str = "coredump_rate_limit";
 
 impl Config {
-    pub const DEFAULT_CONFIG_PATH: &str = "/etc/memfaultd.conf";
+    pub const DEFAULT_CONFIG_PATH: &'static str = "/etc/memfaultd.conf";
 
     pub fn read_from_system(user_config: Option<&Path>) -> Result<Self> {
         // Select config file to read
         let config_file = user_config.unwrap_or_else(|| Path::new(Self::DEFAULT_CONFIG_PATH));
 
-        let config = MemfaultdConfig::load(config_file)?;
+        let config = MemfaultdConfig::load(config_file).wrap_err(eyre!(
+            "Unable to read config file {}",
+            &config_file.display()
+        ))?;
 
         let (device_info, warnings) =
             DeviceInfo::load().wrap_err(eyre!("Unable to load device info"))?;
@@ -160,7 +163,7 @@ impl Config {
             config_file: MemfaultdConfig::test_fixture(),
             config_file_path: PathBuf::from("test_fixture.conf"),
             cached_device_config: Arc::new(RwLock::new(DiskBacked::from_path(&PathBuf::from(
-                "test_fixture.json",
+                "/dev/null",
             )))),
         }
     }

@@ -58,6 +58,21 @@ pub enum CoredumpCompression {
     None,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[serde(tag = "type")]
+pub enum CoredumpCaptureStrategy {
+    #[serde(rename = "threads")]
+    /// Only capture the stacks of the threads that were running at the time of the crash.
+    Threads {
+        #[serde(rename = "max_thread_size_kib", with = "kib_to_usize")]
+        max_thread_size: usize,
+    },
+    #[serde(rename = "kernel_selection")]
+    /// Keep in the coredump what the kernel selected to be included in the coredump.
+    /// See https://man7.org/linux/man-pages/man5/core.5.html for more details.
+    KernelSelection,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CoredumpConfig {
     pub compression: CoredumpCompression,
@@ -66,6 +81,7 @@ pub struct CoredumpConfig {
     pub rate_limit_count: u32,
     #[serde(rename = "rate_limit_duration_seconds", with = "seconds_to_duration")]
     pub rate_limit_duration: Duration,
+    pub capture_strategy: CoredumpCaptureStrategy,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -301,6 +317,7 @@ mod test {
     #[case("empty_object")]
     #[case("with_partial_logs")]
     #[case("without_coredump_compression")]
+    #[case("with_coredump_capture_strategy_threads")]
     fn can_parse_test_files(#[case] name: &str) {
         let input_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("src/config/test-config")

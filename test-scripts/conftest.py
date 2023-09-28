@@ -56,10 +56,14 @@ def set_test_id_device_attribute(request: pytest.FixtureRequest) -> Iterable[Non
         memfault_service_tester.create_custom_metric(key=key, data_type="STRING")
     except AssertionError:
         pass  # Ignore 409 Conflict errors, which indicate the metric already exists.
-    memfault_service_tester.patch_device_attributes(
-        device_serial=qemu_device_id,
-        patch={key: f"{request.node.path.name}::{request.node.name}"},
-    )
+
+    try:
+        memfault_service_tester.patch_device_attributes(
+            device_serial=qemu_device_id,
+            patch={key: f"{request.node.path.name}::{request.node.name}"},
+        )
+    except AssertionError:
+        pass  # Ignore 404 errors - the test might not be creating the device.
 
 
 @pytest.fixture()

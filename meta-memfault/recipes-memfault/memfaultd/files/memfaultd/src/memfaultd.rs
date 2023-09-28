@@ -10,15 +10,21 @@ use eyre::Result;
 use eyre::{eyre, Context};
 use log::{error, info, trace, warn};
 
-use crate::network::{NetworkClientImpl, NetworkConfig};
-use crate::util::task::{loop_with_exponential_error_backoff, LoopContinuation};
-use crate::util::UpdateStatus;
 use crate::{config::Config, mar::upload::collect_and_upload};
+use crate::{http_server::HttpHandler, util::UpdateStatus};
+use crate::{
+    http_server::HttpServer,
+    network::{NetworkClientImpl, NetworkConfig},
+};
+use crate::{
+    mar::MarExportHandler,
+    util::task::{loop_with_exponential_error_backoff, LoopContinuation},
+};
 use crate::{mar::MarStagingCleaner, service_manager::get_service_manager};
 use crate::{reboot::RebootReasonTracker, util::disk_size::DiskSize};
 
 #[cfg(feature = "collectd")]
-use crate::collectd::CollectdServer;
+use crate::collectd::CollectdHandler;
 
 #[cfg(feature = "logging")]
 use crate::{
@@ -81,15 +87,17 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     // List of tasks to run before shutting down
     let mut shutdown_tasks: Vec<Box<dyn FnMut() -> Result<()>>> = vec![];
 
+    // List of http handlers
+    #[allow(unused_mut, /* reason = "Can be unused when some features are disabled." */)]
+    let mut http_handlers: Vec<Box<dyn HttpHandler>> =
+        vec![Box::new(MarExportHandler::new(config.mar_staging_path()))];
+
     #[cfg(feature = "collectd")]
     {
         use std::thread::{sleep, spawn};
 
-        let mut collectd_server = CollectdServer::new();
-        collectd_server.start(
-            config.config_file.enable_data_collection,
-            config.config_file.http_server.bind_address,
-        )?;
+        let mut collectd_handler = CollectdHandler::new(config.config_file.enable_data_collection);
+        http_handlers.push(Box::new(collectd_handler.clone()));
 
         // Start a thread to dump the metrics precisely every 60 minutes
         {
@@ -97,7 +105,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
             let mar_staging_path = config.mar_staging_path();
             let heartbeat_interval = config.config_file.heartbeat_interval;
 
-            let mut collectd_server = collectd_server.clone();
+            let mut collectd_handler = collectd_handler.clone();
 
             spawn(move || {
                 let mut next_heartbeat = Instant::now() + heartbeat_interval;
@@ -107,7 +115,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                     }
                     next_heartbeat += heartbeat_interval;
                     if let Err(e) =
-                        collectd_server.dump_metrics_to_mar_entry(&mar_staging_path, &net_config)
+                        collectd_handler.dump_metrics_to_mar_entry(&mar_staging_path, &net_config)
                     {
                         warn!("Unable to dump metrics: {}", e);
                     }
@@ -119,11 +127,11 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
             let net_config = NetworkConfig::from(&config);
             let mar_staging_path = config.mar_staging_path();
 
-            let mut collectd_server = collectd_server.clone();
+            let mut collectd_handler = collectd_handler.clone();
 
             sync_tasks.push(Box::new(move |forced| {
                 if forced {
-                    collectd_server.dump_metrics_to_mar_entry(&mar_staging_path, &net_config)?;
+                    collectd_handler.dump_metrics_to_mar_entry(&mar_staging_path, &net_config)?;
                 }
                 Ok(())
             }));
@@ -134,7 +142,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
             let mar_staging_path = config.mar_staging_path();
 
             shutdown_tasks.push(Box::new(move || {
-                collectd_server.dump_metrics_to_mar_entry(&mar_staging_path, &net_config)
+                collectd_handler.dump_metrics_to_mar_entry(&mar_staging_path, &net_config)
             }));
         }
     }
@@ -212,6 +220,11 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         error!("Unable to track reboot reason: {:#}", e);
     }
 
+    // Start the http server
+    let http_server = HttpServer::new(http_handlers);
+    http_server.start(config.config_file.http_server.bind_address)?;
+
+    // Run the ready callback (creates the PID file)
     ready_callback()?;
 
     let mut last_device_config_refresh = Option::<Instant>::None;
@@ -260,7 +273,9 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
             }
 
             for task in &mut sync_tasks {
-                task(forced)?;
+                if let Err(e) = task(forced) {
+                    warn!("{:#}", e);
+                }
             }
 
             mar_cleaner.clean(DiskSize::ZERO).unwrap();

@@ -175,6 +175,7 @@ impl Read for ZipEncoder {
     }
 }
 
+#[derive(Clone)]
 pub struct ZipEntryInfo {
     path: PathBuf,
     name: Vec<u8>,

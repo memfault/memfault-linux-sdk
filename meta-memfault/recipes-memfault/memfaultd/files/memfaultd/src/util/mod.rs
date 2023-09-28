@@ -9,6 +9,8 @@ pub use die::*;
 pub mod fs;
 pub mod io;
 pub mod ipc;
+pub mod math;
+pub mod output_arg;
 pub mod path;
 pub mod pid_file;
 #[cfg(feature = "logging")]

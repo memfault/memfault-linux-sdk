@@ -13,5 +13,13 @@ pub use mar_entry::*;
 pub use mar_entry_builder::*;
 pub use upload::*;
 
+mod chunks;
+mod export;
+mod export_format;
+
+pub use chunks::{Chunk, ChunkMessage, ChunkMessageType, ChunkWrapper};
+pub use export::{MarExportHandler, EXPORT_MAR_URL};
+pub use export_format::ExportFormat;
+
 #[cfg(test)]
 mod test_utils;

@@ -18,7 +18,7 @@ pub fn coredump_configure_kernel(config_path: &Path) -> Result<()> {
                 config_path.display()
             ),
         )
-        .wrap_err("Unable to write coredump pattern.")
+        .wrap_err("Unable to write coredump pattern")
     }
     #[cfg(not(target_os = "linux"))]
     {

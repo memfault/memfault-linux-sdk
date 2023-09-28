@@ -44,6 +44,9 @@ def test_fails_with_data_collection_disabled(
 
     time.sleep(5)
 
-    device = memfault_service_tester.get_device(device_serial=qemu_device_id)
-    assert device
-    assert device["reported_config_revision"] is None
+    try:
+        memfault_service_tester.get_device(device_serial=qemu_device_id)
+        # Device should not exist which makes get-device fail
+        assert False
+    except Exception as e:
+        assert "404" in str(e)
