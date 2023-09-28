@@ -42,3 +42,5 @@ MEMFAULT_HARDWARE_VERSION:pn-swupdate := "${@d.getVar('BB_ORIGENV', False).getVa
 # Used by swupdate-image to populate the sw-description.in template file:
 MEMFAULT_SOFTWARE_VERSION:pn-swupdate-image := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_SOFTWARE_VERSION')}"
 MEMFAULT_HARDWARE_VERSION:pn-swupdate-image := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_HARDWARE_VERSION')}"
+
+IMAGE_INSTALL:append = " curl "

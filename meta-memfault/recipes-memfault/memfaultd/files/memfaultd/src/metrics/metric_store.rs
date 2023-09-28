@@ -49,7 +49,8 @@ impl InMemoryMetricStore {
         Ok(())
     }
 
-    fn take_metrics(&mut self) -> HashMap<MetricStringKey, MetricValue> {
+    /// Return all the metrics in memory and resets the store.
+    pub fn take_metrics(&mut self) -> HashMap<MetricStringKey, MetricValue> {
         std::mem::take(&mut self.metrics)
             .into_iter()
             .map(|(name, state)| (name, state.value()))

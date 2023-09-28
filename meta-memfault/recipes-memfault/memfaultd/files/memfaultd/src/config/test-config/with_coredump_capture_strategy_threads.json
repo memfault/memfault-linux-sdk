@@ -1,0 +1,8 @@
+{
+  "coredump": {
+    "capture_strategy": {
+      "type": "threads",
+      "max_thread_size_kib": 32
+    }
+  }
+}

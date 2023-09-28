@@ -1,0 +1,756 @@
+---
+source: memfaultd/src/cli/memfault_core_handler/core_elf_note.rs
+expression: notes
+---
+[
+    ProcessStatus(
+        ProcessStatusNote {
+            si_signo: 11,
+            si_code: 0,
+            si_errno: 0,
+            pr_cursig: 11,
+            pad0: 0,
+            pr_sigpend: 0,
+            pr_sighold: 0,
+            pr_pid: 1757063,
+            pr_ppid: 4514,
+            pr_pgrp: 1756783,
+            pr_sid: 1706201,
+            pr_utime: ProcessTimeVal {
+                tv_sec: 0,
+                tv_usec: 0,
+            },
+            pr_stime: ProcessTimeVal {
+                tv_sec: 0,
+                tv_usec: 0,
+            },
+            pr_cutime: ProcessTimeVal {
+                tv_sec: 0,
+                tv_usec: 0,
+            },
+            pr_cstime: ProcessTimeVal {
+                tv_sec: 0,
+                tv_usec: 0,
+            },
+            pr_reg: user_regs_struct {
+                r15: 140723164295904,
+                r14: 1,
+                r13: 140723164295824,
+                r12: 140723155918848,
+                rbp: 0,
+                rbx: 140723155914752,
+                r11: 582,
+                r10: 140192614273224,
+                r9: 140192606909824,
+                r8: 0,
+                rax: 0,
+                rcx: 42,
+                rdx: 21885,
+                rsi: 0,
+                rdi: 0,
+                orig_rax: 18446744073709551615,
+                rip: 93999345134665,
+                cs: 51,
+                eflags: 66118,
+                rsp: 140723164290544,
+                ss: 43,
+                fs_base: 140192606909824,
+                gs_base: 0,
+                ds: 0,
+                es: 0,
+                fs: 0,
+                gs: 0,
+            },
+            pr_fpvalid: 1,
+            pad1: 0,
+        },
+    ),
+    Auxv(
+        [
+            AuxvEntry {
+                key: 33,
+                value: 140723164557312,
+            },
+            AuxvEntry {
+                key: 51,
+                value: 3632,
+            },
+            AuxvEntry {
+                key: 16,
+                value: 3219913727,
+            },
+            AuxvEntry {
+                key: 6,
+                value: 4096,
+            },
+            AuxvEntry {
+                key: 17,
+                value: 100,
+            },
+            AuxvEntry {
+                key: 3,
+                value: 93999343464512,
+            },
+            AuxvEntry {
+                key: 4,
+                value: 56,
+            },
+            AuxvEntry {
+                key: 5,
+                value: 14,
+            },
+            AuxvEntry {
+                key: 7,
+                value: 140192614031360,
+            },
+            AuxvEntry {
+                key: 8,
+                value: 0,
+            },
+            AuxvEntry {
+                key: 9,
+                value: 93999344771504,
+            },
+            AuxvEntry {
+                key: 11,
+                value: 1000,
+            },
+            AuxvEntry {
+                key: 12,
+                value: 1000,
+            },
+            AuxvEntry {
+                key: 13,
+                value: 1000,
+            },
+            AuxvEntry {
+                key: 14,
+                value: 1000,
+            },
+            AuxvEntry {
+                key: 23,
+                value: 0,
+            },
+            AuxvEntry {
+                key: 25,
+                value: 140723164297705,
+            },
+            AuxvEntry {
+                key: 26,
+                value: 2,
+            },
+            AuxvEntry {
+                key: 31,
+                value: 140723164307423,
+            },
+            AuxvEntry {
+                key: 15,
+                value: 140723164297721,
+            },
+            AuxvEntry {
+                key: 0,
+                value: 0,
+            },
+        ],
+    ),
+    File(
+        FileNote {
+            page_size: 4096,
+            mapped_files: [
+                MappedFile {
+                    path: Some(
+                        "/home/blake/git/memfault-linux-sdk-internal/meta-memfault/recipes-memfault/memfaultd/files/target/debug/memfaultctl",
+                    ),
+                    start_addr: 93999343464448,
+                    end_addr: 93999344754688,
+                    page_offset: 0,
+                },
+                MappedFile {
+                    path: Some(
+                        "/home/blake/git/memfault-linux-sdk-internal/meta-memfault/recipes-memfault/memfaultd/files/target/debug/memfaultctl",
+                    ),
+                    start_addr: 93999344754688,
+                    end_addr: 93999353466880,
+                    page_offset: 315,
+                },
+                MappedFile {
+                    path: Some(
+                        "/home/blake/git/memfault-linux-sdk-internal/meta-memfault/recipes-memfault/memfaultd/files/target/debug/memfaultctl",
+                    ),
+                    start_addr: 93999353466880,
+                    end_addr: 93999355916288,
+                    page_offset: 2442,
+                },
+                MappedFile {
+                    path: Some(
+                        "/home/blake/git/memfault-linux-sdk-internal/meta-memfault/recipes-memfault/memfaultd/files/target/debug/memfaultctl",
+                    ),
+                    start_addr: 93999355916288,
+                    end_addr: 93999356571648,
+                    page_offset: 3039,
+                },
+                MappedFile {
+                    path: Some(
+                        "/home/blake/git/memfault-linux-sdk-internal/meta-memfault/recipes-memfault/memfaultd/files/target/debug/memfaultctl",
+                    ),
+                    start_addr: 93999356571648,
+                    end_addr: 93999356583936,
+                    page_offset: 3199,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libgpg-error.so.0.32.1",
+                    ),
+                    start_addr: 140192606912512,
+                    end_addr: 140192606928896,
+                    page_offset: 0,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libgpg-error.so.0.32.1",
+                    ),
+                    start_addr: 140192606928896,
+                    end_addr: 140192607019008,
+                    page_offset: 4,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libgpg-error.so.0.32.1",
+                    ),
+                    start_addr: 140192607019008,
+                    end_addr: 140192607059968,
+                    page_offset: 26,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libgpg-error.so.0.32.1",
+                    ),
+                    start_addr: 140192607059968,
+                    end_addr: 140192607064064,
+                    page_offset: 35,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libgpg-error.so.0.32.1",
+                    ),
+                    start_addr: 140192607064064,
+                    end_addr: 140192607068160,
+                    page_offset: 36,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libgcrypt.so.20.3.4",
+                    ),
+                    start_addr: 140192607068160,
+                    end_addr: 140192607129600,
+                    page_offset: 0,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libgcrypt.so.20.3.4",
+                    ),
+                    start_addr: 140192607129600,
+                    end_addr: 140192608071680,
+                    page_offset: 15,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libgcrypt.so.20.3.4",
+                    ),
+                    start_addr: 140192608071680,
+                    end_addr: 140192608325632,
+                    page_offset: 245,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libgcrypt.so.20.3.4",
+                    ),
+                    start_addr: 140192608325632,
+                    end_addr: 140192608329728,
+                    page_offset: 307,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libgcrypt.so.20.3.4",
+                    ),
+                    start_addr: 140192608329728,
+                    end_addr: 140192608342016,
+                    page_offset: 307,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libgcrypt.so.20.3.4",
+                    ),
+                    start_addr: 140192608342016,
+                    end_addr: 140192608366592,
+                    page_offset: 310,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libcap.so.2.44",
+                    ),
+                    start_addr: 140192608370688,
+                    end_addr: 140192608382976,
+                    page_offset: 0,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libcap.so.2.44",
+                    ),
+                    start_addr: 140192608382976,
+                    end_addr: 140192608399360,
+                    page_offset: 3,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libcap.so.2.44",
+                    ),
+                    start_addr: 140192608399360,
+                    end_addr: 140192608407552,
+                    page_offset: 7,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libcap.so.2.44",
+                    ),
+                    start_addr: 140192608407552,
+                    end_addr: 140192608411648,
+                    page_offset: 8,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libcap.so.2.44",
+                    ),
+                    start_addr: 140192608411648,
+                    end_addr: 140192608415744,
+                    page_offset: 9,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/liblz4.so.1.9.3",
+                    ),
+                    start_addr: 140192608415744,
+                    end_addr: 140192608423936,
+                    page_offset: 0,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/liblz4.so.1.9.3",
+                    ),
+                    start_addr: 140192608423936,
+                    end_addr: 140192608526336,
+                    page_offset: 2,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/liblz4.so.1.9.3",
+                    ),
+                    start_addr: 140192608526336,
+                    end_addr: 140192608534528,
+                    page_offset: 27,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/liblz4.so.1.9.3",
+                    ),
+                    start_addr: 140192608534528,
+                    end_addr: 140192608538624,
+                    page_offset: 29,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/liblz4.so.1.9.3",
+                    ),
+                    start_addr: 140192608538624,
+                    end_addr: 140192608542720,
+                    page_offset: 29,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/liblz4.so.1.9.3",
+                    ),
+                    start_addr: 140192608542720,
+                    end_addr: 140192608546816,
+                    page_offset: 30,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libzstd.so.1.4.8",
+                    ),
+                    start_addr: 140192608546816,
+                    end_addr: 140192608587776,
+                    page_offset: 0,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libzstd.so.1.4.8",
+                    ),
+                    start_addr: 140192608587776,
+                    end_addr: 140192609316864,
+                    page_offset: 10,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libzstd.so.1.4.8",
+                    ),
+                    start_addr: 140192609316864,
+                    end_addr: 140192609386496,
+                    page_offset: 188,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libzstd.so.1.4.8",
+                    ),
+                    start_addr: 140192609386496,
+                    end_addr: 140192609390592,
+                    page_offset: 204,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libzstd.so.1.4.8",
+                    ),
+                    start_addr: 140192609390592,
+                    end_addr: 140192609394688,
+                    page_offset: 205,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/liblzma.so.5.2.5",
+                    ),
+                    start_addr: 140192609394688,
+                    end_addr: 140192609406976,
+                    page_offset: 0,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/liblzma.so.5.2.5",
+                    ),
+                    start_addr: 140192609406976,
+                    end_addr: 140192609517568,
+                    page_offset: 3,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/liblzma.so.5.2.5",
+                    ),
+                    start_addr: 140192609517568,
+                    end_addr: 140192609562624,
+                    page_offset: 30,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/liblzma.so.5.2.5",
+                    ),
+                    start_addr: 140192609562624,
+                    end_addr: 140192609566720,
+                    page_offset: 40,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/liblzma.so.5.2.5",
+                    ),
+                    start_addr: 140192609566720,
+                    end_addr: 140192609570816,
+                    page_offset: 41,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libm.so.6",
+                    ),
+                    start_addr: 140192609570816,
+                    end_addr: 140192609628160,
+                    page_offset: 0,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libm.so.6",
+                    ),
+                    start_addr: 140192609628160,
+                    end_addr: 140192610136064,
+                    page_offset: 14,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libm.so.6",
+                    ),
+                    start_addr: 140192610136064,
+                    end_addr: 140192610508800,
+                    page_offset: 138,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libm.so.6",
+                    ),
+                    start_addr: 140192610508800,
+                    end_addr: 140192610512896,
+                    page_offset: 228,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libm.so.6",
+                    ),
+                    start_addr: 140192610512896,
+                    end_addr: 140192610516992,
+                    page_offset: 229,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libc.so.6",
+                    ),
+                    start_addr: 140192610516992,
+                    end_addr: 140192610680832,
+                    page_offset: 0,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libc.so.6",
+                    ),
+                    start_addr: 140192610680832,
+                    end_addr: 140192612339712,
+                    page_offset: 40,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libc.so.6",
+                    ),
+                    start_addr: 140192612339712,
+                    end_addr: 140192612700160,
+                    page_offset: 445,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libc.so.6",
+                    ),
+                    start_addr: 140192612700160,
+                    end_addr: 140192612716544,
+                    page_offset: 532,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libc.so.6",
+                    ),
+                    start_addr: 140192612716544,
+                    end_addr: 140192612724736,
+                    page_offset: 536,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+                    ),
+                    start_addr: 140192612790272,
+                    end_addr: 140192612802560,
+                    page_offset: 0,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+                    ),
+                    start_addr: 140192612802560,
+                    end_addr: 140192612896768,
+                    page_offset: 3,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+                    ),
+                    start_addr: 140192612896768,
+                    end_addr: 140192612913152,
+                    page_offset: 26,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+                    ),
+                    start_addr: 140192612913152,
+                    end_addr: 140192612917248,
+                    page_offset: 29,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+                    ),
+                    start_addr: 140192612917248,
+                    end_addr: 140192612921344,
+                    page_offset: 30,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libconfig.so.9.2.0",
+                    ),
+                    start_addr: 140192612929536,
+                    end_addr: 140192612941824,
+                    page_offset: 0,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libconfig.so.9.2.0",
+                    ),
+                    start_addr: 140192612941824,
+                    end_addr: 140192612966400,
+                    page_offset: 3,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libconfig.so.9.2.0",
+                    ),
+                    start_addr: 140192612966400,
+                    end_addr: 140192612978688,
+                    page_offset: 9,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libconfig.so.9.2.0",
+                    ),
+                    start_addr: 140192612978688,
+                    end_addr: 140192612982784,
+                    page_offset: 11,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libconfig.so.9.2.0",
+                    ),
+                    start_addr: 140192612982784,
+                    end_addr: 140192612986880,
+                    page_offset: 12,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libsystemd.so.0.32.0",
+                    ),
+                    start_addr: 140192612986880,
+                    end_addr: 140192613064704,
+                    page_offset: 0,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libsystemd.so.0.32.0",
+                    ),
+                    start_addr: 140192613064704,
+                    end_addr: 140192613584896,
+                    page_offset: 19,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libsystemd.so.0.32.0",
+                    ),
+                    start_addr: 140192613584896,
+                    end_addr: 140192613761024,
+                    page_offset: 146,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libsystemd.so.0.32.0",
+                    ),
+                    start_addr: 140192613761024,
+                    end_addr: 140192613765120,
+                    page_offset: 189,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libsystemd.so.0.32.0",
+                    ),
+                    start_addr: 140192613765120,
+                    end_addr: 140192613793792,
+                    page_offset: 189,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libsystemd.so.0.32.0",
+                    ),
+                    start_addr: 140192613793792,
+                    end_addr: 140192613797888,
+                    page_offset: 196,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libz.so.1.2.11",
+                    ),
+                    start_addr: 140192613801984,
+                    end_addr: 140192613810176,
+                    page_offset: 0,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libz.so.1.2.11",
+                    ),
+                    start_addr: 140192613810176,
+                    end_addr: 140192613879808,
+                    page_offset: 2,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libz.so.1.2.11",
+                    ),
+                    start_addr: 140192613879808,
+                    end_addr: 140192613904384,
+                    page_offset: 19,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libz.so.1.2.11",
+                    ),
+                    start_addr: 140192613904384,
+                    end_addr: 140192613908480,
+                    page_offset: 25,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libz.so.1.2.11",
+                    ),
+                    start_addr: 140192613908480,
+                    end_addr: 140192613912576,
+                    page_offset: 25,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/libz.so.1.2.11",
+                    ),
+                    start_addr: 140192613912576,
+                    end_addr: 140192613916672,
+                    page_offset: 26,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+                    ),
+                    start_addr: 140192614031360,
+                    end_addr: 140192614039552,
+                    page_offset: 0,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+                    ),
+                    start_addr: 140192614039552,
+                    end_addr: 140192614211584,
+                    page_offset: 2,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+                    ),
+                    start_addr: 140192614211584,
+                    end_addr: 140192614256640,
+                    page_offset: 44,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+                    ),
+                    start_addr: 140192614260736,
+                    end_addr: 140192614268928,
+                    page_offset: 55,
+                },
+                MappedFile {
+                    path: Some(
+                        "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+                    ),
+                    start_addr: 140192614268928,
+                    end_addr: 140192614277120,
+                    page_offset: 57,
+                },
+            ],
+            incomplete: false,
+        },
+    ),
+]

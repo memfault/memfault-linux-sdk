@@ -94,7 +94,7 @@ RRECOMMENDS:${PN} += " \
     d)} \
 "
 
-# OpenSSL is not the default as of v0.16
+# OpenSSL is not the default as of v1.16
 CARGO_FEATURES:append = " \
     ${@bb.utils.contains('PACKAGECONFIG', 'openssl-tls', \
         'openssl-tls', \

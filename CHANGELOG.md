@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2023-09-27
+
+This new release will mostly interest users of Memfault for Linux on systems
+that are not directly connected to the Internet and need another way to
+transport the data from the device to the cloud.
+
+### Added
+
+- `memfaultd` now supports exporting its data in multiple formats via it's
+  built-in HTTP server. The easiest way to use this new feature is via
+  `memfaultctl export`. Supported formats are MAR (Zip file), Chunk (MAR file
+  encapsulated in a memfault chunk), Chunk-Wrapped (a chunk with an additional
+  header containing a signature and the chunk length).
+
+### Changed
+
+- We have rewritten our core handler in Rust. In this release, the core handler
+  is iso-functional to the previous release. New features coming soon!
+
+### Fixed
+
+- When building with OpenSSL, `memfaultd` will not try to build rustls-tls. This
+  fixes an issue where `memfaultd` would not build on some systems (mips)
+  because a dependency of `rustls-tls` (`ring`) does not build on `mips`.
+
 ## [1.6.0] - 2023-09-06
 
 We dropped, or made optional, a number of dependencies. Memfault for Linux will
@@ -583,3 +608,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.5.0-kirkstone
 [1.6.0]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.6.0-kirkstone
+[1.7.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.7.0-kirkstone

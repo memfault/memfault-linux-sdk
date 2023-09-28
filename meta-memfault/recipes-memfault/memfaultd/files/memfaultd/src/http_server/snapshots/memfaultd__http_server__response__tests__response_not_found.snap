@@ -1,0 +1,5 @@
+---
+source: memfaultd/src/http_server/response.rs
+expression: "serde_json::to_string(&HttpResponse::NotFound).unwrap()"
+---
+{"status":"not_found"}

@@ -9,6 +9,8 @@ mod config;
 mod coredump;
 #[cfg(feature = "logging")]
 mod fluent_bit;
+
+pub mod http_server;
 #[cfg(feature = "logging")]
 mod logs;
 pub mod mar;

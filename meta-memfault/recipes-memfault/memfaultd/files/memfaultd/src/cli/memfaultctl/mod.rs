@@ -7,26 +7,28 @@ use stderrlog::LogLevelNum;
 
 mod config_file;
 mod coredump;
+mod export;
+mod memfaultd_client;
 mod sync;
 mod write_attributes;
 
-use crate::mar::MarEntryBuilder;
 use crate::{
     cli::version::format_version,
-    mar::{DeviceAttribute, Metadata},
+    mar::{DeviceAttribute, ExportFormat, Metadata},
     reboot::{write_reboot_reason_and_reboot, RebootReason},
     service_manager::get_service_manager,
 };
+use crate::{mar::MarEntryBuilder, util::output_arg::OutputArg};
 
+use crate::cli::init_logger;
 use crate::cli::memfaultctl::config_file::{set_data_collection, set_developer_mode};
 use crate::cli::memfaultctl::coredump::{trigger_coredump, ErrorStrategy};
+use crate::cli::memfaultctl::export::export;
 use crate::cli::memfaultctl::sync::sync;
 use crate::cli::show_settings::show_settings;
 use crate::config::Config;
 use crate::network::NetworkConfig;
-use eyre::{eyre, Result};
-
-use super::init_logger;
+use eyre::{eyre, Context, Result};
 
 #[derive(FromArgs)]
 /// A command line utility to adjust memfaultd configuration and trigger specific events for
@@ -85,6 +87,7 @@ enum MemfaultctlCommand {
     DisableDataCollection(DisableDataCollectionArgs),
     EnableDevMode(EnableDevModeArgs),
     DisableDevMode(DisableDevModeArgs),
+    Export(ExportArgs),
     Reboot(RebootArgs),
     RequestMetrics(RequestMetricsArgs),
     ShowSettings(ShowSettingsArgs),
@@ -112,6 +115,22 @@ struct EnableDevModeArgs {}
 /// disable developer mode and restart memfaultd
 #[argh(subcommand, name = "disable-dev-mode")]
 struct DisableDevModeArgs {}
+
+#[derive(FromArgs)]
+/// export (and delete) memfault data
+#[argh(subcommand, name = "export")]
+pub struct ExportArgs {
+    #[argh(switch, short = 'n')]
+    /// do not delete the data from memfault mar_staging
+    do_not_delete: bool,
+    #[argh(option, short = 'o')]
+    /// where to write the MAR data (or '-' for standard output)
+    output: OutputArg,
+
+    #[argh(option, short = 'f', default = "ExportFormat::Mar")]
+    /// output format (mar, chunk or chunk-wrapped)
+    format: ExportFormat,
+}
 
 #[derive(FromArgs)]
 /// register reboot reason and call 'reboot'
@@ -198,6 +217,7 @@ pub fn main() -> Result<()> {
         MemfaultctlCommand::DisableDevMode(_) => {
             set_developer_mode(&mut config, &service_manager, false)
         }
+        MemfaultctlCommand::Export(args) => export(&config, &args).wrap_err("Error exporting data"),
         MemfaultctlCommand::Reboot(args) => {
             let reason = RebootReason::from_repr(args.reason).ok_or_else(|| {
                 eyre!(

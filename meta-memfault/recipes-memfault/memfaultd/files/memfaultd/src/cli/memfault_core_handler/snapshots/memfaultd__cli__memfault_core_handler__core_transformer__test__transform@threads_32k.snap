@@ -1,0 +1,101 @@
+---
+source: memfaultd/src/cli/memfault_core_handler/core_transformer.rs
+expression: segments
+---
+[
+    (
+        ProgramHeader {
+            p_type: "PT_NOTE",
+            p_flags: 0x0,
+            p_offset: 0x660,
+            p_vaddr: 0x0,
+            p_paddr: 0x0,
+            p_filesz: 0xdec,
+            p_memsz: 0x0,
+            p_align: 0,
+        },
+        Buffer(
+            [],
+        ),
+    ),
+    (
+        ProgramHeader {
+            p_type: "PT_LOAD",
+            p_flags: 0x0,
+            p_offset: 0x0,
+            p_vaddr: 0x5587ae8bd000,
+            p_paddr: 0x0,
+            p_filesz: 0x39c,
+            p_memsz: 0x39c,
+            p_align: 8,
+        },
+        ProcessMemory,
+    ),
+    (
+        ProgramHeader {
+            p_type: "PT_LOAD",
+            p_flags: 0x0,
+            p_offset: 0x0,
+            p_vaddr: 0x7f6e38cb4000,
+            p_paddr: 0x0,
+            p_filesz: 0x3b4,
+            p_memsz: 0x3b4,
+            p_align: 8,
+        },
+        ProcessMemory,
+    ),
+    (
+        ProgramHeader {
+            p_type: "PT_LOAD",
+            p_flags: 0x0,
+            p_offset: 0x0,
+            p_vaddr: 0x7f6e38e99000,
+            p_paddr: 0x0,
+            p_filesz: 0x30c,
+            p_memsz: 0x30c,
+            p_align: 8,
+        },
+        ProcessMemory,
+    ),
+    (
+        ProgramHeader {
+            p_type: "PT_LOAD",
+            p_flags: 0x0,
+            p_offset: 0x0,
+            p_vaddr: 0x7f6e38f7a000,
+            p_paddr: 0x0,
+            p_filesz: 0x25c,
+            p_memsz: 0x25c,
+            p_align: 8,
+        },
+        ProcessMemory,
+    ),
+    (
+        ProgramHeader {
+            p_type: "PT_LOAD",
+            p_flags: 0x0,
+            p_offset: 0x0,
+            p_vaddr: 0x7ffe4ba7a3c0,
+            p_paddr: 0x0,
+            p_filesz: 0x1c40,
+            p_memsz: 0x1c40,
+            p_align: 8,
+        },
+        ProcessMemory,
+    ),
+    (
+        ProgramHeader {
+            p_type: "PT_NOTE",
+            p_flags: 0x0,
+            p_offset: 0x0,
+            p_vaddr: 0x0,
+            p_paddr: 0x0,
+            p_filesz: 0x48,
+            p_memsz: 0x0,
+            p_align: 0,
+        },
+        Buffer(
+            [],
+        ),
+    ),
+]

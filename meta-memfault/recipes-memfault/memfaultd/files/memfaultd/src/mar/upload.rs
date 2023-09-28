@@ -58,11 +58,11 @@ fn applicable_resolution(metadata: &Metadata, sampling: &Sampling) -> Resolution
 }
 
 /// Describes the contents for a single MAR file to upload.
-struct MarZipContents {
+pub struct MarZipContents {
     /// All the MAR entry directories to to be included in this file.
-    entry_paths: Vec<PathBuf>,
+    pub entry_paths: Vec<PathBuf>,
     /// All the ZipEntryInfos to be included in this file.
-    zip_infos: Vec<ZipEntryInfo>,
+    pub zip_infos: Vec<ZipEntryInfo>,
 }
 
 /// Gather MAR entries and associated ZipEntryInfos, consuming items from the iterator.
@@ -70,7 +70,7 @@ struct MarZipContents {
 /// Return a list of MarZipContents, each containing the list of folders that are included in the
 /// zip (and can be deleted after upload) and the list of ZipEntryInfos.
 /// Invalid folders will not trigger an error and they will not be included in the returned lists.
-fn gather_mar_entries_to_zip(
+pub fn gather_mar_entries_to_zip(
     entries: &mut impl Iterator<Item = Result<MarEntry>>,
     max_zip_size: usize,
 ) -> Vec<MarZipContents> {

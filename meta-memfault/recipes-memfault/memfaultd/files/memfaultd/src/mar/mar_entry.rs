@@ -7,12 +7,12 @@
 //!
 //! A MAR entry is a folder with a unique name, a manifest and some optional attachments.
 //!
-use std::collections::VecDeque;
 use std::fs::{read_dir, File};
 use std::io::BufReader;
 use std::iter::once;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::{collections::VecDeque, time::SystemTime};
 
 use eyre::{eyre, Context, Result};
 use uuid::Uuid;
@@ -53,19 +53,26 @@ impl MarEntry {
     /// contain a manifest.json file.  To avoid synchronization issue, writers of
     /// MAR entries should write to manifest.lock and rename manifest.json when
     /// they are done (atomic operation).
-    pub fn iterate_from_container(mar_staging: &Path) -> Result<MarEntryIterator> {
-        let entries = read_dir(mar_staging)
+    pub fn iterate_from_container(
+        mar_staging: &Path,
+    ) -> Result<impl Iterator<Item = Result<MarEntry>>> {
+        let mut entries: Vec<(PathBuf, Option<SystemTime>)> = read_dir(mar_staging)
             .wrap_err(eyre!(
                 "Unable to open MAR staging area: {}",
                 mar_staging.display()
             ))?
             .filter_map(std::io::Result::ok)
-            .map(|d| d.path())
             // Keep only directories
-            .filter(|p| p.is_dir());
+            .filter(|d| d.path().is_dir())
+            // Collect the creation time so we can sort them
+            .map(|d| (d.path(), d.metadata().and_then(|m| m.created()).ok()))
+            .collect();
+
+        // Sort entries from oldest to newest
+        entries.sort_by(|a, b| a.1.cmp(&b.1));
 
         Ok(MarEntryIterator {
-            directories: entries.collect(),
+            directories: entries.into_iter().map(|e| e.0).collect(),
         })
     }
 
