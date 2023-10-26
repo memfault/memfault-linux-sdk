@@ -26,7 +26,7 @@ INITSCRIPT_NAME = "memfaultd"
 # and swupdate (70).
 INITSCRIPT_PARAMS = "defaults 15"
 
-DEPENDS = "vim-native cmake-native zlib"
+DEPENDS = ""
 
 PACKAGECONFIG ??= "coredump collectd swupdate logging"
 PACKAGECONFIG[coredump] = ""

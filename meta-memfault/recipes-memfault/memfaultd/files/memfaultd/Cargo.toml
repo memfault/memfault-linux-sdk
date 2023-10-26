@@ -27,6 +27,7 @@ goblin = { version = "0.7", optional = true, default-features = false, features 
 libc = "0.2.138"
 log = "0.4.17"
 prctl = { version = "1.0.0", optional = true}
+psm = { version = "0.1.21", optional = true }
 reqwest = { version = "0.11", default-features = false, features = ["blocking", "json" ] }
 rmp-serde = { version = "1.1.1", optional = true }
 rmpv = { version = "1.0.0", optional = true }
@@ -57,6 +58,9 @@ tiny_http = {version = "0.12.0" }
 crc = "3.0.1"
 crc-catalog = "2.2.0"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+procfs = { version = "0.15.1", optional = true }
+
 [dev-dependencies]
 tempfile = "3.3.0"
 mockall = "0.11.3"
@@ -68,7 +72,16 @@ hex = "0.4.3"
 
 [features]
 default = ["coredump", "collectd", "swupdate", "logging", "systemd", "rust-tls" ]
-coredump = ["memfaultc-sys/coredump", "dep:prctl", "dep:kernlog", "dep:ciborium", "dep:goblin", "dep:scroll"]
+coredump = [
+    "memfaultc-sys/coredump",
+    "dep:prctl",
+    "dep:procfs",
+    "dep:psm",
+    "dep:kernlog",
+    "dep:ciborium",
+    "dep:goblin",
+    "dep:scroll"
+]
 collectd = []
 swupdate = ["memfaultc-sys/swupdate"]
 logging = ["dep:governor", "dep:rmp-serde", "dep:rmpv"]

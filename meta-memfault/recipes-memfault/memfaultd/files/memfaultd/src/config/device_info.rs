@@ -4,10 +4,17 @@
 use std::fmt;
 use std::process::Command;
 
+use crate::config::utils::{
+    device_id_is_valid, hardware_version_is_valid, software_type_is_valid,
+    software_version_is_valid,
+};
+
 #[derive(Debug)]
 pub struct DeviceInfo {
     pub device_id: String,
     pub hardware_version: String,
+    pub software_version: Option<String>,
+    pub software_type: Option<String>,
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -29,6 +36,8 @@ impl DeviceInfo {
         let mut di = DeviceInfo {
             device_id: String::new(),
             hardware_version: String::new(),
+            software_version: None,
+            software_type: None,
         };
 
         for line in std::str::from_utf8(output)?.lines() {
@@ -36,6 +45,8 @@ impl DeviceInfo {
                 match key {
                     "MEMFAULT_DEVICE_ID" => di.device_id = value.into(),
                     "MEMFAULT_HARDWARE_VERSION" => di.hardware_version = value.into(),
+                    "MEMFAULT_SOFTWARE_VERSION" => di.software_version = Some(value.into()),
+                    "MEMFAULT_SOFTWARE_TYPE" => di.software_type = Some(value.into()),
                     _ => warnings.push(DeviceInfoWarning {
                         line: line.into(),
                         message: "Unknown variable.",
@@ -48,18 +59,37 @@ impl DeviceInfo {
                 })
             }
         }
-        match (
-            di.device_id.is_empty(),
-            di.hardware_version.is_empty(),
-            !device_id_is_valid(&di.device_id),
-        ) {
-            (true, true, _) => Err(eyre::eyre!(
-                "Missing both MEMFAULT_DEVICE_ID and MEMFAULT_HARDWARE_VERSION."
-            )),
-            (false, true, _) => Err(eyre::eyre!("Missing MEMFAULT_HARDWARE_VERSION.")),
-            (true, false, _) => Err(eyre::eyre!("Missing MEMFAULT_DEVICE_ID.")),
-            (_, _, true) => Err(eyre::eyre!("Invalid MEMFAULT_DEVICE_ID. Must be 1-128 characters long and contain only a-z, A-Z, 0-9, - and _")),
-            (false, false, false) => Ok((di, warnings)),
+
+        // Create vector of keys whose values have invalid characters
+        let validation_errors: Vec<String> = [
+            (
+                "MEMFAULT_HARDWARE_VERSION",
+                hardware_version_is_valid(&di.hardware_version),
+            ),
+            (
+                "MEMFAULT_SOFTWARE_VERSION",
+                di.software_version
+                    .as_ref()
+                    .map_or(Ok(()), |swv| software_version_is_valid(swv)),
+            ),
+            (
+                "MEMFAULT_SOFTWARE_TYPE",
+                di.software_type
+                    .as_ref()
+                    .map_or(Ok(()), |swt| software_type_is_valid(swt)),
+            ),
+            ("MEMFAULT_DEVICE_ID", device_id_is_valid(&di.device_id)),
+        ]
+        .iter()
+        .filter_map(|(key, result)| match result {
+            Err(e) => Some(format!("  Invalid {}: {}", key, e)),
+            _ => None,
+        })
+        .collect();
+
+        match validation_errors.is_empty() {
+            true => Ok((di, warnings)),
+            false => Err(eyre::eyre!("\n{}", validation_errors.join("\n"))),
         }
     }
 
@@ -69,19 +99,23 @@ impl DeviceInfo {
     }
 }
 
-fn device_id_is_valid(id: &str) -> bool {
-    (1..=128).contains(&id.len())
-        && id
-            .chars()
-            .all(|c| matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_'))
-}
-
 #[cfg(test)]
 impl DeviceInfo {
     pub fn test_fixture() -> Self {
         DeviceInfo {
             device_id: "001".to_owned(),
             hardware_version: "DVT".to_owned(),
+            software_version: None,
+            software_type: None,
+        }
+    }
+
+    pub fn test_fixture_with_overrides(software_version: &str, software_type: &str) -> Self {
+        DeviceInfo {
+            device_id: "001".to_owned(),
+            hardware_version: "DVT".to_owned(),
+            software_version: Some(software_version.into()),
+            software_type: Some(software_type.into()),
         }
     }
 }
@@ -117,21 +151,26 @@ mod tests {
     }
 
     #[rstest]
-    // Minimum 1 character
-    #[case("A", true)]
-    // Allowed characters
-    #[case(
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz_-",
-        true
-    )]
-    // Disallowed characters
-    #[case("DEMO.1234", false)]
-    #[case("DEMO 1234", false)]
-    // Too short (0 characters)
-    #[case("", false)]
-    // Too long (129 characters)
-    #[case("012345679012345679012345679012345679012345679012345679012345679012345679012345679012345679012345679012345679012345678901234567890", false)]
-    fn device_id_is_valid_works(#[case] device_id: &str, #[case] expected: bool) {
-        assert_eq!(device_id_is_valid(device_id), expected);
+    // Override software version
+    #[case(b"MEMFAULT_DEVICE_ID=123ABC\nMEMFAULT_HARDWARE_VERSION=1.0.0\nMEMFAULT_SOFTWARE_VERSION=1.2.3\n", Some("1.2.3".into()), None)]
+    // Override software type
+    #[case(b"MEMFAULT_DEVICE_ID=123ABC\nMEMFAULT_HARDWARE_VERSION=1.0.0\nMEMFAULT_SOFTWARE_TYPE=test\n", None, Some("test".into()))]
+    // Override both software version and type
+    #[case(b"MEMFAULT_DEVICE_ID=123ABC\nMEMFAULT_HARDWARE_VERSION=1.0.0\nMEMFAULT_SOFTWARE_VERSION=1.2.3\nMEMFAULT_SOFTWARE_TYPE=test\n", Some("1.2.3".into()), Some("test".into()))]
+    fn test_with_sw_version_and_type(
+        #[case] output: &[u8],
+        #[case] sw_version: Option<String>,
+        #[case] sw_type: Option<String>,
+    ) {
+        let r = DeviceInfo::parse(output);
+        assert!(r.is_ok());
+
+        let (di, warnings) = r.unwrap();
+        assert_eq!(di.device_id, "123ABC");
+        assert_eq!(di.hardware_version, "1.0.0");
+        assert_eq!(di.software_version, sw_version);
+        assert_eq!(di.software_type, sw_type);
+
+        assert_eq!(warnings.len(), 0);
     }
 }

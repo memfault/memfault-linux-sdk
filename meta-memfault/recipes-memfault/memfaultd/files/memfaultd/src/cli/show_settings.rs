@@ -45,6 +45,12 @@ fn dump_device_info(writer: &mut impl Write, device: &Device) -> Result<()> {
         "  MEMFAULT_HARDWARE_VERSION={}",
         device_info.hardware_version
     )?;
+    if let Some(sw_version) = device_info.software_version.as_ref() {
+        writeln!(writer, "  MEMFAULT_SOFTWARE_VERSION={}", sw_version)?;
+    }
+    if let Some(sw_type) = device_info.software_type.as_ref() {
+        writeln!(writer, "  MEMFAULT_SOFTWARE_TYPE={}", sw_type)?;
+    }
 
     Ok(())
 }

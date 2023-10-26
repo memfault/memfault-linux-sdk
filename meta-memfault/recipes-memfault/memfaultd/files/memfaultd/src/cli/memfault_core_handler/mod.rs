@@ -8,32 +8,39 @@ mod core_metadata;
 mod core_reader;
 mod core_transformer;
 mod core_writer;
+mod find_dynamic;
 mod find_elf_headers;
 mod find_stack;
 mod memory_range;
+mod procfs;
+mod r_debug;
 #[cfg(test)]
 mod test_utils;
 
+use self::arch::coredump_thread_filter_supported;
 use self::core_reader::CoreReaderImpl;
 use self::core_writer::CoreWriterImpl;
+use self::procfs::{proc_mem_stream, read_proc_cmdline, ProcMapsImpl};
 use self::{core_metadata::CoredumpMetadata, core_transformer::CoreTransformerOptions};
+use crate::cli;
 use crate::config::{Config, CoredumpCompression};
 use crate::mar::manifest::{CompressionAlgorithm, Metadata};
 use crate::mar::mar_entry_builder::MarEntryBuilder;
 use crate::network::NetworkConfig;
 use crate::util::disk_size::get_disk_space;
+use crate::util::io::{ForwardOnlySeeker, StreamPositionTracker};
+use crate::util::persistent_rate_limiter::PersistentRateLimiter;
 use argh::FromArgs;
 use eyre::{eyre, Result, WrapErr};
 use flate2::write::GzEncoder;
-use log::{debug, error, info, warn};
-use memfaultc_sys::coredump::coredump_check_rate_limiter;
+use log::{debug, error, info, warn, LevelFilter};
 use prctl::set_dumpable;
+use std::env::{set_var, var};
+use std::io::BufReader;
+use std::io::BufWriter;
+use std::io::Write;
 use std::path::Path;
 use std::{cmp::min, fs::File};
-use std::{ffi::CString, io::Write};
-use std::{io::BufReader, os::raw::c_int};
-use std::{io::BufWriter, os::unix::ffi::OsStrExt};
-use stderrlog::LogLevelNum;
 use uuid::Uuid;
 
 #[cfg(target_pointer_width = "64")]
@@ -47,8 +54,6 @@ pub use goblin::elf32 as elf;
 
 #[cfg(target_pointer_width = "32")]
 pub type ElfPtrSize = u32;
-
-use super::init_logger;
 
 #[derive(FromArgs)]
 /// Accepts a kernel-generated core.elf from stdin and processes it.
@@ -75,19 +80,14 @@ pub fn main() -> Result<()> {
 
     let args: MemfaultCoreHandlerArgs = argh::from_env();
 
+    let log_level = if args.verbose {
+        LevelFilter::Trace
+    } else {
+        LevelFilter::Info
+    };
     // When the kernel executes a core dump handler, the stdout/stderr go nowhere.
     // Let's log to the kernel log to aid debugging:
-    // We fallback to standard output if verbose mode is enabled or if kernel is not available.
-    if args.verbose {
-        init_logger(if args.verbose {
-            LogLevelNum::Trace
-        } else {
-            LogLevelNum::Info
-        });
-    } else if let Err(e) = kernlog::init() {
-        warn!("Cannot log to kernel logs, falling back to stderr: {}", e);
-        init_logger(LogLevelNum::Info);
-    }
+    init_kernel_logger(log_level);
 
     if let Err(e) = dumpable_result {
         warn!("Failed to set dumpable: {}", e);
@@ -102,25 +102,27 @@ pub fn main() -> Result<()> {
         return Ok(());
     }
 
-    if !config.config_file.enable_dev_mode {
-        let rate_limiter_file_c_string = CString::new(
-            config
-                .coredump_rate_limiter_file_path()
-                .into_os_string()
-                .as_bytes(),
+    let rate_limiter = if !config.config_file.enable_dev_mode {
+        config.coredump_rate_limiter_file_path();
+        let mut rate_limiter = PersistentRateLimiter::load(
+            config.coredump_rate_limiter_file_path(),
+            config.config_file.coredump.rate_limit_count,
+            chrono::Duration::from_std(config.config_file.coredump.rate_limit_duration)?,
         )
-        .expect("No NULs in rate limiter file string.");
-        if !unsafe {
-            coredump_check_rate_limiter(
-                rate_limiter_file_c_string.as_ptr(),
-                config.config_file.coredump.rate_limit_count as c_int,
-                config.config_file.coredump.rate_limit_duration.as_secs() as c_int,
+        .with_context(|| {
+            format!(
+                "Unable to open coredump rate limiter {}",
+                config.coredump_rate_limiter_file_path().display()
             )
-        } {
-            error!("Limit reached, not processing corefile");
+        })?;
+        if !rate_limiter.check() {
+            info!("Coredumps limit reached, not processing corefile");
             return Ok(());
         }
-    }
+        Some(rate_limiter)
+    } else {
+        None
+    };
 
     let max_size = calculate_available_space(&config)?;
     if max_size == 0 {
@@ -135,10 +137,15 @@ pub fn main() -> Result<()> {
     let output_file_name = generate_tmp_file_name(compression);
     let output_file_path = mar_builder.make_attachment_path_in_entry_dir(&output_file_name);
 
-    let metadata = CoredumpMetadata::from(&config);
+    let cmd_line_file_name = format!("/proc/{}/cmdline", args.pid);
+    let mut cmd_line_file = File::open(cmd_line_file_name)?;
+    let cmd_line = read_proc_cmdline(&mut cmd_line_file)?;
+    let metadata = CoredumpMetadata::new(&config, cmd_line);
+    let thread_filter_supported = coredump_thread_filter_supported();
     let transformer_options = CoreTransformerOptions {
         max_size,
         capture_strategy,
+        thread_filter_supported,
     };
 
     let output_file = BufWriter::new(File::create(&output_file_path)?);
@@ -148,8 +155,11 @@ pub fn main() -> Result<()> {
         }
         CoredumpCompression::None => Box::new(output_file),
     };
+    let output_stream = StreamPositionTracker::new(output_stream);
 
-    let core_reader = CoreReaderImpl::new(BufReader::new(std::io::stdin()))?;
+    let input_stream = ForwardOnlySeeker::new(BufReader::new(std::io::stdin()));
+    let proc_maps = ProcMapsImpl::new(args.pid);
+    let core_reader = CoreReaderImpl::new(input_stream)?;
     let core_writer = CoreWriterImpl::new(
         core_reader.elf_header(),
         output_stream,
@@ -161,6 +171,7 @@ pub fn main() -> Result<()> {
         proc_mem_stream(args.pid)?,
         transformer_options,
         metadata,
+        proc_maps,
     )?;
 
     match core_transformer.run_transformer() {
@@ -174,15 +185,14 @@ pub fn main() -> Result<()> {
 
             debug!("New MAR entry generated: {}", mar_entry.path.display());
 
+            if let Some(rate_limiter) = rate_limiter {
+                rate_limiter.save()?;
+            }
+
             Ok(())
         }
         Err(e) => Err(eyre!("Failed to capture coredump: {}", e)),
     }
-}
-
-fn proc_mem_stream(pid: i32) -> Result<File> {
-    let proc_mem_stream = File::open(format!("/proc/{}/mem", pid))?;
-    Ok(proc_mem_stream)
 }
 
 fn generate_tmp_file_name(compression: CoredumpCompression) -> String {
@@ -213,5 +223,19 @@ impl From<CoredumpCompression> for CompressionAlgorithm {
             CoredumpCompression::Gzip => CompressionAlgorithm::Gzip,
             CoredumpCompression::None => CompressionAlgorithm::None,
         }
+    }
+}
+
+fn init_kernel_logger(level: LevelFilter) {
+    // kernlog::init() reads from the KERNLOG_LEVEL to set the level. There's no public interface
+    // to set it otherwise, so: if this environment variable is not set, set it according to the
+    // --verbose flag:
+    if var("KERNLOG_LEVEL").is_err() {
+        set_var("KERNLOG_LEVEL", level.as_str());
+    }
+    // We fallback to standard output if verbose mode is enabled or if kernel is not available.
+    if let Err(e) = kernlog::init() {
+        cli::init_logger(level);
+        warn!("Cannot log to kernel logs, falling back to stderr: {}", e);
     }
 }

@@ -2,6 +2,7 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 use eyre::eyre;
+use log::LevelFilter;
 use std::path::Path;
 use stderrlog::LogLevelNum;
 
@@ -12,10 +13,10 @@ mod memfaultd;
 mod show_settings;
 mod version;
 
-fn init_logger(verbose: LogLevelNum) {
+fn init_logger(level: LevelFilter) {
     stderrlog::new()
         .module("memfaultd")
-        .verbosity(verbose)
+        .verbosity(LogLevelNum::from(level))
         .init()
         .unwrap();
 }

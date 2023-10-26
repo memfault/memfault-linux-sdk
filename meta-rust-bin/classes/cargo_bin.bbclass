@@ -64,6 +64,10 @@ create_cargo_config() {
         echo > ${CARGO_HOME}/config
         echo "[target.${RUST_TARGET}]" >> ${CARGO_HOME}/config
         echo "linker = '${WRAPPER_DIR}/linker-wrapper.sh'" >> ${CARGO_HOME}/config
+
+        # (Rust unstable) - See do_compile below.
+        echo "[host]" >> ${CARGO_HOME}/config
+        echo "linker = '${WRAPPER_DIR}/linker-native-wrapper.sh'" >> ${CARGO_HOME}/config
     fi
 
     echo >> ${CARGO_HOME}/config
@@ -116,11 +120,23 @@ cargo_bin_do_compile() {
     export TARGET_CXX="${WRAPPER_DIR}/cxx-wrapper.sh"
     export CC="${WRAPPER_DIR}/cc-native-wrapper.sh"
     export CXX="${WRAPPER_DIR}/cxx-native-wrapper.sh"
-    export TARGET_LD="${WRAPPER_DIR}/ld-wrapper.sh"
-    export LD="${WRAPPER_DIR}/ld-native-wrapper.sh"
     export PKG_CONFIG_ALLOW_CROSS="1"
     export LDFLAGS=""
     export RUSTFLAGS="${RUSTFLAGS}"
+
+    # When RUST_BUILD == RUST_TARGET, we need to use an unstable Rust feature
+    # to specify different build options for the target and the Host.
+    # The Host configuration is set in do_configure() above.
+    if [ "${RUST_BUILD}" = "${RUST_TARGET}" ]; then
+        export __CARGO_TEST_CHANNEL_OVERRIDE_DO_NOT_USE_THIS="nightly"
+        export CARGO_UNSTABLE_TARGET_APPLIES_TO_HOST="true"
+        export CARGO_UNSTABLE_HOST_CONFIG="true"
+        export CARGO_TARGET_APPLIES_TO_HOST="false"
+
+        # Make sure the cc crate does not use CFLAGS when building for the host.
+        export HOST_CFLAGS=""
+        export HOST_CXXFLAGS=""
+    fi
     bbnote "which rustc:" `which rustc`
     bbnote "rustc --version" `rustc --version`
     bbnote "which cargo:" `which cargo`

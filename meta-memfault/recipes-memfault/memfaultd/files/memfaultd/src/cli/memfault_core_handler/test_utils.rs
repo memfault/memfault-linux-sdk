@@ -3,19 +3,24 @@
 // See License.txt for details
 use crate::cli::memfault_core_handler::core_writer::{CoreWriter, SegmentData};
 use crate::cli::memfault_core_handler::elf;
+use crate::cli::memfault_core_handler::procfs::ProcMaps;
 use elf::{header::Header, program_header::ProgramHeader};
 // NOTE: Using the "universal" (width-agnostic types in the test):
-use goblin::elf::{program_header::PT_LOAD, Elf, ProgramHeader as UniversalProgramHeader};
+use goblin::elf::{
+    program_header::{PF_R, PF_W, PF_X, PT_LOAD},
+    Elf, ProgramHeader as UniversalProgramHeader,
+};
+use procfs::process::{MMPermissions, MMapPath, MemoryMap};
 use std::fs::read;
 use std::io::{Cursor, Error, ErrorKind, Read, Seek, SeekFrom, Take};
 use std::path::Path;
 use take_mut::take;
 
-pub fn build_test_header() -> Header {
+pub fn build_test_header(class: u8, endianness: u8, machine: u16) -> Header {
     let mut e_ident = [0u8; 16];
     e_ident[..elf::header::SELFMAG].copy_from_slice(elf::header::ELFMAG);
-    e_ident[elf::header::EI_CLASS] = elf::header::ELFCLASS64;
-    e_ident[elf::header::EI_DATA] = elf::header::ELFDATA2LSB;
+    e_ident[elf::header::EI_CLASS] = class;
+    e_ident[elf::header::EI_DATA] = endianness;
     e_ident[elf::header::EI_VERSION] = elf::header::EV_CURRENT;
 
     Header {
@@ -24,6 +29,7 @@ pub fn build_test_header() -> Header {
         e_ehsize: elf::header::SIZEOF_EHDR.try_into().unwrap(),
         e_version: elf::header::EV_CURRENT.try_into().unwrap(),
         e_phnum: 0,
+        e_machine: machine,
         e_ident,
         ..Default::default()
     }
@@ -57,6 +63,41 @@ impl<'a> CoreWriter for MockCoreWriter<'a> {
     }
 }
 
+/// A fake `ProcMaps` implementation that uses the memory ranges from PT_LOAD segments.
+pub struct FakeProcMaps {
+    maps: Vec<MemoryMap>,
+}
+
+impl FakeProcMaps {
+    /// Creates a new `FakeProcMaps` from the given core.elf file.
+    pub fn new_from_path<P: AsRef<Path>>(core_elf_path: P) -> eyre::Result<Self> {
+        let data = &read(core_elf_path)?;
+
+        let load_segments = load_segments_from_buffer(data)?;
+        let maps = load_segments
+            .iter()
+            .map(|ph| MemoryMap {
+                address: (ph.p_vaddr, ph.p_vaddr + ph.p_memsz),
+                perms: ph_flags_to_perms(ph.p_flags),
+                // All below is (likely) incorrect, but we cannot get this info from the ELF file:
+                offset: 0,
+                dev: (0, 0),
+                inode: 0,
+                pathname: MMapPath::Other("Unknown".into()),
+                extension: Default::default(),
+            })
+            .collect();
+
+        Ok(Self { maps })
+    }
+}
+
+impl ProcMaps for FakeProcMaps {
+    fn get_process_maps(&mut self) -> eyre::Result<Vec<MemoryMap>> {
+        Ok(self.maps.clone())
+    }
+}
+
 /// A fake `/proc/<pid>/mem` stream that uses the memory contents from PT_LOAD segments of a
 /// core.elf as the data in the `/proc/<pid>/mem` file.
 pub struct FakeProcMem {
@@ -71,18 +112,7 @@ impl FakeProcMem {
         Self::new(data)
     }
     pub fn new(data: Vec<u8>) -> eyre::Result<Self> {
-        let elf = Elf::parse(&data)?;
-        let load_segments: Vec<UniversalProgramHeader> = elf
-            .program_headers
-            .iter()
-            .filter_map(|ph| {
-                if ph.p_type == PT_LOAD {
-                    Some(ph.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let load_segments = load_segments_from_buffer(&data)?;
 
         Ok(FakeProcMem {
             inner: FakeProcMem::make_inner(data, &load_segments[0])?,
@@ -97,7 +127,9 @@ impl FakeProcMem {
         ph: &UniversalProgramHeader,
     ) -> eyre::Result<Take<Cursor<Vec<u8>>>> {
         let mut cursor = Cursor::new(data);
-        cursor.seek(SeekFrom::Start(ph.p_offset))?;
+        // Ignore unnecessary cast here as it is needed on 32-bit systems.
+        #[allow(clippy::unnecessary_cast)]
+        cursor.seek(SeekFrom::Start(ph.p_offset as u64))?;
         Ok(cursor.take(ph.p_filesz))
     }
 
@@ -154,7 +186,10 @@ impl Seek for FakeProcMem {
                     .get_mut()
                     .seek(SeekFrom::Start(ph.p_offset + vaddr - ph.p_vaddr))
             }
-            None => Err(Error::new(ErrorKind::Other, "Invalid seek position")),
+            None => Err(Error::new(
+                ErrorKind::Other,
+                format!("Invalid seek position: {:#x}", vaddr),
+            )),
         }
     }
 
@@ -163,4 +198,34 @@ impl Seek for FakeProcMem {
         self.file_offset_to_vaddr(inner_pos)
             .ok_or_else(|| Error::new(ErrorKind::Other, "Invalid stream position"))
     }
+}
+
+fn load_segments_from_buffer(data: &[u8]) -> eyre::Result<Vec<UniversalProgramHeader>> {
+    let elf = Elf::parse(data)?;
+    let load_segments: Vec<UniversalProgramHeader> = elf
+        .program_headers
+        .iter()
+        .filter_map(|ph| {
+            if ph.p_type == PT_LOAD {
+                Some(ph.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+    Ok(load_segments)
+}
+
+fn ph_flags_to_perms(flags: u32) -> MMPermissions {
+    let mut perms = MMPermissions::empty();
+    if flags & PF_R != 0 {
+        perms |= MMPermissions::READ;
+    }
+    if flags & PF_W != 0 {
+        perms |= MMPermissions::WRITE;
+    }
+    if flags & PF_X != 0 {
+        perms |= MMPermissions::EXECUTE;
+    }
+    perms
 }

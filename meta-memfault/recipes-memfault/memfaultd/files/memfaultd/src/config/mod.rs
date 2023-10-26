@@ -26,6 +26,7 @@ use eyre::{Context, Result};
 mod config_file;
 mod device_config;
 mod device_info;
+mod utils;
 
 /// Container of the entire memfaultd configuration.
 /// Implement `From<Config>` trait to initialize module specific configuration (see `NetworkConfig` for example).
@@ -153,6 +154,20 @@ impl Config {
             .get()
             .clone()
     }
+
+    pub fn software_version(&self) -> &str {
+        match self.device_info.software_version.as_ref() {
+            Some(sw_version) => sw_version.as_ref(),
+            None => self.config_file.software_version.as_ref(),
+        }
+    }
+
+    pub fn software_type(&self) -> &str {
+        match self.device_info.software_type.as_ref() {
+            Some(sw_type) => sw_type.as_ref(),
+            None => self.config_file.software_type.as_ref(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -160,6 +175,17 @@ impl Config {
     pub fn test_fixture() -> Self {
         Config {
             device_info: DeviceInfo::test_fixture(),
+            config_file: MemfaultdConfig::test_fixture(),
+            config_file_path: PathBuf::from("test_fixture.conf"),
+            cached_device_config: Arc::new(RwLock::new(DiskBacked::from_path(&PathBuf::from(
+                "/dev/null",
+            )))),
+        }
+    }
+
+    pub fn test_fixture_with_info_overrides(software_version: &str, software_type: &str) -> Self {
+        Config {
+            device_info: DeviceInfo::test_fixture_with_overrides(software_version, software_type),
             config_file: MemfaultdConfig::test_fixture(),
             config_file_path: PathBuf::from("test_fixture.conf"),
             cached_device_config: Arc::new(RwLock::new(DiskBacked::from_path(&PathBuf::from(
@@ -199,6 +225,14 @@ mod tests {
         config.config_file.tmp_dir = Some(AbsolutePath::try_from(abs_path.clone()).unwrap());
 
         assert_eq!(config.tmp_dir(), abs_path);
+    }
+
+    #[test]
+    fn test_info_overrides_file() {
+        let config = Config::test_fixture_with_info_overrides("1.0.0-overriden", "overriden-type");
+
+        assert_eq!(config.software_version(), "1.0.0-overriden");
+        assert_eq!(config.software_type(), "overriden-type");
     }
 
     #[rstest]

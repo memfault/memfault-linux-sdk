@@ -4,46 +4,55 @@
 use std::io::{Read, Seek, SeekFrom};
 use std::mem::size_of;
 
-use crate::cli::memfault_core_handler::core_elf_note::{iterate_elf_notes, ElfNote, MappedFile};
+use crate::cli::memfault_core_handler::auxv::AuxvUint;
+use crate::cli::memfault_core_handler::core_elf_note::{iterate_elf_notes, ElfNote};
 use crate::cli::memfault_core_handler::core_metadata::{write_memfault_note, CoredumpMetadata};
 use crate::cli::memfault_core_handler::core_reader::CoreReader;
 use crate::cli::memfault_core_handler::core_writer::{CoreWriter, SegmentData};
 use crate::cli::memfault_core_handler::elf;
+use crate::cli::memfault_core_handler::find_dynamic::find_dynamic_linker_ranges;
+use crate::cli::memfault_core_handler::find_elf_headers::find_elf_headers_and_build_id_note_ranges;
+use crate::cli::memfault_core_handler::find_stack::find_stack;
 use crate::cli::memfault_core_handler::memory_range::{merge_memory_ranges, MemoryRange};
+use crate::cli::memfault_core_handler::procfs::ProcMaps;
 use crate::cli::memfault_core_handler::ElfPtrSize;
 use crate::config::CoredumpCaptureStrategy;
 
-use crate::cli::memfault_core_handler::find_elf_headers::find_elf_headers_and_build_id_note_ranges;
-use crate::cli::memfault_core_handler::find_stack::find_stack;
 use elf::program_header::{ProgramHeader, PT_LOAD, PT_NOTE};
 use eyre::{eyre, Result};
-use log::warn;
+use libc::AT_PHDR;
+use log::{debug, warn};
+use procfs::process::MemoryMap;
 
 #[derive(Debug)]
 pub struct CoreTransformerOptions {
     pub max_size: usize,
     pub capture_strategy: CoredumpCaptureStrategy,
+    pub thread_filter_supported: bool,
 }
 
 /// Reads segments from core elf stream and memory stream and builds a core new elf file.
-pub struct CoreTransformer<R, W, P>
+pub struct CoreTransformer<R, W, P, M>
 where
     R: CoreReader,
     W: CoreWriter,
     P: Read + Seek,
+    M: ProcMaps,
 {
     core_reader: R,
     core_writer: W,
     proc_mem_stream: P,
     metadata: CoredumpMetadata,
     options: CoreTransformerOptions,
+    proc_maps: M,
 }
 
-impl<R, W, P> CoreTransformer<R, W, P>
+impl<R, W, P, M> CoreTransformer<R, W, P, M>
 where
     R: CoreReader,
     W: CoreWriter,
     P: Read + Seek,
+    M: ProcMaps,
 {
     /// Creates an instance of `CoreTransformer` from an input stream and output stream
     pub fn new(
@@ -52,6 +61,7 @@ where
         proc_mem_stream: P,
         options: CoreTransformerOptions,
         metadata: CoredumpMetadata,
+        proc_maps: M,
     ) -> Result<Self> {
         Ok(Self {
             core_reader,
@@ -59,6 +69,7 @@ where
             proc_mem_stream,
             metadata,
             options,
+            proc_maps,
         })
     }
 
@@ -76,7 +87,17 @@ where
                 self.kernel_selection_segments(&program_headers)
             }
             CoredumpCaptureStrategy::Threads { max_thread_size } => {
-                self.threads_segments(&program_headers, &all_notes, max_thread_size)
+                // Fallback to kernel selection if thread filtering is not supported.
+                // Support is dictated by whether we have a definition for the platform
+                // user regs. See arch.rs for more details.
+                if self.options.thread_filter_supported {
+                    let mapped_ranges = self.proc_maps.get_process_maps()?;
+                    self.threads_segments(&mapped_ranges, &all_notes, max_thread_size)
+                } else {
+                    // Update metadata so capture strategy is reflected properly in the memfault note.
+                    self.metadata.capture_strategy = CoredumpCaptureStrategy::KernelSelection;
+                    self.kernel_selection_segments(&program_headers)
+                }
             }
         };
 
@@ -131,46 +152,71 @@ where
     /// any mandatory segments (build id notes, r_debug, etc.).
     fn threads_segments(
         &mut self,
-        program_headers: &[ProgramHeader],
+        memory_maps: &[MemoryMap],
         all_notes: &[(&ProgramHeader, Vec<u8>)],
         max_thread_size: usize,
     ) -> Vec<ProgramHeader> {
+        let memory_maps_ranges: Vec<MemoryRange> =
+            memory_maps.iter().map(MemoryRange::from).collect();
+
         let parsed_notes = all_notes
             .iter()
             .flat_map(|(_, data)| iterate_elf_notes(data))
             .collect::<Vec<_>>();
 
         let mut mem_ranges = Vec::new();
+        let mut phdr_vaddr = None;
+
         for note in &parsed_notes {
             match note {
                 ElfNote::ProcessStatus(s) => {
-                    if let Some(stack) = find_stack(&s.pr_reg, program_headers, max_thread_size) {
+                    if let Some(stack) = find_stack(&s.pr_reg, &memory_maps_ranges, max_thread_size)
+                    {
                         mem_ranges.push(stack);
                     } else {
                         warn!("Failed to collect stack for thread: {}", s.pr_pid);
                     }
                 }
-                ElfNote::File(f) => {
-                    mem_ranges.extend(f.iter().filter(|f| f.page_offset == 0).flat_map(|file| {
-                        match self.elf_metadata_ranges_for_mapped_file(file) {
-                            Ok(ranges) => ranges,
-                            Err(e) => {
-                                warn!(
-                                    "Failed to collect metadata for {} @ {:#x}: {}",
-                                    file.path
-                                        .map(|p| p.display().to_string())
-                                        .unwrap_or_else(|| "???".into()),
-                                    file.start_addr,
-                                    e
-                                );
-                                vec![]
-                            }
-                        }
-                    }));
+                ElfNote::Auxv(auxv) => {
+                    phdr_vaddr = auxv.find_value(AT_PHDR as AuxvUint);
                 }
-                _ => { /* TODO */ }
+                _ => {}
             }
         }
+
+        mem_ranges.extend(
+            memory_maps
+                .iter()
+                .filter(|mmap| mmap.offset == 0)
+                .flat_map(
+                    |mmap| match self.elf_metadata_ranges_for_mapped_file(mmap.address.0) {
+                        Ok(ranges) => ranges,
+                        Err(e) => {
+                            debug!(
+                                "Failed to collect metadata for {:?} @ {:#x}: {}",
+                                mmap.pathname, mmap.address.0, e
+                            );
+                            vec![]
+                        }
+                    },
+                ),
+        );
+
+        match phdr_vaddr {
+            Some(phdr_vaddr) => {
+                if let Err(e) = find_dynamic_linker_ranges(
+                    &mut self.proc_mem_stream,
+                    phdr_vaddr,
+                    &memory_maps_ranges,
+                    &mut mem_ranges,
+                ) {
+                    warn!("Failed to collect dynamic linker ranges: {}", e);
+                }
+            }
+            None => {
+                warn!("Missing AT_PHDR auxv entry");
+            }
+        };
 
         // Merge overlapping memory ranges and turn them into PT_LOAD program headers. As a
         // side-effect, this will also sort the program headers by vaddr.
@@ -178,14 +224,15 @@ where
         merged_ranges.into_iter().map(ProgramHeader::from).collect()
     }
 
-    fn elf_metadata_ranges_for_mapped_file(
-        &mut self,
-        file: &MappedFile,
-    ) -> Result<Vec<MemoryRange>> {
-        let vaddr_base = file.start_addr as ElfPtrSize;
+    fn elf_metadata_ranges_for_mapped_file(&mut self, vaddr_base: u64) -> Result<Vec<MemoryRange>> {
+        // Ignore unnecessary cast here as it is needed on 32-bit systems.
+        #[allow(clippy::unnecessary_cast)]
         self.proc_mem_stream
             .seek(SeekFrom::Start(vaddr_base as u64))?;
-        find_elf_headers_and_build_id_note_ranges(vaddr_base, &mut self.proc_mem_stream)
+        find_elf_headers_and_build_id_note_ranges(
+            vaddr_base as ElfPtrSize,
+            &mut self.proc_mem_stream,
+        )
     }
 
     /// Check if the output file size exceeds the max size available
@@ -235,7 +282,9 @@ impl From<MemoryRange> for ProgramHeader {
 
 #[cfg(test)]
 mod test {
-    use crate::cli::memfault_core_handler::test_utils::{FakeProcMem, MockCoreWriter};
+    use crate::cli::memfault_core_handler::test_utils::{
+        FakeProcMaps, FakeProcMem, MockCoreWriter,
+    };
     use crate::test_utils::setup_logger;
     use crate::{
         cli::memfault_core_handler::core_reader::CoreReaderImpl, test_utils::set_snapshot_suffix,
@@ -248,20 +297,28 @@ mod test {
     use super::*;
 
     #[rstest]
-    #[case("kernel_selection", CoredumpCaptureStrategy::KernelSelection)]
-    #[case("threads_32k", CoredumpCaptureStrategy::Threads { max_thread_size: 32 * 1024 })]
+    #[case("kernel_selection", CoredumpCaptureStrategy::KernelSelection, true)]
+    #[case("threads_32k", CoredumpCaptureStrategy::Threads { max_thread_size: 32 * 1024 }, true)]
+    #[case(
+        "threads_32k_no_filter_support",
+        CoredumpCaptureStrategy::Threads { max_thread_size: 32 * 1024 },
+        false
+    )]
     fn test_transform(
         #[case] test_case_name: &str,
         #[case] capture_strategy: CoredumpCaptureStrategy,
+        #[case] thread_filter_supported: bool,
         _setup_logger: (),
     ) {
         let input_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("src/cli/memfault_core_handler/fixtures/elf-core-runtime-ld-paths.elf");
         let input_stream = File::open(&input_path).unwrap();
         let proc_mem_stream = FakeProcMem::new_from_path(&input_path).unwrap();
+        let proc_maps = FakeProcMaps::new_from_path(&input_path).unwrap();
         let opts = CoreTransformerOptions {
             max_size: 1024 * 1024,
             capture_strategy,
+            thread_filter_supported,
         };
         let metadata = CoredumpMetadata {
             device_id: "12345678".to_string(),
@@ -270,6 +327,8 @@ mod test {
             software_version: "1.0.0".to_string(),
             sdk_version: "SDK_VERSION".to_string(),
             captured_time_epoch_s: 1234,
+            cmd_line: "binary -a -b -c".to_string(),
+            capture_strategy,
         };
 
         let core_reader = CoreReaderImpl::new(input_stream).unwrap();
@@ -281,6 +340,7 @@ mod test {
             proc_mem_stream,
             opts,
             metadata,
+            proc_maps,
         )
         .unwrap();
 
