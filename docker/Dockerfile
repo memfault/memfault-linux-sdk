@@ -1,4 +1,4 @@
-FROM ubuntu:kinetic
+FROM ubuntu:jammy
 
 # **NOTE: DO NOT PUT ANYTHING SECRET / CONFIDENTIAL IN THE DOCKER IMAGE** The
 # image is publically published.
@@ -24,16 +24,6 @@ RUN apt-get install -y parted
 # Install pip for python testing dependencies
 RUN apt-get install -y python3-pip
 
-# CppUnit testing dependencies for memfaultd's unit tests
-RUN apt-get install -y \
-    cmake \
-    libsystemd-dev \
-    pkg-config
-
-# On Intel hardware only: Compile and install cpputest (32bit/64bit) and its dependencies
-COPY install-cpputest.sh /
-RUN test "$(uname -m)" = "x86_64" && /install-cpputest.sh && rm -rf /install-cpputest.sh || /bin/true
-
 # Add normal user
 RUN useradd --create-home --gid users --groups sudo --shell /bin/bash build
 RUN sed -i -e 's/^\(%sudo[[:space:]].*\)ALL$/\1NOPASSWD: ALL/' /etc/sudoers
@@ -46,7 +36,7 @@ USER build
 WORKDIR /home/build
 
 RUN echo " \
-    alias q='/home/build/yocto/sources/memfault-linux-sdk/test-scripts/runqemu.py'\n\
+    alias q='/home/build/yocto/sources/memfault-linux-sdk/test_scripts/runqemu.py'\n\
     alias b='bitbake memfault-image'\n\
     alias cc='rm -rf /home/build/yocto/build/conf'\n\
     alias ct='rm -rf /home/build/yocto/build/tmp'\n\
@@ -70,6 +60,5 @@ VOLUME /home/build/memfault-cli-dist
 EXPOSE 5900
 
 COPY entrypoint.sh /
-COPY test.sh /
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["/bin/bash"]

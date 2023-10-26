@@ -3,7 +3,6 @@
 // See License.txt for details
 use argh::{FromArgs, TopLevelCommand};
 use std::path::Path;
-use stderrlog::LogLevelNum;
 
 mod config_file;
 mod coredump;
@@ -29,6 +28,7 @@ use crate::cli::show_settings::show_settings;
 use crate::config::Config;
 use crate::network::NetworkConfig;
 use eyre::{eyre, Context, Result};
+use log::LevelFilter;
 
 #[derive(FromArgs)]
 /// A command line utility to adjust memfaultd configuration and trigger specific events for
@@ -192,9 +192,9 @@ pub fn main() -> Result<()> {
     let args: MemfaultctlArgs = from_env();
 
     init_logger(if args.verbose {
-        LogLevelNum::Trace
+        LevelFilter::Trace
     } else {
-        LogLevelNum::Info
+        LevelFilter::Info
     });
 
     let config_path = args.config_file.as_ref().map(Path::new);

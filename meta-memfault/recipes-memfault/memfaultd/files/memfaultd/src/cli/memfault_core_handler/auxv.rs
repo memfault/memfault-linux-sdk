@@ -1,7 +1,7 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use scroll::{Pread, NATIVE};
+use scroll::Pread;
 use std::fmt::Debug;
 
 #[cfg(target_pointer_width = "64")]
@@ -17,8 +17,8 @@ pub struct Auxv<'a> {
 
 #[derive(Eq, PartialEq, Debug)]
 pub struct AuxvEntry {
-    key: AuxvUint,
-    value: AuxvUint,
+    pub key: AuxvUint,
+    pub value: AuxvUint,
 }
 
 impl<'a> Auxv<'a> {
@@ -28,6 +28,12 @@ impl<'a> Auxv<'a> {
 
     pub fn iter(&'a self) -> AuxvIterator<'a> {
         AuxvIterator::new(self)
+    }
+
+    pub fn find_value(&self, key: AuxvUint) -> Option<AuxvUint> {
+        self.iter()
+            .find(|a| a.key == key as AuxvUint)
+            .map(|a| a.value)
     }
 }
 
@@ -52,11 +58,7 @@ impl<'a> Iterator for AuxvIterator<'a> {
     type Item = AuxvEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut read = || {
-            self.auxv
-                .data
-                .gread_with::<AuxvUint>(&mut self.offset, NATIVE)
-        };
+        let mut read = || self.auxv.data.gread::<AuxvUint>(&mut self.offset);
         match (read(), read()) {
             (Ok(key), Ok(value)) => Some(AuxvEntry { key, value }),
             _ => None,
@@ -88,13 +90,25 @@ mod test {
         vec![AuxvEntry { key: 1, value: 2 }]
     )]
     fn test_auxv_iterator(#[case] values: Vec<AuxvUint>, #[case] expected: Vec<AuxvEntry>) {
-        let mut cursor = Cursor::new(vec![]);
-        for value in values {
-            cursor.iowrite_with::<AuxvUint>(value, NATIVE).unwrap();
-        }
-
-        let buffer = cursor.into_inner();
+        let buffer = make_fixture(values);
         let auxv = Auxv::new(buffer.as_slice());
         assert_eq!(auxv.iter().collect::<Vec<_>>(), expected);
+    }
+
+    #[test]
+    fn test_auxv_find_value() {
+        let buffer = make_fixture(vec![1, 2]);
+        let auxv = Auxv::new(buffer.as_slice());
+        assert!(auxv.find_value(1).is_some());
+        assert!(auxv.find_value(9).is_none());
+    }
+
+    fn make_fixture(values: Vec<AuxvUint>) -> Vec<u8> {
+        let mut cursor = Cursor::new(vec![]);
+        for value in values {
+            cursor.iowrite::<AuxvUint>(value).unwrap();
+        }
+
+        cursor.into_inner()
     }
 }

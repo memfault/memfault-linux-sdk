@@ -3,9 +3,10 @@
 // See License.txt for details
 use crate::cli::memfault_core_handler::ElfPtrSize;
 use std::cmp::max;
+use std::fmt::{Debug, Formatter};
 
 /// Convenience struct to manage memory address ranges
-#[derive(Debug, PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone)]
 pub struct MemoryRange {
     pub start: ElfPtrSize,
     pub end: ElfPtrSize,
@@ -30,6 +31,19 @@ impl MemoryRange {
 
     pub fn size(&self) -> ElfPtrSize {
         self.end - self.start
+    }
+
+    pub fn contains(&self, addr: ElfPtrSize) -> bool {
+        self.start <= addr && addr < self.end
+    }
+}
+
+impl Debug for MemoryRange {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MemoryRange")
+            .field("start", &format!("{:#x}", self.start))
+            .field("end", &format!("{:#x}", self.end))
+            .finish()
     }
 }
 
@@ -96,5 +110,18 @@ mod test {
     ) {
         let merged = merge_memory_ranges(input);
         assert_eq!(merged, expected);
+    }
+
+    #[rstest]
+    #[case(MemoryRange::new(0x1000, 0x2000), 0x1000, true)]
+    #[case(MemoryRange::new(0x1000, 0x2000), 0x2000, false)]
+    #[case(MemoryRange::new(0x1000, 0x2000), 0x0fff, false)]
+    #[case(MemoryRange::new(0x1000, 0x2000), 0x2001, false)]
+    fn test_memory_range_contains(
+        #[case] input_range: MemoryRange,
+        #[case] addr: ElfPtrSize,
+        #[case] contains: bool,
+    ) {
+        assert_eq!(input_range.contains(addr), contains);
     }
 }

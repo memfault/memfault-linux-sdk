@@ -10,8 +10,8 @@ use crate::config::Config;
 
 pub fn generate_swupdate_config(config: &Config) -> Result<()> {
     let base_url_cstring = CString::new(config.config_file.base_url.clone())?;
-    let software_version_cstring = CString::new(config.config_file.software_version.clone())?;
-    let software_type_cstring = CString::new(config.config_file.software_type.clone())?;
+    let software_version_cstring = CString::new(config.software_version())?;
+    let software_type_cstring = CString::new(config.software_type())?;
     let hardware_version_cstring = CString::new(config.device_info.hardware_version.clone())?;
     let device_id_cstring = CString::new(config.device_info.device_id.clone())?;
     let project_key_cstring = CString::new(config.config_file.project_key.clone())?;

@@ -1,8 +1,12 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex,
+};
+use std::thread::{sleep, spawn};
 use std::time::Duration;
 use std::{fs::create_dir_all, time::Instant};
 
@@ -10,7 +14,7 @@ use eyre::Result;
 use eyre::{eyre, Context};
 use log::{error, info, trace, warn};
 
-use crate::{config::Config, mar::upload::collect_and_upload};
+use crate::{config::Config, mar::upload::collect_and_upload, metrics::InMemoryMetricStore};
 use crate::{http_server::HttpHandler, util::UpdateStatus};
 use crate::{
     http_server::HttpServer,
@@ -92,59 +96,70 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     let mut http_handlers: Vec<Box<dyn HttpHandler>> =
         vec![Box::new(MarExportHandler::new(config.mar_staging_path()))];
 
+    // Metric store
+    let metric_store = Arc::new(Mutex::new(InMemoryMetricStore::new()));
+
     #[cfg(feature = "collectd")]
     {
-        use std::thread::{sleep, spawn};
-
-        let mut collectd_handler = CollectdHandler::new(config.config_file.enable_data_collection);
+        let collectd_handler = CollectdHandler::new(
+            config.config_file.enable_data_collection,
+            metric_store.clone(),
+        );
         http_handlers.push(Box::new(collectd_handler.clone()));
+    }
 
-        // Start a thread to dump the metrics precisely every 60 minutes
-        {
-            let net_config = NetworkConfig::from(&config);
-            let mar_staging_path = config.mar_staging_path();
-            let heartbeat_interval = config.config_file.heartbeat_interval;
+    // Start a thread to dump the metrics precisely every 60 minutes
+    {
+        let net_config = NetworkConfig::from(&config);
+        let mar_staging_path = config.mar_staging_path();
+        let heartbeat_interval = config.config_file.heartbeat_interval;
 
-            let mut collectd_handler = collectd_handler.clone();
-
-            spawn(move || {
-                let mut next_heartbeat = Instant::now() + heartbeat_interval;
-                loop {
-                    while Instant::now() < next_heartbeat {
-                        sleep(next_heartbeat - Instant::now());
-                    }
-                    next_heartbeat += heartbeat_interval;
-                    if let Err(e) =
-                        collectd_handler.dump_metrics_to_mar_entry(&mar_staging_path, &net_config)
-                    {
-                        warn!("Unable to dump metrics: {}", e);
-                    }
+        let metric_store = metric_store.clone();
+        spawn(move || {
+            let mut next_heartbeat = Instant::now() + heartbeat_interval;
+            loop {
+                while Instant::now() < next_heartbeat {
+                    sleep(next_heartbeat - Instant::now());
                 }
-            });
-        }
-        // Schedule a task to dump the metrics when a sync is forced
-        {
-            let net_config = NetworkConfig::from(&config);
-            let mar_staging_path = config.mar_staging_path();
-
-            let mut collectd_handler = collectd_handler.clone();
-
-            sync_tasks.push(Box::new(move |forced| {
-                if forced {
-                    collectd_handler.dump_metrics_to_mar_entry(&mar_staging_path, &net_config)?;
+                next_heartbeat += heartbeat_interval;
+                if let Err(e) = InMemoryMetricStore::dump_metric_store_to_mar_entry(
+                    &metric_store,
+                    &mar_staging_path,
+                    &net_config,
+                ) {
+                    warn!("Unable to dump metrics: {}", e);
                 }
-                Ok(())
-            }));
-        }
-        // Schedule a task to dump the metrics when we are shutting down
-        {
-            let net_config = NetworkConfig::from(&config);
-            let mar_staging_path = config.mar_staging_path();
+            }
+        });
+    }
+    // Schedule a task to dump the metrics when a sync is forced
+    {
+        let net_config = NetworkConfig::from(&config);
+        let mar_staging_path = config.mar_staging_path();
 
-            shutdown_tasks.push(Box::new(move || {
-                collectd_handler.dump_metrics_to_mar_entry(&mar_staging_path, &net_config)
-            }));
-        }
+        let metric_store = metric_store.clone();
+        sync_tasks.push(Box::new(move |forced| match forced {
+            true => InMemoryMetricStore::dump_metric_store_to_mar_entry(
+                &metric_store,
+                &mar_staging_path,
+                &net_config,
+            ),
+            false => Ok(()),
+        }));
+    }
+    // Schedule a task to dump the metrics when we are shutting down
+    {
+        let net_config = NetworkConfig::from(&config);
+        let mar_staging_path = config.mar_staging_path();
+
+        let metric_store = metric_store.clone();
+        shutdown_tasks.push(Box::new(move || {
+            InMemoryMetricStore::dump_metric_store_to_mar_entry(
+                &metric_store,
+                &mar_staging_path,
+                &net_config,
+            )
+        }));
     }
 
     #[cfg(feature = "logging")]
