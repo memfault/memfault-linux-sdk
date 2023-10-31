@@ -3,7 +3,6 @@
 // See License.txt for details
 use std::{
     io::Read,
-    path::Path,
     sync::{Arc, Mutex},
 };
 
@@ -15,7 +14,6 @@ use crate::{
     collectd::payload::Payload,
     http_server::{HttpHandler, HttpHandlerResult},
     metrics::{InMemoryMetricStore, KeyedMetricReading},
-    network::NetworkConfig,
 };
 
 /// A server that listens for collectd JSON pushes and stores them in memory.
@@ -26,35 +24,14 @@ pub struct CollectdHandler {
 }
 
 impl CollectdHandler {
-    pub fn new(data_collection_enabled: bool) -> Self {
+    pub fn new(
+        data_collection_enabled: bool,
+        metrics_store: Arc<Mutex<InMemoryMetricStore>>,
+    ) -> Self {
         CollectdHandler {
             data_collection_enabled,
-            metrics_store: Arc::new(Mutex::new(InMemoryMetricStore::new())),
+            metrics_store,
         }
-    }
-
-    /// Dump the metrics to a MAR entry. This will empty the metrics store.
-    pub fn dump_metrics_to_mar_entry(
-        &mut self,
-        mar_staging_area: &Path,
-        network_config: &NetworkConfig,
-    ) -> Result<()> {
-        // Lock the store only long enough to create the HashMap
-        let mar_builder = self
-            .metrics_store
-            .lock()
-            .unwrap()
-            .write_metrics(mar_staging_area)?;
-
-        // Save to disk after releasing the lock
-        let mar_entry = mar_builder
-            .save(network_config)
-            .map_err(|e| eyre!("Error building MAR entry: {}", e))?;
-        debug!(
-            "Generated MAR entry from CollectD metrics: {}",
-            mar_entry.path.display()
-        );
-        Ok(())
     }
 
     /// Convert a collectd JSON push (Payload[]) into a list of MetricReading.
@@ -107,11 +84,16 @@ impl HttpHandler for CollectdHandler {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use insta::assert_snapshot;
     use rstest::{fixture, rstest};
     use tiny_http::{Method, TestRequest};
 
-    use crate::http_server::{HttpHandler, HttpHandlerResult};
+    use crate::{
+        http_server::{HttpHandler, HttpHandlerResult},
+        metrics::InMemoryMetricStore,
+    };
 
     use super::CollectdHandler;
 
@@ -133,7 +115,7 @@ mod tests {
 
     #[rstest]
     fn ignores_data_when_data_collection_is_off() {
-        let handler = CollectdHandler::new(false);
+        let handler = CollectdHandler::new(false, Arc::new(Mutex::new(InMemoryMetricStore::new())));
         let r = TestRequest::new().with_method(Method::Post).with_path("/v1/collectd").with_body(
             r#"[{"values":[0],"dstypes":["derive"],"dsnames":["value"],"time":1619712000.000,"interval":10.000,"host":"localhost","plugin":"cpu","plugin_instance":"0","type":"cpu","type_instance":"idle"}]"#,
         );
@@ -150,6 +132,6 @@ mod tests {
 
     #[fixture]
     fn handler() -> CollectdHandler {
-        CollectdHandler::new(true)
+        CollectdHandler::new(true, Arc::new(Mutex::new(InMemoryMetricStore::new())))
     }
 }

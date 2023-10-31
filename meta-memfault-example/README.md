@@ -138,7 +138,7 @@ This wic partition table is defined in `wic/memfault.wks`
 
 QEMU is built as part of Yocto and doesn't require any additional packages to be
 installed in the host Docker container. We provide a convenient wrapper script
-around QEMU in [`test-scripts/runqemu.py`](/test-scripts/runqemu.py). You can
+around QEMU in [`test_scripts/runqemu.py`](/test_scripts/runqemu.py). You can
 run that script directly or invoke it using our alias:
 
 ```

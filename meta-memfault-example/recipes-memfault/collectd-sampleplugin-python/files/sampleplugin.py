@@ -17,7 +17,7 @@ import collectd
 path = "/proc/uptime"
 
 
-def config_fn(config):
+def config_fn(config) -> None:  # type: ignore[no-untyped-def]
     for node in config.children:
         key = node.key.lower()
         if key == "path":
@@ -27,7 +27,7 @@ def config_fn(config):
             collectd.info('sampleplugin: unrecognised option "%s"' % (key))
 
 
-def read_fn():
+def read_fn() -> None:
     with open(path, "rb") as f:
         uptime = float(f.readline().split()[0])
 

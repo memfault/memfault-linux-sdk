@@ -19,12 +19,10 @@ from random import random
 
 from statsd import StatsClient
 
-statsd = StatsClient(
-    host="localhost", port=8125, prefix="mypythonapp", maxudpsize=512, ipv6=False
-)
+statsd = StatsClient(host="localhost", port=8125, prefix="mypythonapp", maxudpsize=512, ipv6=False)
 
 while True:
-    statsd.incr("mycount", 3 * random())
-    statsd.gauge("mygauge", 100 * random())
+    statsd.incr("mycount", 3 * random())  # noqa: S311
+    statsd.gauge("mygauge", 100 * random())  # noqa: S311
     with statsd.timer("mytime"):
-        time.sleep(2 * random())
+        time.sleep(2 * random())  # noqa: S311

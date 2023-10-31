@@ -10,8 +10,10 @@ pub mod fs;
 pub mod io;
 pub mod ipc;
 pub mod math;
+pub mod mem;
 pub mod output_arg;
 pub mod path;
+pub mod persistent_rate_limiter;
 pub mod pid_file;
 #[cfg(feature = "logging")]
 pub mod rate_limiter;

@@ -5,7 +5,7 @@ use std::{
     ffi::CString,
     fs::{read_dir, Metadata},
     mem,
-    ops::{Add, AddAssign, Sub},
+    ops::{Add, AddAssign},
     os::unix::prelude::OsStrExt,
     path::Path,
 };
@@ -41,10 +41,24 @@ impl DiskSize {
         }
     }
 
+    pub fn max(a: Self, b: Self) -> Self {
+        Self {
+            bytes: a.bytes.max(b.bytes),
+            inodes: a.inodes.max(b.inodes),
+        }
+    }
+
     pub fn exceeds(&self, other: &Self) -> bool {
         (self.bytes != other.bytes || self.inodes != other.inodes)
             && self.bytes >= other.bytes
             && self.inodes >= other.inodes
+    }
+
+    pub fn saturating_sub(self, other: Self) -> Self {
+        Self {
+            bytes: self.bytes.saturating_sub(other.bytes),
+            inodes: self.inodes.saturating_sub(other.inodes),
+        }
     }
 }
 
@@ -63,17 +77,6 @@ impl AddAssign for DiskSize {
     fn add_assign(&mut self, rhs: Self) {
         self.bytes += rhs.bytes;
         self.inodes += rhs.inodes;
-    }
-}
-
-impl Sub for DiskSize {
-    type Output = Self;
-
-    fn sub(self, other: Self) -> Self {
-        Self {
-            bytes: self.bytes.saturating_sub(other.bytes),
-            inodes: self.inodes.saturating_sub(other.inodes),
-        }
     }
 }
 

@@ -115,12 +115,16 @@ pub struct LogsConfig {
 pub struct MarConfig {
     #[serde(rename = "mar_file_max_size_kib", with = "kib_to_usize")]
     pub mar_file_max_size: usize,
+    #[serde(rename = "mar_entry_max_age_seconds", with = "seconds_to_duration")]
+    pub mar_entry_max_age: Duration,
 }
 
 use flate2::Compression;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
+
+use crate::config::utils::{software_type_is_valid, software_version_is_valid};
 
 pub struct JsonConfigs {
     /// Built-in configuration and System configuration
@@ -132,12 +136,35 @@ pub struct JsonConfigs {
 impl MemfaultdConfig {
     pub fn load(config_path: &Path) -> eyre::Result<MemfaultdConfig> {
         let JsonConfigs {
-            base: mut config,
+            base: mut config_json,
             runtime,
         } = Self::parse_configs(config_path)?;
-        Self::merge_into(&mut config, runtime);
+        Self::merge_into(&mut config_json, runtime);
+
         // Transform the JSON object into a typed structure.
-        Ok(serde_json::from_value(config)?)
+        let config: MemfaultdConfig = serde_json::from_value(config_json)?;
+
+        let validation_errors: Vec<String> = [
+            (
+                "\"software_version\"",
+                software_version_is_valid(&config.software_version),
+            ),
+            (
+                "\"software_type\"",
+                software_type_is_valid(&config.software_type),
+            ),
+        ]
+        .iter()
+        .filter_map(|(key, result)| match result {
+            Err(e) => Some(format!("  Invalid value for {}: {}", key, e)),
+            _ => None,
+        })
+        .collect();
+
+        match validation_errors.is_empty() {
+            true => Ok(config),
+            false => Err(eyre::eyre!("\n{}", validation_errors.join("\n"))),
+        }
     }
 
     /// Parse config file from given path and returns (builtin+system config, runtime config).
@@ -331,10 +358,12 @@ mod test {
     }
 
     #[rstest]
-    fn will_reject_invalid_tmp_path() {
+    #[case("with_invalid_path")]
+    #[case("with_invalid_swt_swv")]
+    fn will_reject_bad_config(#[case] name: &str) {
         let input_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("src/config/test-config")
-            .join("with_invalid_path")
+            .join(name)
             .with_extension("json");
         let result = MemfaultdConfig::load(&input_path);
         assert!(result.is_err());
