@@ -43,8 +43,8 @@ impl From<&Config> for NetworkConfig {
             device_id: config.device_info.device_id.clone(),
             base_url: config.config_file.base_url.clone(),
             hardware_version: config.device_info.hardware_version.clone(),
-            software_type: config.config_file.software_type.clone(),
-            software_version: config.config_file.software_version.clone(),
+            software_type: config.software_type().to_string(),
+            software_version: config.software_version().to_string(),
         }
     }
 }

@@ -1,14 +1,19 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use std::{collections::HashMap, path::Path};
+use eyre::{eyre, Result};
+use log::debug;
+use std::{
+    collections::HashMap,
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
 use crate::{
     mar::{MarEntryBuilder, Metadata},
     metrics::{MetricReading, MetricStringKey, MetricValue},
+    network::NetworkConfig,
 };
-
-use eyre::Result;
 
 mod metric_aggregate;
 use metric_aggregate::MetricAggregate;
@@ -60,12 +65,49 @@ impl InMemoryMetricStore {
     /// Create one heartbeat entry with all the metrics in the store.
     /// All data will be timestamped with current time measured by CollectionTime::now(), effectively
     /// disregarding the collectd timestamps.
-    pub fn write_metrics(&mut self, mar_staging_area: &Path) -> Result<MarEntryBuilder<Metadata>> {
-        Ok(
-            MarEntryBuilder::new(mar_staging_area)?.set_metadata(Metadata::LinuxHeartbeat {
-                metrics: self.take_metrics(),
-            }),
-        )
+    fn prepare_heartbeat(
+        &mut self,
+        mar_staging_area: &Path,
+    ) -> Result<Option<MarEntryBuilder<Metadata>>> {
+        let metrics = self.take_metrics();
+
+        if metrics.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            MarEntryBuilder::new(mar_staging_area)?
+                .set_metadata(Metadata::LinuxHeartbeat { metrics }),
+        ))
+    }
+
+    /// Dump the metrics to a MAR entry. This takes a &Arc<Mutex<MetricStore>>
+    /// and will minimize lock time.
+    /// This will empty the metrics store.
+    pub fn dump_metric_store_to_mar_entry(
+        metric_store: &Arc<Mutex<Self>>,
+        mar_staging_area: &Path,
+        network_config: &NetworkConfig,
+    ) -> Result<()> {
+        // Lock the store only long enough to create the HashMap
+        let mar_builder = metric_store
+            .lock()
+            .unwrap()
+            .prepare_heartbeat(mar_staging_area)?;
+
+        // Save to disk after releasing the lock
+        if let Some(mar_builder) = mar_builder {
+            let mar_entry = mar_builder
+                .save(network_config)
+                .map_err(|e| eyre!("Error building MAR entry: {}", e))?;
+            debug!(
+                "Generated MAR entry from metrics: {}",
+                mar_entry.path.display()
+            );
+        } else {
+            debug!("Skipping generating metrics entry. No metrics in store.")
+        }
+        Ok(())
     }
 }
 
@@ -115,7 +157,7 @@ mod tests {
         }
 
         let tempdir = TempDir::new().unwrap();
-        let _ = store.write_metrics(tempdir.path());
+        let _ = store.prepare_heartbeat(tempdir.path());
         assert_eq!(store.take_metrics().len(), 0);
     }
 

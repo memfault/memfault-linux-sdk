@@ -18,7 +18,7 @@ use crate::util::math::align_up;
 use goblin::elf::note::Nhdr32 as Nhdr;
 use goblin::elf::note::{NT_FILE, NT_GNU_BUILD_ID, NT_PRSTATUS};
 use log::{error, warn};
-use scroll::{Pread, Pwrite, NATIVE};
+use scroll::{Pread, Pwrite};
 
 /// Builds an ELF note from a given name, description, and note type.
 pub fn build_elf_note(name: &str, description: &[u8], note_type: u32) -> Result<Vec<u8>> {
@@ -39,7 +39,7 @@ pub fn build_elf_note(name: &str, description: &[u8], note_type: u32) -> Result<
     let header_size = size_of::<Nhdr>();
     let mut note_buffer =
         vec![0u8; header_size + aligned_name_size + align_up(description.len(), 4)];
-    note_buffer.pwrite_with(note_header, 0, NATIVE)?;
+    note_buffer.pwrite(note_header, 0)?;
     note_buffer[header_size..(header_size + name_bytes.len())].copy_from_slice(name_bytes);
 
     let desc_offset = header_size + aligned_name_size;
@@ -126,7 +126,7 @@ impl<'a> ElfNoteIterator<'a> {
     ///
     /// If the note type is not supported, return `None`.
     fn try_next_note(offset: &mut usize, note_buffer: &'a [u8]) -> Result<ElfNote<'a>> {
-        let note_header = note_buffer.gread_with::<Nhdr>(offset, NATIVE)?;
+        let note_header = note_buffer.gread::<Nhdr>(offset)?;
         let name_size = note_header.n_namesz as usize;
         let aligned_name_size = align_up(name_size, 4);
         let desc_size = note_header.n_descsz as usize;
@@ -261,8 +261,8 @@ impl<'a> FileNote<'a> {
         //  - followed by COUNT filenames in ASCII: "FILE1" NUL "FILE2" NUL...
         //
         let mut offset = 0;
-        let count = data.gread_with::<ElfPtrSize>(&mut offset, NATIVE)? as usize;
-        let page_size = data.gread_with::<ElfPtrSize>(&mut offset, NATIVE)? as usize;
+        let count = data.gread::<ElfPtrSize>(&mut offset)? as usize;
+        let page_size = data.gread::<ElfPtrSize>(&mut offset)? as usize;
         let mut mapped_files = Vec::with_capacity(count);
 
         let str_table_start = min(offset + count * Self::NT_FILE_ENTRY_SIZE, data.len());
@@ -272,7 +272,7 @@ impl<'a> FileNote<'a> {
         let mut incomplete = false;
 
         let mut get_next_path = || -> Option<&Path> {
-            match str_table.gread_with::<&CStr>(&mut str_table_offset, ()) {
+            match str_table.gread::<&CStr>(&mut str_table_offset) {
                 Ok(cstr) => Some(Path::new(OsStr::from_bytes(cstr.to_bytes()))),
                 Err(_) => {
                     incomplete = true;
@@ -282,9 +282,9 @@ impl<'a> FileNote<'a> {
         };
 
         let mut parse_entry = || -> Result<MappedFile> {
-            let start_addr = data.gread_with::<ElfPtrSize>(&mut offset, NATIVE)? as usize;
-            let end_addr = data.gread_with::<ElfPtrSize>(&mut offset, NATIVE)? as usize;
-            let page_offset = data.gread_with::<ElfPtrSize>(&mut offset, NATIVE)? as usize;
+            let start_addr = data.gread::<ElfPtrSize>(&mut offset)? as usize;
+            let end_addr = data.gread::<ElfPtrSize>(&mut offset)? as usize;
+            let page_offset = data.gread::<ElfPtrSize>(&mut offset)? as usize;
             Ok(MappedFile {
                 path: get_next_path(),
                 start_addr,
@@ -315,6 +315,8 @@ impl<'a> FileNote<'a> {
         })
     }
 
+    // TODO: MFLT-11766 Use NT_FILE note and PT_LOADs in case /proc/pid/maps read failed
+    #[allow(dead_code)]
     pub fn iter(&self) -> impl Iterator<Item = &MappedFile> {
         self.mapped_files.iter()
     }
@@ -604,15 +606,15 @@ mod test {
 
         // Header:
         // Count:
-        cursor.iowrite_with::<ElfPtrSize>(count, NATIVE).unwrap();
+        cursor.iowrite::<ElfPtrSize>(count).unwrap();
         // Page size (0x1000):
-        cursor.iowrite_with::<ElfPtrSize>(0x1000, NATIVE).unwrap();
+        cursor.iowrite::<ElfPtrSize>(0x1000).unwrap();
 
         // Entries:
         for _ in 0..count {
             // Start, end, file offset:
             for n in 0..3 {
-                cursor.iowrite_with::<ElfPtrSize>(n, NATIVE).unwrap();
+                cursor.iowrite::<ElfPtrSize>(n).unwrap();
             }
         }
 

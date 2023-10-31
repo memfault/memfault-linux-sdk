@@ -1,18 +1,20 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use std::io::{copy, Read, Seek, SeekFrom, Write};
+use std::io::{copy, repeat, Read, Seek, SeekFrom, Write};
+
+use crate::cli::memfault_core_handler::elf;
+use crate::util::io::StreamPosition;
+use crate::util::math::align_up;
 
 use elf::header::{
     Header, EI_CLASS, EI_DATA, EI_VERSION, ELFMAG, ET_CORE, EV_CURRENT, SELFMAG, SIZEOF_EHDR,
 };
 use elf::program_header::{ProgramHeader, SIZEOF_PHDR};
 use eyre::Result;
-use log::error;
 use scroll::Pwrite;
 
-use crate::cli::memfault_core_handler::elf;
-use crate::util::math::align_up;
+const FILL_BYTE: u8 = 0xEF;
 
 pub trait CoreWriter {
     // Adds a data segment to the writer.
@@ -45,21 +47,18 @@ pub struct Segment {
 /// Creates a new ELF core file from a set of program headers and associated segment data.
 pub struct CoreWriterImpl<R, W>
 where
-    W: Write,
+    W: Write + StreamPosition,
     R: Read + Seek,
 {
     elf_header: Header,
     data_segments: Vec<Segment>,
     process_memory: R,
-    // We track the stream offset manually instead of requiring `Seek`. This allows us to use
-    // stream writers, such as GZIP, which don't implement `Seek`.
-    output_offset: usize,
     output_stream: W,
 }
 
 impl<R, W> CoreWriter for CoreWriterImpl<R, W>
 where
-    W: Write,
+    W: Write + StreamPosition,
     R: Read + Seek,
 {
     fn add_segment(&mut self, program_header: ProgramHeader, data: SegmentData) {
@@ -88,7 +87,7 @@ where
 }
 impl<R, W> CoreWriterImpl<R, W>
 where
-    W: Write,
+    W: Write + StreamPosition,
     R: Read + Seek,
 {
     /// Creates a new instance of `CoreWriter`
@@ -97,7 +96,6 @@ where
             elf_header,
             data_segments: Vec::new(),
             process_memory,
-            output_offset: 0,
             output_stream,
         }
     }
@@ -131,9 +129,9 @@ where
 
         let mut bytes: Vec<u8> = vec![0; self.elf_header.e_ehsize as usize];
         self.elf_header.e_phnum = self.data_segments.len().try_into()?;
-        bytes.pwrite_with(header, 0, scroll::NATIVE)?;
+        bytes.pwrite(header, 0)?;
 
-        Self::write_to_output(&mut self.output_stream, &bytes, &mut self.output_offset)?;
+        Self::write_to_output(&mut self.output_stream, &bytes)?;
         Ok(())
     }
 
@@ -158,37 +156,49 @@ where
             let mut bytes: Vec<u8> = vec![0; self.elf_header.e_phentsize as usize];
             segment_data_offset += segment.program_header.p_filesz as usize + padding;
 
-            bytes.pwrite_with(segment.program_header, 0, scroll::NATIVE)?;
-            Self::write_to_output(&mut self.output_stream, &bytes, &mut self.output_offset)?;
+            bytes.pwrite(segment.program_header, 0)?;
+            Self::write_to_output(&mut self.output_stream, &bytes)?;
         }
 
         // Iterate through all segments and write the data to the output stream. Zeroed padding
         // is written if the file offset is less than expected segment data offset.
         for segment in &self.data_segments {
-            let cur_position = self.output_offset;
+            let cur_position = self.output_stream.stream_position();
             let padding = segment.program_header.p_offset as usize - cur_position;
-            Self::write_padding(&mut self.output_stream, padding, &mut self.output_offset)?;
+            Self::write_padding(&mut self.output_stream, padding)?;
 
             match &segment.data {
                 SegmentData::Buffer(data) => {
-                    Self::write_to_output(&mut self.output_stream, data, &mut self.output_offset)?;
+                    Self::write_to_output(&mut self.output_stream, data)?;
                 }
                 SegmentData::ProcessMemory => {
                     let header = &segment.program_header;
 
-                    match Self::read_process_memory(
+                    if Self::read_process_memory(
                         header.p_vaddr as usize,
                         header.p_filesz as usize,
                         &mut self.process_memory,
                         &mut self.output_stream,
-                    ) {
-                        Ok(bytes_read) => self.output_offset += bytes_read as usize,
-                        Err(e) => error!("Failed to read process memory: {}", e),
+                    )
+                    .is_err()
+                    {
+                        let segment_end = (header.p_offset + header.p_filesz) as usize;
+                        Self::fill_remaining_bytes(segment_end, &mut self.output_stream)?;
                     }
                 }
             }
         }
 
+        Ok(())
+    }
+
+    /// Fill remaining bytes of segment when reading process memory fails.
+    fn fill_remaining_bytes(segment_end: usize, output_stream: &mut W) -> Result<()> {
+        let fill_size = segment_end.checked_sub(output_stream.stream_position());
+        if let Some(fill_size) = fill_size {
+            let mut fill_stream = repeat(FILL_BYTE).take(fill_size as u64);
+            copy(&mut fill_stream, output_stream)?;
+        }
         Ok(())
     }
 
@@ -206,26 +216,17 @@ where
     }
 
     /// Write padding if necessary
-    fn write_padding(
-        output_stream: &mut W,
-        padding: usize,
-        output_offset: &mut usize,
-    ) -> Result<()> {
+    fn write_padding(output_stream: &mut W, padding: usize) -> Result<()> {
         if padding > 0 {
-            let padding_bytes = vec![0; padding];
-            Self::write_to_output(output_stream, &padding_bytes, output_offset)?;
+            let mut padding_stream = repeat(0u8).take(padding as u64);
+            copy(&mut padding_stream, output_stream)?;
         }
         Ok(())
     }
 
     /// Write to output stream and increment cursor
-    fn write_to_output(
-        output_stream: &mut W,
-        bytes: &[u8],
-        output_offset: &mut usize,
-    ) -> Result<()> {
+    fn write_to_output(output_stream: &mut W, bytes: &[u8]) -> Result<()> {
         output_stream.write_all(bytes)?;
-        *output_offset += bytes.len();
         Ok(())
     }
 }
@@ -241,7 +242,13 @@ fn calc_padding(offset: usize, alignment: usize) -> usize {
 
 #[cfg(test)]
 mod test {
+    use std::io;
+
+    use crate::cli::memfault_core_handler::arch::{
+        ELF_TARGET_CLASS, ELF_TARGET_ENDIANNESS, ELF_TARGET_MACHINE,
+    };
     use crate::cli::memfault_core_handler::test_utils::build_test_header;
+    use crate::util::io::StreamPositionTracker;
 
     use super::*;
 
@@ -256,7 +263,8 @@ mod test {
     #[case(SegmentData::ProcessMemory, vec![0xaa; PROC_MEM_READ_CHUNK_SIZE + PROC_MEM_READ_CHUNK_SIZE / 4])]
     fn test_added_segments(#[case] segment_data: SegmentData, #[case] mem_buffer: Vec<u8>) {
         let mem_stream = Cursor::new(mem_buffer.clone());
-        let mut core_writer = build_test_writer(mem_stream);
+        let mut output_buf = Vec::new();
+        let mut core_writer = build_test_writer(mem_stream, &mut output_buf);
 
         let segment_buffer = match &segment_data {
             SegmentData::Buffer(data) => data.clone(),
@@ -275,15 +283,14 @@ mod test {
         );
 
         core_writer.write().expect("Failed to write core");
-        let output = core_writer.output_stream;
 
-        let elf_header_buf = output[..SIZEOF_EHDR].try_into().unwrap();
+        let elf_header_buf = output_buf[..SIZEOF_EHDR].try_into().unwrap();
         let elf_header = Header::from_bytes(elf_header_buf);
         assert_eq!(elf_header.e_phnum, 1);
 
         // Build program header table and verify correct number of headers
         let ph_table_sz = elf_header.e_phnum as usize * elf_header.e_phentsize as usize;
-        let ph_header_buf = &output[SIZEOF_EHDR..(SIZEOF_EHDR + ph_table_sz)];
+        let ph_header_buf = &output_buf[SIZEOF_EHDR..(SIZEOF_EHDR + ph_table_sz)];
         let ph_headers = ProgramHeader::from_bytes(ph_header_buf, elf_header.e_phnum as usize);
         assert_eq!(ph_headers.len(), 1);
 
@@ -296,7 +303,7 @@ mod test {
         assert_eq!(segment_data_offset, SIZEOF_EHDR + ph_table_sz);
 
         // Verify correct segment data
-        let serialized_segment_data = &output[ph_headers[0].p_offset as usize
+        let serialized_segment_data = &output_buf[ph_headers[0].p_offset as usize
             ..(ph_headers[0].p_offset + ph_headers[0].p_filesz) as usize];
         assert_eq!(&segment_buffer, serialized_segment_data);
     }
@@ -312,7 +319,8 @@ mod test {
         #[case] expected_size: usize,
     ) {
         let mem_stream = Vec::new();
-        let mut core_writer = build_test_writer(Cursor::new(mem_stream));
+        let mut output_buf = Vec::new();
+        let mut core_writer = build_test_writer(Cursor::new(mem_stream), &mut output_buf);
 
         segment_sizes.iter().for_each(|size| {
             core_writer.add_segment(
@@ -330,9 +338,55 @@ mod test {
         assert_eq!(output_size, expected_size);
     }
 
-    fn build_test_writer(mem_stream: Cursor<Vec<u8>>) -> CoreWriterImpl<Cursor<Vec<u8>>, Vec<u8>> {
-        let elf_header = build_test_header();
-        let output_stream = Vec::new();
+    #[test]
+    fn test_read_fail() {
+        let mut output_buf = Vec::new();
+        let mut writer = build_test_writer(FailReader, &mut output_buf);
+        let segment_size = 1024usize;
+
+        writer.add_segment(
+            ProgramHeader {
+                p_type: elf::program_header::PT_LOAD,
+                p_filesz: segment_size.try_into().unwrap(),
+                ..Default::default()
+            },
+            SegmentData::ProcessMemory,
+        );
+
+        writer.write().unwrap();
+
+        let header = writer.elf_header;
+        let segment_offset =
+            header.e_phoff as usize + header.e_phentsize as usize * header.e_phnum as usize;
+        let segment_end = segment_offset + segment_size;
+        assert_eq!(
+            output_buf[segment_offset..segment_end],
+            vec![FILL_BYTE; segment_size]
+        );
+    }
+
+    fn build_test_writer<T: Read + Seek>(
+        mem_stream: T,
+        output_buf: &mut Vec<u8>,
+    ) -> CoreWriterImpl<T, StreamPositionTracker<&mut Vec<u8>>> {
+        let elf_header =
+            build_test_header(ELF_TARGET_CLASS, ELF_TARGET_ENDIANNESS, ELF_TARGET_MACHINE);
+        let output_stream = StreamPositionTracker::new(output_buf);
         CoreWriterImpl::new(elf_header, output_stream, mem_stream)
+    }
+
+    /// Test reader that always returns failure when reading.
+    struct FailReader;
+
+    impl Read for FailReader {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::Other, "read failed"))
+        }
+    }
+
+    impl Seek for FailReader {
+        fn seek(&mut self, _: SeekFrom) -> io::Result<u64> {
+            Ok(0)
+        }
     }
 }

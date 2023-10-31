@@ -29,7 +29,8 @@ expression: content
     "rate_limit_count": 5,
     "rate_limit_duration_seconds": 3600,
     "capture_strategy": {
-      "type": "kernel_selection"
+      "type": "threads",
+      "max_thread_size_kib": 32
     }
   },
   "fluent-bit": {
@@ -45,7 +46,8 @@ expression: content
     "max_lines_per_minute": 500
   },
   "mar": {
-    "mar_file_max_size_kib": 10240
+    "mar_file_max_size_kib": 10240,
+    "mar_entry_max_age_seconds": 604800
   },
   "http_server": {
     "bind_address": "127.0.0.1:8787"

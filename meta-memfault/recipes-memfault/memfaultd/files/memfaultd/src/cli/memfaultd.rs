@@ -12,8 +12,7 @@ use crate::{
 };
 
 use eyre::{eyre, Context, Result};
-use log::{error, info, warn};
-use stderrlog::LogLevelNum;
+use log::{error, info, warn, LevelFilter};
 
 use crate::cli::show_settings::show_settings;
 use crate::cli::version::format_version;
@@ -54,9 +53,9 @@ pub fn main() -> Result<()> {
     let config_path = args.config_file.as_ref().map(Path::new);
 
     init_logger(match (args.quiet, args.verbose) {
-        (true, _) => LogLevelNum::Off,
-        (false, true) => LogLevelNum::Trace,
-        _ => LogLevelNum::Info,
+        (true, _) => LevelFilter::Off,
+        (false, true) => LevelFilter::Trace,
+        _ => LevelFilter::Info,
     });
 
     if args.version {

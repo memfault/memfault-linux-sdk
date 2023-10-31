@@ -1,0 +1,58 @@
+---
+source: memfaultd/src/cli/memfault_core_handler/find_dynamic.rs
+expression: output
+---
+[
+    MemoryRange {
+        start: "0x5587ae8bd040",
+        end: "0x5587ae8bd318",
+    },
+    MemoryRange {
+        start: "0x5587ae8c0dc0",
+        end: "0x5587ae8c0fc0",
+    },
+    MemoryRange {
+        start: "0x7f6e38fad118",
+        end: "0x7f6e38fad140",
+    },
+    MemoryRange {
+        start: "0x7f6e38fad2e0",
+        end: "0x7f6e38fad308",
+    },
+    MemoryRange {
+        start: "0x7f6e38fad8b0",
+        end: "0x7f6e38fad8d8",
+    },
+    MemoryRange {
+        start: "0x7f6e38f781e0",
+        end: "0x7f6e38f78208",
+    },
+    MemoryRange {
+        start: "0x7f6e38f78760",
+        end: "0x7f6e38f78788",
+    },
+    MemoryRange {
+        start: "0x7f6e38facad0",
+        end: "0x7f6e38facaf8",
+    },
+    MemoryRange {
+        start: "0x7f6e38fad8a0",
+        end: "0x7f6e38fad8a1",
+    },
+    MemoryRange {
+        start: "0x7ffe4bb1f371",
+        end: "0x7ffe4bb1f381",
+    },
+    MemoryRange {
+        start: "0x7f6e38f781d0",
+        end: "0x7f6e38f781dc",
+    },
+    MemoryRange {
+        start: "0x7f6e38f78740",
+        end: "0x7f6e38f78760",
+    },
+    MemoryRange {
+        start: "0x5587ae8bd318",
+        end: "0x5587ae8bd334",
+    },
+]
