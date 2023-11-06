@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.1] - 2023-11-6
+
+This is a small release to address a bug we discovered in how MAR entries'
+estimated size was being calculated.
+
+This bug can cause MAR entries to be deleted before upload when you are using
+the logging feature with significant logging activity. We recommend all
+customers using the `logging` feature to update to this version.
+
+### Fixed
+
+- Fix the logic for estimating the number of inodes that a MAR entry will take
+  on disk.
+
 ## [1.8.0] - 2023-10-25
 
 In this release, we have worked on improving coredump captures and now support
@@ -657,3 +671,7 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.6.0-kirkstone
 [1.7.0]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.7.0-kirkstone
+[1.8.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.8.0-kirkstone
+[1.8.1]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.8.1-kirkstone

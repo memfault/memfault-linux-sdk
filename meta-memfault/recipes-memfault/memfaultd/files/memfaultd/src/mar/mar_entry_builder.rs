@@ -13,6 +13,8 @@ use std::mem::take;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+const MAR_ENTRY_OVERHEAD_SIZE_ESTIMATE: u64 = 4096;
+
 /// A tool to build new MAR entries. Use one of the constructor functions and
 /// call save() to write to disk. Any files attached to this MAR entry will
 /// be moved when save is called.
@@ -117,7 +119,7 @@ impl MarEntryBuilder<Metadata> {
     }
 
     pub fn estimated_entry_size(&self) -> DiskSize {
-        let attachments_size: u64 = self
+        let attachments_size_bytes: u64 = self
             .attachments
             .iter()
             .filter_map(|p| p.metadata().ok())
@@ -125,10 +127,9 @@ impl MarEntryBuilder<Metadata> {
             .sum();
 
         // Add a bit extra for the overhead of the manifest.json and directory inode:
-        const OVERHEAD_SIZE_ESTIMATE: u64 = 4096;
         DiskSize {
-            bytes: attachments_size + OVERHEAD_SIZE_ESTIMATE,
-            inodes: attachments_size + 1,
+            bytes: attachments_size_bytes + MAR_ENTRY_OVERHEAD_SIZE_ESTIMATE,
+            inodes: self.attachments.len() as u64 + 1,
         }
     }
 }
@@ -160,6 +161,7 @@ impl Drop for MarEntryDir {
 
 #[cfg(test)]
 mod tests {
+    use super::MAR_ENTRY_OVERHEAD_SIZE_ESTIMATE;
     use crate::mar::MarEntryBuilder;
     use crate::mar::Metadata;
     use crate::network::NetworkConfig;
@@ -230,6 +232,23 @@ mod tests {
         assert!(entry_dir
             .join(orig_attachment_path.file_name().unwrap())
             .exists());
+    }
+
+    #[rstest]
+    fn can_estimate_size_of_a_mar_entry(fixture: Fixture) {
+        let builder = MarEntryBuilder::new(&fixture.mar_staging).unwrap();
+        let orig_attachment_path = builder.make_attachment_path_in_entry_dir("attachment");
+        create_file_with_size(&orig_attachment_path, 1024).unwrap();
+
+        let builder = builder
+            .add_attachment(orig_attachment_path.clone())
+            .set_metadata(Metadata::test_fixture());
+
+        assert_eq!(
+            builder.estimated_entry_size().bytes,
+            1024 + MAR_ENTRY_OVERHEAD_SIZE_ESTIMATE
+        );
+        assert_eq!(builder.estimated_entry_size().inodes, 2);
     }
 
     struct Fixture {
