@@ -26,7 +26,7 @@ INITSCRIPT_NAME = "memfaultd"
 # and swupdate (70).
 INITSCRIPT_PARAMS = "defaults 15"
 
-DEPENDS = ""
+DEPENDS = "zlib"
 
 PACKAGECONFIG ??= "coredump collectd swupdate logging"
 PACKAGECONFIG[coredump] = ""
@@ -136,10 +136,10 @@ do_install:append() {
     # Cargo will build two binaries but we know they are the same.
     # To save space we replace memfaultctl with a symbolic link to memfaultd.
     rm ${D}/usr/bin/memfaultctl
-    ln -s /usr/bin/memfaultd ${D}/usr/bin/memfaultctl
+    ln -sf /usr/bin/memfaultd ${D}/usr/bin/memfaultctl
 
     # TODO: only install if feature is enabled
     rm ${D}/usr/bin/memfault-core-handler
     mkdir -p ${D}/usr/sbin
-    ln -s /usr/bin/memfaultd ${D}/usr/sbin/memfault-core-handler
+    ln -sf /usr/bin/memfaultd ${D}/usr/sbin/memfault-core-handler
 }

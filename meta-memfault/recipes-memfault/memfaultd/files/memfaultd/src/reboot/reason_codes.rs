@@ -21,7 +21,7 @@ use strum_macros::{Display, EnumString, FromRepr};
     FromRepr,
 )]
 #[repr(u32)]
-pub enum RebootReason {
+pub enum RebootReasonCode {
     Unknown = 0x0000,
 
     //

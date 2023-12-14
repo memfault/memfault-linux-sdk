@@ -6,7 +6,7 @@ expression: metadatas
   {
     "name": "disk/1-0/disk_octets/read",
     "value": {
-      "Rate": {
+      "Gauge": {
         "value": 1887359.3321528,
         "timestamp": "2023-05-24T17:25:47.351Z",
         "interval": 20.0
@@ -16,7 +16,7 @@ expression: metadatas
   {
     "name": "disk/1-0/disk_octets/write",
     "value": {
-      "Rate": {
+      "Gauge": {
         "value": 1241166.17826548,
         "timestamp": "2023-05-24T17:25:47.351Z",
         "interval": 20.0
@@ -26,7 +26,7 @@ expression: metadatas
   {
     "name": "disk/1-20/disk_time/read",
     "value": {
-      "Rate": {
+      "Gauge": {
         "value": 992441.95537229,
         "timestamp": "2023-05-24T17:25:47.351Z",
         "interval": 20.0
@@ -36,7 +36,7 @@ expression: metadatas
   {
     "name": "disk/1-20/disk_time/write",
     "value": {
-      "Rate": {
+      "Gauge": {
         "value": 0.0,
         "timestamp": "2023-05-24T17:25:47.351Z",
         "interval": 20.0
@@ -46,7 +46,7 @@ expression: metadatas
   {
     "name": "disk/1-0/disk_time/read",
     "value": {
-      "Rate": {
+      "Gauge": {
         "value": 17146.2298941808,
         "timestamp": "2023-05-24T17:25:47.351Z",
         "interval": 20.0
@@ -56,7 +56,7 @@ expression: metadatas
   {
     "name": "disk/1-0/disk_time/write",
     "value": {
-      "Rate": {
+      "Gauge": {
         "value": 6375.40234502902,
         "timestamp": "2023-05-24T17:25:47.351Z",
         "interval": 20.0
@@ -66,7 +66,7 @@ expression: metadatas
   {
     "name": "disk/1-0/disk_ops/read",
     "value": {
-      "Rate": {
+      "Gauge": {
         "value": 75.3295819258201,
         "timestamp": "2023-05-24T17:25:47.351Z",
         "interval": 20.0
@@ -76,7 +76,7 @@ expression: metadatas
   {
     "name": "disk/1-0/disk_ops/write",
     "value": {
-      "Rate": {
+      "Gauge": {
         "value": 101.940031849151,
         "timestamp": "2023-05-24T17:25:47.351Z",
         "interval": 20.0
@@ -88,7 +88,8 @@ expression: metadatas
     "value": {
       "Gauge": {
         "value": 8541454336.0,
-        "timestamp": "2023-05-24T17:25:47.352Z"
+        "timestamp": "2023-05-24T17:25:47.352Z",
+        "interval": 20.0
       }
     }
   },
@@ -97,7 +98,8 @@ expression: metadatas
     "value": {
       "Gauge": {
         "value": 8286470144.0,
-        "timestamp": "2023-05-24T17:25:47.352Z"
+        "timestamp": "2023-05-24T17:25:47.352Z",
+        "interval": 20.0
       }
     }
   },
@@ -106,7 +108,8 @@ expression: metadatas
     "value": {
       "Gauge": {
         "value": 502759424.0,
-        "timestamp": "2023-05-24T17:25:47.352Z"
+        "timestamp": "2023-05-24T17:25:47.352Z",
+        "interval": 20.0
       }
     }
   },
@@ -115,7 +118,8 @@ expression: metadatas
     "value": {
       "Gauge": {
         "value": 0.00399999972432852,
-        "timestamp": "2023-05-24T17:25:47.352Z"
+        "timestamp": "2023-05-24T17:25:47.352Z",
+        "interval": 20.0
       }
     }
   },
@@ -124,14 +128,15 @@ expression: metadatas
     "value": {
       "Gauge": {
         "value": 3314139136.0,
-        "timestamp": "2023-05-24T17:25:47.352Z"
+        "timestamp": "2023-05-24T17:25:47.352Z",
+        "interval": 20.0
       }
     }
   },
   {
     "name": "disk/1-20/disk_ops/read",
     "value": {
-      "Rate": {
+      "Gauge": {
         "value": 17.3067461702536,
         "timestamp": "2023-05-24T17:25:47.351Z",
         "interval": 20.0
@@ -141,7 +146,7 @@ expression: metadatas
   {
     "name": "disk/1-20/disk_ops/write",
     "value": {
-      "Rate": {
+      "Gauge": {
         "value": 0.0,
         "timestamp": "2023-05-24T17:25:47.351Z",
         "interval": 20.0
@@ -151,7 +156,7 @@ expression: metadatas
   {
     "name": "disk/1-20/disk_octets/read",
     "value": {
-      "Rate": {
+      "Gauge": {
         "value": 70888.4535866987,
         "timestamp": "2023-05-24T17:25:47.351Z",
         "interval": 20.0
@@ -161,7 +166,7 @@ expression: metadatas
   {
     "name": "disk/1-20/disk_octets/write",
     "value": {
-      "Rate": {
+      "Gauge": {
         "value": 0.0,
         "timestamp": "2023-05-24T17:25:47.351Z",
         "interval": 20.0
@@ -173,7 +178,8 @@ expression: metadatas
     "value": {
       "Gauge": {
         "value": 790156.0,
-        "timestamp": "2023-05-24T17:25:47.353Z"
+        "timestamp": "2023-05-24T17:25:47.353Z",
+        "interval": 20.0
       }
     }
   }

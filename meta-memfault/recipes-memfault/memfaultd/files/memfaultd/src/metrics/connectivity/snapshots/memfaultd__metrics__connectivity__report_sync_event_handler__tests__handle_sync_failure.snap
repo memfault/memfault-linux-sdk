@@ -1,0 +1,7 @@
+---
+source: memfaultd/src/metrics/connectivity/report_sync_event_handler.rs
+expression: "serde_json::to_string_pretty(&metrics).expect(\"metric_store should be serializable\")"
+---
+{
+  "sync_failure": 1.0
+}

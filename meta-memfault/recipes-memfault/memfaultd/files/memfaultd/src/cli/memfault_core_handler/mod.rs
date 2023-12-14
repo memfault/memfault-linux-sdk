@@ -40,6 +40,7 @@ use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::Write;
 use std::path::Path;
+use std::thread::scope;
 use std::{cmp::min, fs::File};
 use uuid::Uuid;
 
@@ -51,6 +52,8 @@ pub type ElfPtrSize = u64;
 
 #[cfg(target_pointer_width = "32")]
 pub use goblin::elf32 as elf;
+
+use super::MemfaultdClient;
 
 #[cfg(target_pointer_width = "32")]
 pub type ElfPtrSize = u32;
@@ -102,6 +105,21 @@ pub fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Asynchronously notify memfaultd that a crash occured
+    scope(|s| {
+        s.spawn(|| {
+            if let Err(e) =
+                MemfaultdClient::from_config(&config).and_then(|client| client.notify_crash())
+            {
+                debug!("Failed to notify memfaultd of crash: {:?}", e);
+            }
+        });
+        process_corefile(&config, args.pid)
+            .wrap_err(format!("Error processing coredump for PID {}", args.pid))
+    })
+}
+
+pub fn process_corefile(config: &Config, pid: i32) -> Result<()> {
     let rate_limiter = if !config.config_file.enable_dev_mode {
         config.coredump_rate_limiter_file_path();
         let mut rate_limiter = PersistentRateLimiter::load(
@@ -124,7 +142,7 @@ pub fn main() -> Result<()> {
         None
     };
 
-    let max_size = calculate_available_space(&config)?;
+    let max_size = calculate_available_space(config)?;
     if max_size == 0 {
         error!("Not processing corefile, disk usage limits exceeded");
         return Ok(());
@@ -137,10 +155,10 @@ pub fn main() -> Result<()> {
     let output_file_name = generate_tmp_file_name(compression);
     let output_file_path = mar_builder.make_attachment_path_in_entry_dir(&output_file_name);
 
-    let cmd_line_file_name = format!("/proc/{}/cmdline", args.pid);
+    let cmd_line_file_name = format!("/proc/{}/cmdline", pid);
     let mut cmd_line_file = File::open(cmd_line_file_name)?;
     let cmd_line = read_proc_cmdline(&mut cmd_line_file)?;
-    let metadata = CoredumpMetadata::new(&config, cmd_line);
+    let metadata = CoredumpMetadata::new(config, cmd_line);
     let thread_filter_supported = coredump_thread_filter_supported();
     let transformer_options = CoreTransformerOptions {
         max_size,
@@ -158,17 +176,17 @@ pub fn main() -> Result<()> {
     let output_stream = StreamPositionTracker::new(output_stream);
 
     let input_stream = ForwardOnlySeeker::new(BufReader::new(std::io::stdin()));
-    let proc_maps = ProcMapsImpl::new(args.pid);
+    let proc_maps = ProcMapsImpl::new(pid);
     let core_reader = CoreReaderImpl::new(input_stream)?;
     let core_writer = CoreWriterImpl::new(
         core_reader.elf_header(),
         output_stream,
-        proc_mem_stream(args.pid)?,
+        proc_mem_stream(pid)?,
     );
     let mut core_transformer = core_transformer::CoreTransformer::new(
         core_reader,
         core_writer,
-        proc_mem_stream(args.pid)?,
+        proc_mem_stream(pid)?,
         transformer_options,
         metadata,
         proc_maps,
@@ -177,13 +195,13 @@ pub fn main() -> Result<()> {
     match core_transformer.run_transformer() {
         Ok(()) => {
             info!("Successfully captured coredump");
-            let network_config = NetworkConfig::from(&config);
+            let network_config = NetworkConfig::from(config);
             let mar_entry = mar_builder
                 .set_metadata(Metadata::new_coredump(output_file_name, compression.into()))
                 .add_attachment(output_file_path)
                 .save(&network_config)?;
 
-            debug!("New MAR entry generated: {}", mar_entry.path.display());
+            debug!("Coredump MAR entry generated: {}", mar_entry.path.display());
 
             if let Some(rate_limiter) = rate_limiter {
                 rate_limiter.save()?;

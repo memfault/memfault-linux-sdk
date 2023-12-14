@@ -14,12 +14,15 @@ use flate2::Compression;
 use log::{error, trace, warn};
 use serde_json::Value;
 
-use crate::config::Config;
-use crate::logs::completed_log::CompletedLog;
 use crate::logs::headroom::HeadroomCheck;
 use crate::logs::log_file::{LogFile, LogFileControl, LogFileControlImpl};
 use crate::logs::recovery::recover_old_logs;
 use crate::util::rate_limiter::RateLimiter;
+use crate::{config::Config, metrics::HeartbeatManager};
+use crate::{config::LogToMetricRule, logs::completed_log::CompletedLog};
+
+#[cfg(feature = "log-to-metrics")]
+use super::log_to_metrics::LogToMetrics;
 
 pub struct LogCollector<H: HeadroomCheck + Send + 'static> {
     inner: Arc<Mutex<Option<Inner<H>>>>,
@@ -33,6 +36,8 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
         log_config: LogCollectorConfig,
         mut on_log_completion: R,
         headroom_limiter: H,
+        #[cfg_attr(not(feature = "log-to-metrics"), allow(unused_variables))]
+        heartbeat_manager: Arc<Mutex<HeartbeatManager>>,
     ) -> Result<Self> {
         fs::create_dir_all(&log_config.log_tmp_path).wrap_err_with(|| {
             format!(
@@ -56,6 +61,11 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
                 )?,
                 rate_limiter: RateLimiter::new(log_config.max_lines_per_minute),
                 headroom_limiter,
+                #[cfg(feature = "log-to-metrics")]
+                log_to_metrics: LogToMetrics::new(
+                    log_config.log_to_metrics_rules,
+                    heartbeat_manager,
+                ),
             }))),
         })
     }
@@ -92,7 +102,7 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
 
     /// Force the log_collector to close the current log and generate a MAR entry.
     pub fn flush_logs(&mut self) -> Result<()> {
-        self.with_mut_inner(|inner| inner.flush_logs_internal())
+        self.with_mut_inner(|inner| inner.log_file_control.rotate_unless_empty().map(|_| ()))
     }
 
     /// Rotate the logs if needed
@@ -120,7 +130,7 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
         match self.inner.lock() {
             Ok(mut inner_opt) => {
                 match (*inner_opt).take() {
-                    Some(mut inner) => inner.flush_logs_internal(),
+                    Some(inner) => inner.log_file_control.close(),
                     None => {
                         // Already closed.
                         Ok(())
@@ -151,6 +161,8 @@ struct Inner<H: HeadroomCheck> {
     rate_limiter: RateLimiter<Option<Value>>,
     log_file_control: LogFileControlImpl,
     headroom_limiter: H,
+    #[cfg(feature = "log-to-metrics")]
+    log_to_metrics: LogToMetrics,
 }
 
 impl<H: HeadroomCheck> Inner<H> {
@@ -160,6 +172,11 @@ impl<H: HeadroomCheck> Inner<H> {
     // dead-lock. Everything we need should be in Inner.
     fn process_log_record(&mut self, log: Value) -> Result<()> {
         let log_timestamp = log.get("ts");
+
+        #[cfg(feature = "log-to-metrics")]
+        if let Err(e) = self.log_to_metrics.process(&log) {
+            warn!("Error processing log to metrics: {:?}", e);
+        }
 
         if !self
             .headroom_limiter
@@ -190,11 +207,6 @@ impl<H: HeadroomCheck> Inner<H> {
         Ok(())
     }
 
-    fn flush_logs_internal(&mut self) -> Result<()> {
-        self.log_file_control.rotate_unless_empty()?;
-        Ok(())
-    }
-
     fn rotate_if_needed(&mut self) -> Result<bool> {
         self.log_file_control.rotate_if_needed()
     }
@@ -215,6 +227,10 @@ pub struct LogCollectorConfig {
 
     /// Maximum number of lines written per second continuously
     max_lines_per_minute: NonZeroU32,
+
+    /// Rules to convert logs to metrics
+    #[cfg_attr(not(feature = "log-to-metrics"), allow(dead_code))]
+    log_to_metrics_rules: Vec<LogToMetricRule>,
 }
 
 impl From<&Config> for LogCollectorConfig {
@@ -225,23 +241,30 @@ impl From<&Config> for LogCollectorConfig {
             log_max_duration: config.config_file.logs.rotate_after,
             log_compression_level: config.config_file.logs.compression_level,
             max_lines_per_minute: config.config_file.logs.max_lines_per_minute,
+            log_to_metrics_rules: config
+                .config_file
+                .logs
+                .log_to_metrics
+                .as_ref()
+                .map(|c| c.rules.clone())
+                .unwrap_or_default(),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::fs::remove_file;
     use std::num::NonZeroU32;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc::{channel, Receiver};
     use std::sync::Arc;
+    use std::{fs::remove_file, sync::Mutex};
     use std::{io::Write, path::PathBuf, time::Duration};
 
-    use crate::logs::completed_log::CompletedLog;
     use crate::logs::headroom::HeadroomCheck;
     use crate::logs::log_file::{LogFile, LogFileControl};
-    use crate::test_utils::setup_logger;
+    use crate::{logs::completed_log::CompletedLog, metrics::HeartbeatManager};
+    use eyre::Context;
     use flate2::Compression;
     use rstest::{fixture, rstest};
     use serde_json::{json, Value};
@@ -258,7 +281,16 @@ mod tests {
     }
 
     #[rstest]
-    fn forced_rotation_with_nonempty_log(_setup_logger: (), mut fixture: LogFixture) {
+    fn do_not_create_newfile_on_close(mut fixture: LogFixture) {
+        fixture.write_log(json!({"ts": 0, "MESSAGE": "xxx"}));
+        fixture.collector.close_internal().expect("error closing");
+        // 0 because the fixture "on_log_completion" moves the file out
+        assert_eq!(fixture.count_log_files(), 0);
+        assert_eq!(fixture.on_log_completion_calls(), 1);
+    }
+
+    #[rstest]
+    fn forced_rotation_with_nonempty_log(mut fixture: LogFixture) {
         fixture.write_log(json!({"ts": 0, "MESSAGE": "xxx"}));
 
         fixture.collector.flush_logs().unwrap();
@@ -268,7 +300,7 @@ mod tests {
     }
 
     #[rstest]
-    fn delete_log_after_failed_on_completion_callback(_setup_logger: (), mut fixture: LogFixture) {
+    fn delete_log_after_failed_on_completion_callback(mut fixture: LogFixture) {
         fixture
             .on_completion_should_fail
             .store(true, Ordering::Relaxed);
@@ -292,7 +324,7 @@ mod tests {
     }
 
     #[rstest]
-    fn recover_old_logfiles(_setup_logger: ()) {
+    fn recover_old_logfiles() {
         let (tmp_logs, _old_file_path) = existing_tmplogs_with_log(&(Uuid::new_v4().to_string()));
         let fixture = collector_with_logs_dir(tmp_logs);
 
@@ -301,7 +333,7 @@ mod tests {
     }
 
     #[rstest]
-    fn delete_files_that_are_not_uuids(_setup_logger: ()) {
+    fn delete_files_that_are_not_uuids() {
         let (tmp_logs, old_file_path) = existing_tmplogs_with_log("testfile");
         let fixture = collector_with_logs_dir(tmp_logs);
 
@@ -327,8 +359,10 @@ mod tests {
     }
 
     struct LogFixture {
-        logs_dir: TempDir,
         collector: LogCollector<StubHeadroomLimiter>,
+        // TempDir needs to be after the collector, otherwise we fail to delete
+        // the file in LogCollector::Drop because the tempdir is gone
+        logs_dir: TempDir,
         on_log_completion_receiver: Receiver<(PathBuf, Uuid)>,
         on_completion_should_fail: Arc<AtomicBool>,
     }
@@ -372,11 +406,14 @@ mod tests {
             log_max_duration: Duration::from_secs(3600),
             log_compression_level: Compression::default(),
             max_lines_per_minute: NonZeroU32::new(1_000).unwrap(),
+            log_to_metrics_rules: vec![],
         };
 
         let (on_log_completion_sender, on_log_completion_receiver) = channel();
 
         let on_completion_should_fail = Arc::new(AtomicBool::new(false));
+
+        let heartbeat_manager = Arc::new(Mutex::new(HeartbeatManager::new()));
 
         let collector = {
             let on_completion_should_fail = on_completion_should_fail.clone();
@@ -387,12 +424,20 @@ mod tests {
                     Err(eyre::eyre!("on_log_completion failure!"))
                 } else {
                     // Unlink the log file. The real implementation moves it into the MAR staging area.
-                    remove_file(path).unwrap();
+                    remove_file(&path)
+                        .with_context(|| format!("rm {path:?}"))
+                        .unwrap();
                     Ok(())
                 }
             };
 
-            LogCollector::open(config, on_log_completion, StubHeadroomLimiter).unwrap()
+            LogCollector::open(
+                config,
+                on_log_completion,
+                StubHeadroomLimiter,
+                heartbeat_manager,
+            )
+            .unwrap()
         };
 
         LogFixture {

@@ -6,6 +6,8 @@ use std::time::{Duration, Instant};
 
 use log::{trace, warn};
 
+use super::time_measure::TimeMeasure;
+
 /// Run `work` every `repeat_interval` while `condition` returns true.
 ///
 /// On error, wait `error_retry` and multiply `error_retry` by 2 every
@@ -39,20 +41,6 @@ pub fn loop_with_exponential_error_backoff<
 // std::thread::sleep automatically continues sleeping on SIGINT but we want to be interrupted so we use shuteye::sleep.
 fn interruptiple_sleep(d: Duration) {
     shuteye::sleep(d);
-}
-
-trait TimeMeasure {
-    fn now() -> Self;
-    fn elapsed(&self) -> Duration;
-}
-
-impl TimeMeasure for Instant {
-    fn now() -> Self {
-        Instant::now()
-    }
-    fn elapsed(&self) -> Duration {
-        self.elapsed()
-    }
 }
 
 /// Specify how to continue execution
@@ -113,10 +101,9 @@ fn loop_with_exponential_error_backoff_internal<
 #[cfg(test)]
 mod tests {
     use eyre::eyre;
-    use std::{
-        cell::{Cell, RefCell},
-        ops::Sub,
-    };
+    use std::cell::{Cell, RefCell};
+
+    use crate::test_utils::TestInstant;
 
     use super::*;
     use rstest::rstest;
@@ -127,12 +114,12 @@ mod tests {
             ..Default::default()
         },
         TestInvocation {
-            expect_called_at: TEST_PERIOD,
+            expect_called_at: TestInstant::from(TEST_PERIOD),
             run_time: Duration::from_millis(150),
             ..Default::default()
         },
         TestInvocation {
-            expect_called_at: TEST_PERIOD * 2,
+            expect_called_at: TestInstant::from(TEST_PERIOD * 2),
             ..Default::default()
         }
     ])]
@@ -143,22 +130,22 @@ mod tests {
             ..Default::default()
         },
         TestInvocation {
-            expect_called_at: TEST_ERROR_RETRY,
+            expect_called_at: TestInstant::from(TEST_ERROR_RETRY),
             ..Default::default()
         },
         TestInvocation {
-            expect_called_at: TEST_ERROR_RETRY + TEST_PERIOD,
+            expect_called_at: TestInstant::from(TEST_ERROR_RETRY + TEST_PERIOD),
             ..Default::default()
         }
     ])]
     #[case::long_runs_will_rerun_immediately(vec![
         TestInvocation {
-            expect_called_at: Duration::from_secs(0),
+            expect_called_at: TestInstant::from(Duration::from_secs(0)),
             run_time: TEST_PERIOD * 10,
             ..Default::default()
         },
         TestInvocation {
-            expect_called_at: TEST_PERIOD * 10,
+            expect_called_at: TestInstant::from( TEST_PERIOD * 10),
             ..Default::default()
         }
     ])]
@@ -169,27 +156,27 @@ mod tests {
             ..Default::default()
         },
         TestInvocation {
-            expect_called_at: TEST_ERROR_RETRY,
+            expect_called_at: TestInstant::from(TEST_ERROR_RETRY),
             is_error: true,
             ..Default::default()
         },
         TestInvocation {
-            expect_called_at: TEST_ERROR_RETRY + TEST_ERROR_RETRY * 2,
+            expect_called_at: TestInstant::from(TEST_ERROR_RETRY + TEST_ERROR_RETRY * 2),
             is_error: true,
             ..Default::default()
         },
         TestInvocation {
-            expect_called_at: TEST_ERROR_RETRY + TEST_ERROR_RETRY * 2 + TEST_ERROR_RETRY * 4,
+            expect_called_at: TestInstant::from(TEST_ERROR_RETRY + TEST_ERROR_RETRY * 2 + TEST_ERROR_RETRY * 4),
             ..Default::default()
         },
         TestInvocation {
-            expect_called_at: TEST_ERROR_RETRY + TEST_ERROR_RETRY * 2 + TEST_ERROR_RETRY * 4 + TEST_PERIOD,
+            expect_called_at: TestInstant::from(TEST_ERROR_RETRY + TEST_ERROR_RETRY * 2 + TEST_ERROR_RETRY * 4 + TEST_PERIOD),
             is_error: true,
             ..Default::default()
         },
         // This one should have reset to normal error retry
         TestInvocation {
-            expect_called_at: TEST_ERROR_RETRY + TEST_ERROR_RETRY * 2 + TEST_ERROR_RETRY * 4 + TEST_PERIOD + TEST_ERROR_RETRY,
+            expect_called_at: TestInstant::from(TEST_ERROR_RETRY + TEST_ERROR_RETRY * 2 + TEST_ERROR_RETRY * 4 + TEST_PERIOD + TEST_ERROR_RETRY),
             is_error: true,
             ..Default::default()
         },
@@ -201,7 +188,7 @@ mod tests {
             ..Default::default()
         },
         TestInvocation {
-            expect_called_at: Duration::from_millis(10),
+            expect_called_at: TestInstant::from(Duration::from_millis(10)),
             run_immediately: true,
             ..Default::default()
         },
@@ -211,12 +198,12 @@ mod tests {
         let call_times = RefCell::new(vec![]);
 
         let work = || {
-            let invocation = calls[step.get()];
+            let invocation = &calls[step.get()];
 
-            call_times.borrow_mut().push(test_time());
+            call_times.borrow_mut().push(TestInstant::now());
             step.set(step.get() + 1);
 
-            test_sleep(invocation.run_time);
+            TestInstant::sleep(invocation.run_time);
 
             match invocation.is_error {
                 true => Err(eyre!("invocation failed")),
@@ -243,25 +230,22 @@ mod tests {
             condition,
             TEST_PERIOD,
             TEST_ERROR_RETRY,
-            test_sleep,
+            TestInstant::sleep,
         );
 
         let expected_call_times = calls
-            .iter()
+            .into_iter()
             .map(|c| c.expect_called_at)
-            .collect::<Vec<Duration>>();
+            .collect::<Vec<TestInstant>>();
         assert_eq!(expected_call_times, *call_times.borrow());
     }
 
-    // In the test time is measured as a duration from some t0.
-    type TestTime = Duration;
-
-    #[derive(Clone, Copy)]
+    #[derive(Clone)]
     struct TestInvocation {
         run_time: Duration,
         is_error: bool,
         run_immediately: bool,
-        expect_called_at: TestTime,
+        expect_called_at: TestInstant,
     }
     impl Default for TestInvocation {
         fn default() -> Self {
@@ -269,37 +253,11 @@ mod tests {
                 run_time: Duration::from_millis(30),
                 is_error: false,
                 run_immediately: false,
-                expect_called_at: Duration::from_millis(0),
+                expect_called_at: TestInstant::from(Duration::from_millis(0)),
             }
         }
     }
 
     const TEST_PERIOD: Duration = Duration::from_secs(3600);
     const TEST_ERROR_RETRY: Duration = Duration::from_secs(60);
-
-    thread_local! {
-        static TIME: RefCell<Duration>  = RefCell::new(Duration::from_secs(0));
-    }
-    fn test_time() -> TestTime {
-        let mut now = Duration::from_secs(0);
-        TIME.with(|t| now = *t.borrow());
-        now
-    }
-    fn test_sleep(d: Duration) {
-        TIME.with(|t| {
-            let new_time = t.borrow().saturating_add(d);
-            *t.borrow_mut() = new_time;
-        })
-    }
-    struct TestInstant {
-        t0: Duration,
-    }
-    impl TimeMeasure for TestInstant {
-        fn now() -> Self {
-            Self { t0: test_time() }
-        }
-        fn elapsed(&self) -> Duration {
-            test_time().sub(self.t0)
-        }
-    }
 }

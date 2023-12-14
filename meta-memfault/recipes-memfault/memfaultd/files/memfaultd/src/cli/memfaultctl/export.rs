@@ -8,10 +8,10 @@ use eyre::{eyre, Context, Result};
 
 use crate::cli::memfaultctl::ExportArgs;
 
-use super::memfaultd_client::{ExportGetResponse, MemfaultdClient};
+use crate::cli::memfaultd_client::{ExportDeleteResponse, ExportGetResponse, MemfaultdClient};
 
 pub fn export(config: &Config, args: &ExportArgs) -> Result<()> {
-    let client = MemfaultdClient::from_config(config);
+    let client = MemfaultdClient::from_config(config)?;
 
     let delete_token = match client
         .export_get(&args.format)
@@ -36,14 +36,14 @@ pub fn export(config: &Config, args: &ExportArgs) -> Result<()> {
             .export_delete(delete_token)
             .wrap_err("Error while deleting data")?
         {
-            super::memfaultd_client::ExportDeleteResponse::Ok => {
+            ExportDeleteResponse::Ok => {
                 eprintln!("Export saved and data cleared from memfaultd.");
                 Ok(())
             }
-            super::memfaultd_client::ExportDeleteResponse::ErrorWrongDeleteToken => {
+            ExportDeleteResponse::ErrorWrongDeleteToken => {
                 Err(eyre!("Unexpected response: wrong hash"))
             }
-            super::memfaultd_client::ExportDeleteResponse::Error404 => {
+            ExportDeleteResponse::Error404 => {
                 Err(eyre!("Unexpected response: 404 (no data to delete)"))
             }
         }

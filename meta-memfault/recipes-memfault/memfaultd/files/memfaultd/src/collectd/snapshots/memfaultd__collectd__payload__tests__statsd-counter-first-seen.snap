@@ -1,0 +1,24 @@
+---
+source: memfaultd/src/collectd/payload.rs
+expression: metadatas
+---
+[
+  {
+    "name": "statsd/count/mypythonapp.counter1",
+    "value": {
+      "Counter": {
+        "value": 2.0,
+        "timestamp": "2023-10-26T22:44:12.757Z"
+      }
+    }
+  },
+  {
+    "name": "statsd/count/mypythonapp.counter2",
+    "value": {
+      "Counter": {
+        "value": 20.0,
+        "timestamp": "2023-10-26T22:44:12.757Z"
+      }
+    }
+  }
+]

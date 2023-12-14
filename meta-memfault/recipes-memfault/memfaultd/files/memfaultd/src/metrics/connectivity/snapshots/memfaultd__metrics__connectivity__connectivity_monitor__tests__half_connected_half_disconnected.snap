@@ -1,0 +1,8 @@
+---
+source: memfaultd/src/metrics/connectivity/connectivity_monitor.rs
+expression: sorted_metrics
+---
+{
+  "connectivity_connected_time_ms": 30000.0,
+  "connectivity_expected_time_ms": 60000.0
+}

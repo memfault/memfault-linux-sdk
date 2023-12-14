@@ -241,7 +241,7 @@ mod tests {
         create_file_with_size(&orig_attachment_path, 1024).unwrap();
 
         let builder = builder
-            .add_attachment(orig_attachment_path.clone())
+            .add_attachment(orig_attachment_path)
             .set_metadata(Metadata::test_fixture());
 
         assert_eq!(

@@ -18,6 +18,10 @@ expression: manifest
     "software_type": "test",
     "device_serial": "001"
   },
+  "producer": {
+    "id": "memfaultd",
+    "version": "tests"
+  },
   "type": "device-attributes",
   "metadata": {
     "attributes": [

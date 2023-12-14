@@ -18,13 +18,15 @@ use crate::{
 
 /// Collect all valid MAR entries, upload them and delete them on success.
 ///
+/// Returns the number of MAR entries that were uploaded.
+///
 /// This function will not do anything with invalid MAR entries (we assume they are "under construction").
 pub fn collect_and_upload(
     mar_staging: &Path,
     client: &impl NetworkClient,
     max_zip_size: usize,
     sampling: Sampling,
-) -> Result<()> {
+) -> Result<usize> {
     let mut entries = MarEntry::iterate_from_container(mar_staging)?
         // Apply fleet sampling to the MAR entries
         .filter(|entry_result| match entry_result {
@@ -39,8 +41,7 @@ pub fn collect_and_upload(
         included_entries.iter().for_each(|f| {
             let _ = remove_dir_all(f);
         })
-    })?;
-    Ok(())
+    })
 }
 
 /// Given the Metadata of a MAR entry and the fleet sampling configuration, return the applicable
@@ -152,16 +153,19 @@ fn upload_mar_entries(
     client: &impl NetworkClient,
     max_zip_size: usize,
     callback: fn(entries: Vec<PathBuf>) -> (),
-) -> Result<()> {
+) -> Result<usize> {
+    let zip_files = gather_mar_entries_to_zip(entries, max_zip_size);
+    let count = zip_files.len();
+
     for MarZipContents {
         entry_paths,
         zip_infos,
-    } in gather_mar_entries_to_zip(entries, max_zip_size)
+    } in zip_files.into_iter()
     {
         client.upload_mar_file(BufReader::new(ZipEncoder::new(zip_infos)))?;
         callback(entry_paths);
     }
-    Ok(())
+    Ok(count)
 }
 
 #[cfg(test)]

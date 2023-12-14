@@ -1,90 +1,31 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
+use crate::util::patterns::{
+    alphanum_slug_dots_colon_is_valid, alphanum_slug_dots_colon_spaces_parens_slash_is_valid,
+    alphanum_slug_is_valid,
+};
+
 pub fn software_type_is_valid(s: &str) -> eyre::Result<()> {
-    alphanum_slug_dots_colon_is_valid(s)
+    alphanum_slug_dots_colon_is_valid(s, 128)
 }
 
 pub fn software_version_is_valid(s: &str) -> eyre::Result<()> {
-    alphanum_slug_dots_colon_spaces_parens_slash_is_valid(s)
+    alphanum_slug_dots_colon_spaces_parens_slash_is_valid(s, 128)
 }
 
 pub fn hardware_version_is_valid(s: &str) -> eyre::Result<()> {
-    alphanum_slug_dots_colon_is_valid(s)
+    alphanum_slug_dots_colon_is_valid(s, 128)
 }
 
 pub fn device_id_is_valid(id: &str) -> eyre::Result<()> {
-    alphanum_slug_is_valid(id)
-}
-
-fn alphanum_slug_is_valid(s: &str) -> eyre::Result<()> {
-    match (
-        (1..128).contains(&s.len()),
-        s.chars()
-            .all(|c| matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' )),
-    ) {
-        (true, true) => Ok(()),
-        (false, _) => Err(eyre::eyre!("Must be with 1 and 128 characters long")),
-        (_, false) => Err(eyre::eyre!(
-            "Must only contain alphanumeric characters and - or _"
-        )),
-    }
-}
-
-fn alphanum_slug_dots_colon_is_valid(s: &str) -> eyre::Result<()> {
-    match (
-        (1..128).contains(&s.len()),
-        s.chars()
-            .all(|c| matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '+' | '.' | ':')),
-    ) {
-        (true, true) => Ok(()),
-        (false, _) => Err(eyre::eyre!("Must be with 1 and 128 characters long")),
-        (_, false) => Err(eyre::eyre!(
-            "Must only contain alphanumeric characters, -,_,+,., and :"
-        )),
-    }
-}
-
-fn alphanum_slug_dots_colon_spaces_parens_slash_is_valid(s: &str) -> eyre::Result<()> {
-    match ((1..128).contains(&s.len()), s.chars().all(|c| matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '+' | '.' | ':' | ' ' | '[' | ']' | '(' | ')' | '\\'))) {
-        (true, true) => Ok(()),
-        (false, _) => Err(eyre::eyre!("Must be with 1 and 128 characters long")),
-        (_, false) => Err(eyre::eyre!("Must only contain alphanumeric characters, spaces, -,_,+,.,:,[,],(,), and \\")),
-    }
+    alphanum_slug_is_valid(id, 128)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use rstest::rstest;
-
-    #[rstest]
-    #[case("1.0.0-rc2", true)]
-    #[case("qemuarm64", true)]
-    #[case("1.0.0-$", false)]
-    #[case("2.30^.1-rc4", false)]
-    #[case("2.30\\.1-rc4", false)]
-    #[case("spaces are invalid", false)]
-    fn test_alphanum_slug_dots_colon_is_valid(#[case] input: &str, #[case] result: bool) {
-        assert_eq!(alphanum_slug_dots_colon_is_valid(input).is_ok(), result);
-    }
-
-    #[rstest]
-    #[case("1.0.0-rc2", true)]
-    #[case("qemuarm64", true)]
-    #[case("1.0.0-$", false)]
-    #[case("2.30^.1-rc4", false)]
-    #[case("2.30\\.1-rc4", true)]
-    #[case("spaces are valid", true)]
-    fn test_alphanum_slug_dots_colon_spaces_parens_slash_is_valid(
-        #[case] input: &str,
-        #[case] result: bool,
-    ) {
-        assert_eq!(
-            alphanum_slug_dots_colon_spaces_parens_slash_is_valid(input).is_ok(),
-            result
-        );
-    }
 
     #[rstest]
     // Minimum 1 character

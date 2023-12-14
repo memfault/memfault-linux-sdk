@@ -43,7 +43,8 @@ expression: content
     "rotate_size_kib": 10240,
     "rotate_after_seconds": 3600,
     "compression_level": 1,
-    "max_lines_per_minute": 500
+    "max_lines_per_minute": 500,
+    "log_to_metrics": null
   },
   "mar": {
     "mar_file_max_size_kib": 10240,
@@ -51,5 +52,7 @@ expression: content
   },
   "http_server": {
     "bind_address": "127.0.0.1:8787"
-  }
+  },
+  "battery_monitor": null,
+  "connectivity_monitor": null
 }

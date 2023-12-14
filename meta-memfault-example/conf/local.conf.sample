@@ -27,6 +27,11 @@ VIRTUAL-RUNTIME_init_manager = "systemd"
 DISTRO_FEATURES_BACKFILL_CONSIDERED:append = "sysvinit"
 VIRTUAL-RUNTIME_initscripts = ""
 
+# (Optional) Disable syslog - memfaultd will persist the logs when wanted
+# https://docs.yoctoproject.org/dev-manual/init-manager.html?highlight=syslog#using-systemd-journald-without-a-traditional-syslog-daemon
+VIRTUAL-RUNTIME_syslog = ""
+VIRTUAL-RUNTIME_base-utils-syslog = ""
+
 # Versioning env variables
 MEMFAULT_BASE_URL:pn-memfaultd := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_BASE_URL')}"
 MEMFAULT_PROJECT_KEY:pn-memfaultd := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_PROJECT_KEY')}"

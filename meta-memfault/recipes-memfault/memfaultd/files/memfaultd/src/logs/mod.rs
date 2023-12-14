@@ -11,3 +11,6 @@ pub mod headroom;
 pub use headroom::HeadroomLimiter;
 mod log_file;
 mod recovery;
+
+#[cfg(feature = "log-to-metrics")]
+mod log_to_metrics;

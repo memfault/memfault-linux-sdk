@@ -1,9 +1,10 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-mod reasons;
-
-pub use reasons::RebootReason;
+mod reason;
+pub use reason::RebootReason;
+mod reason_codes;
+pub use reason_codes::RebootReasonCode;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -117,20 +118,20 @@ impl<'a> RebootReasonTracker<'a> {
             if let Some(new_reboot_reason) = (reason_source.func)(self.config) {
                 if reboot_reason.is_some() {
                     info!(
-                        "Discarded reboot reason {} ({:#04x}) from {} source for boot_id {}",
-                        new_reboot_reason, new_reboot_reason as u32, reason_source.name, boot_id
+                        "Discarded reboot reason {:?} from {} source for boot_id {}",
+                        new_reboot_reason, reason_source.name, boot_id
                     );
                 } else {
-                    reboot_reason = Some(new_reboot_reason);
                     info!(
-                        "Using reboot reason {} ({:#04x}) from {} source for boot_id {}",
-                        new_reboot_reason, new_reboot_reason as u32, reason_source.name, boot_id
+                        "Using reboot reason {:?} from {} source for boot_id {}",
+                        new_reboot_reason, reason_source.name, boot_id
                     );
+                    reboot_reason = Some(new_reboot_reason);
                 }
             }
         }
 
-        Ok(reboot_reason.unwrap_or(RebootReason::Unknown))
+        Ok(reboot_reason.unwrap_or_else(|| RebootReason::from(RebootReasonCode::Unknown)))
     }
 }
 
@@ -149,7 +150,7 @@ impl<'a> Drop for RebootReasonTracker<'a> {
                 // Helper function to combine errors and handle them easier
                 fn inner_write(mut file: File) -> Result<()> {
                     // Ensure file is written as the process could exit before it is done.
-                    let reason_int = RebootReason::UserReset as u32;
+                    let reason_int = RebootReasonCode::UserReset as u32;
 
                     file.write_all(reason_int.to_string().as_bytes())?;
                     file.sync_all()?;
@@ -191,7 +192,7 @@ fn read_reboot_reason_and_clear_file_pstore(_config: &Config) -> Option<RebootRe
     if Path::new(PSTORE_DMESG_FILE).exists() {
         process_pstore_files(PSTORE_DIR);
 
-        Some(RebootReason::KernelPanic)
+        Some(RebootReason::from(RebootReasonCode::KernelPanic))
     } else {
         None
     }
@@ -220,22 +221,16 @@ fn read_reboot_reason_and_clear_file(file_name: &PathBuf) -> Option<RebootReason
         }
     };
 
-    let reboot_reason = reboot_reason_string
-        .trim()
-        .parse::<u32>()
-        .ok()
-        .and_then(RebootReason::from_repr);
-    if reboot_reason.is_none() {
-        error!(
-            "Failed to parse reboot reason {} in file {:?}",
-            reboot_reason_string, file_name
-        );
-    }
+    let reboot_reason = RebootReason::from_str(reboot_reason_string.trim()).unwrap_or_else(|_| {
+        warn!("Couldn't parse reboot reason: {}", reboot_reason_string);
+        RebootReason::Code(RebootReasonCode::Unknown)
+    });
 
     if let Err(e) = std::fs::remove_file(file_name) {
         error!("Failed to remove {:?}: {}", file_name, e.kind());
     }
-    reboot_reason
+
+    Some(reboot_reason)
 }
 
 fn process_pstore_files(pstore_dir: &str) {
@@ -264,9 +259,9 @@ pub fn write_reboot_reason_and_reboot(
     last_reboot_reason_file: &Path,
     reason: RebootReason,
 ) -> Result<()> {
-    println!("Rebooting with reason {} ({})", reason as u32, reason);
+    println!("Rebooting with reason {:?}", reason);
 
-    write(last_reboot_reason_file, format!("{}", reason as u32)).wrap_err_with(|| {
+    write(last_reboot_reason_file, format!("{}", reason)).wrap_err_with(|| {
         format!(
             "Unable to write reboot reason (path: {}).",
             last_reboot_reason_file.display()
@@ -317,11 +312,11 @@ mod test {
 
         let main_source = RebootReasonSource {
             name: "main",
-            func: |_: &Config| Some(RebootReason::HardFault),
+            func: |_: &Config| Some(RebootReason::from(RebootReasonCode::HardFault)),
         };
         let secondary_source = RebootReasonSource {
             name: "secondary",
-            func: |_: &Config| Some(RebootReason::UserReset),
+            func: |_: &Config| Some(RebootReason::from(RebootReasonCode::UserReset)),
         };
 
         let mut service_manager = MockMemfaultdServiceManager::new();
@@ -343,7 +338,10 @@ mod test {
             .expect("Failed to init reboot tracker");
 
         // Verify that the first reboot reason source is used
-        verify_mar_reboot_reason(RebootReason::HardFault, &mar_staging_path);
+        verify_mar_reboot_reason(
+            RebootReason::from(RebootReasonCode::HardFault),
+            &mar_staging_path,
+        );
     }
 
     #[rstest]
@@ -355,11 +353,11 @@ mod test {
         config.config_file.persist_dir =
             AbsolutePath::try_from(persist_dir.path().to_path_buf()).unwrap();
 
-        let reboot_reason = RebootReason::HardFault;
+        let reboot_reason = RebootReason::from(RebootReasonCode::HardFault);
 
         // Write values to last boot id and last reboot reason files
         let last_reboot_file = persist_dir.path().join("lastrebootreason");
-        std::fs::write(&last_reboot_file, (reboot_reason as u32).to_string())
+        std::fs::write(&last_reboot_file, reboot_reason.to_string())
             .expect("Failed to write last reboot file");
         let last_boot_id_file = persist_dir.path().join("last_tracked_boot_id");
         std::fs::write(last_boot_id_file, TEST_BOOT_ID).expect("Failed to write last boot id file");
@@ -394,9 +392,57 @@ mod test {
             .expect("Failed to read last reboot file")
             .parse::<u32>()
             .expect("Failed to parse reboot reason");
-        let reboot_reason = RebootReason::from_repr(reboot_reason).expect("Invalid reboot reason");
+        let reboot_reason = RebootReason::from(
+            RebootReasonCode::from_repr(reboot_reason).expect("Invalid reboot reason"),
+        );
 
-        assert_eq!(reboot_reason, RebootReason::UserReset);
+        assert_eq!(
+            reboot_reason,
+            RebootReason::from(RebootReasonCode::UserReset)
+        );
+    }
+
+    #[rstest]
+    fn test_custom_reboot_reason_parsing(_setup_logger: ()) {
+        let mut config = Config::test_fixture();
+        config.config_file.enable_data_collection = true;
+
+        let persist_dir = tempdir().unwrap();
+        config.config_file.persist_dir =
+            AbsolutePath::try_from(persist_dir.path().to_path_buf()).unwrap();
+
+        let reboot_reason = RebootReason::from_str("CustomRebootReason").unwrap();
+
+        // Write values to last boot id and last reboot reason files
+        let last_reboot_file = persist_dir.path().join("lastrebootreason");
+        std::fs::write(last_reboot_file, "CustomRebootReason")
+            .expect("Failed to write last reboot file");
+        let last_boot_id_file = persist_dir.path().join("last_tracked_boot_id");
+        std::fs::write(last_boot_id_file, TEST_BOOT_ID).expect("Failed to write last boot id file");
+
+        let source = RebootReasonSource {
+            name: "test",
+            func: read_reboot_reason_and_clear_file_internal,
+        };
+
+        let mut service_manager = MockMemfaultdServiceManager::new();
+        service_manager
+            .expect_service_manager_status()
+            .once()
+            .returning(|| Ok(ServiceManagerStatus::Stopping));
+
+        let mar_staging_path = config.mar_staging_path();
+
+        // Create mar staging dir
+        std::fs::create_dir_all(&mar_staging_path).expect("Failed to create mar staging dir");
+
+        let tracker =
+            RebootReasonTracker::new_with_sources(&config, vec![source], &service_manager);
+        tracker
+            .track_reboot()
+            .expect("Failed to init reboot tracker");
+
+        verify_mar_reboot_reason(reboot_reason, &mar_staging_path);
     }
 
     fn verify_mar_reboot_reason(reboot_reason: RebootReason, mar_staging_path: &Path) {
@@ -412,7 +458,7 @@ mod test {
         let manifest_string = std::fs::read_to_string(mar_manifest).unwrap();
         let manifest: Manifest = serde_json::from_str(&manifest_string).unwrap();
 
-        if let Metadata::LinuxReboot { reason } = manifest.metadata {
+        if let Metadata::LinuxReboot { reason, .. } = manifest.metadata {
             assert_eq!(reboot_reason, reason);
         } else {
             panic!("Unexpected metadata type");

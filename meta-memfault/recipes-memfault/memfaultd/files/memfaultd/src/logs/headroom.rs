@@ -402,12 +402,16 @@ mod tests {
             }
         }
 
-        fn rotate_unless_empty(&mut self) -> Result<bool> {
+        fn rotate_unless_empty(&mut self) -> Result<()> {
             unimplemented!();
         }
 
         fn current_log(&mut self) -> &mut FakeLogFileControl {
             self
+        }
+
+        fn close(self) -> Result<()> {
+            Ok(())
         }
     }
 

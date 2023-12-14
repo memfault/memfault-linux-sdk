@@ -6,6 +6,64 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] - 2023-12-14
+
+We are excited to introduce support for the
+[Memfault Core Metrics](https://docs.memfault.com/docs/platform/memfault-core-metrics)
+in `memfaultd` with this release. These metrics enable the monitoring of
+connectivity, battery usage, and crashiness out-of-the-box with minimal
+configuration.
+
+This release also adds the ability to convert logs into metrics _on the edge_.
+
+### Added
+
+- `memfaultd` now supports built-in capture of connectivity, battery, and
+  crashiness metrics. See our docs on [Memfault Core Metrics]
+  (https://docs.memfault.com/docs/platform/memfault-core-metrics).
+  - Crashiness is measured automatically (any hour without a coredump collected
+    will count as a crash-free hour).
+  - Battery and connectivity are supported via the
+    [`battery_monitor`](https://docs.memfault.com/docs/linux/reference-memfaultd-configuration#battery_monitor)
+    and
+    [`connectivity_monitor`](https://docs.memfault.com/docs/linux/reference-memfaultd-configuration#connectivity_monitor)
+    configuration options, and the new `memfaultctl` commands
+    [`add-battery-reading`](https://docs.memfault.com/docs/linux/reference-memfaultctl-cli#add-battery-reading),
+    [`report-sync-success`](https://docs.memfault.com/docs/linux/reference-memfaultctl-cli#report-sync-success),
+    and
+    [`report-sync-failure`](https://docs.memfault.com/docs/linux/reference-memfaultctl-cli#report-sync-failure).
+- The ability to convert log into metrics. Further details on this new feature
+  are provided in our
+  [logging guide](https://docs.memfault.com/docs/linux/logging#converting-logs-into-metrics)
+- Support for string reboot reasons in addition to the existing reset code
+  integers. This allows users to define custom reboot reasons specific to their
+  device or domain. (Visualizations of these custom reboot reason in the backend
+  will be shipped in the next few days).
+
+### Changed
+
+- The behavior of how Gauge collectd metrics are aggregated on edge. Prior to
+  this change, the last reading collected for a gauge metric was what was sent
+  to Memfault in the interval's heartbeat. Now, the value sent up for a gauge is
+  the average of all readings for that metric within a given heartbeat.
+- openssl version bumped to 10.60.0
+- Added the
+  [recommended settings](https://docs.memfault.com/docs/linux/metrics#application-metrics)
+  `DeleteGauges` and `DeleteCounters` to `true` in `meta-memfault-example`'s
+  `collectd.conf`. This is so metrics whose readings are sparsely collected do
+  not use resources being uploaded in every upload interval. These can be set to
+  `false` if alternate behavior is desired (collectd docs
+  [here](https://collectd.org/documentation/manpages/collectd.conf.5.shtml#plugin_statsd))
+
+### Fixed
+
+- A bug related to how `memfaultd` collects coredumps that caused a very small
+  number of stacktraces to not be displayed properly in the Memfault app.
+- Added `openssl` to `meta-memfault-example`'s Fluent Bit bitbake recipe.
+- Added `zlib` as a dependency of `memfaultd` in its bitbake recipe. `zlib` is
+  required as we use the `zlib` backend for the `flate2` crate.
+- Fixed a bug which caused `memfaultd` to create an empty logfile on shutdown.
+
 ## [1.8.1] - 2023-11-6
 
 This is a small release to address a bug we discovered in how MAR entries'
@@ -675,3 +733,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.8.0-kirkstone
 [1.8.1]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.8.1-kirkstone
+[1.9.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.9.0-kirkstone

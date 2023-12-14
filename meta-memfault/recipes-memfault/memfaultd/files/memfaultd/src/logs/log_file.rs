@@ -71,8 +71,9 @@ impl LogFile for LogFileImpl {
 
 pub trait LogFileControl<L: LogFile> {
     fn rotate_if_needed(&mut self) -> Result<bool>;
-    fn rotate_unless_empty(&mut self) -> Result<bool>;
+    fn rotate_unless_empty(&mut self) -> Result<()>;
     fn current_log(&mut self) -> &mut L;
+    fn close(self) -> Result<()>;
 }
 
 /// Controls the creation and rotation of logfiles.
@@ -104,7 +105,28 @@ impl LogFileControlImpl {
         })
     }
 
-    fn dispatch_on_log_completion(&mut self, mut log: LogFileImpl, next_cid: Uuid) {
+    /// Close current logfile, create a MAR entry and starts a new one.
+    fn rotate_log(&mut self) -> Result<()> {
+        // Start a new log and make it the current one. We are now writing there.
+        let closed_log = replace(
+            &mut self.current_log,
+            LogFileImpl::open(&self.tmp_path, Uuid::new_v4(), self.compression_level)?,
+        );
+
+        Self::dispatch_on_log_completion(
+            &mut self.on_log_completion,
+            closed_log,
+            self.current_log.cid,
+        );
+
+        Ok(())
+    }
+
+    fn dispatch_on_log_completion(
+        on_log_completion: &mut Box<(dyn FnMut(CompletedLog) -> Result<()> + Send)>,
+        mut log: LogFileImpl,
+        next_cid: Uuid,
+    ) {
         // Drop the old log, finishing the compression, closing the buffered writer and the file.
         log.writer.flush().unwrap_or_else(|e| {
             warn!("Failed to flush logs: {}", e);
@@ -113,7 +135,7 @@ impl LogFileControlImpl {
         let LogFileImpl { path, cid, .. } = log;
 
         // The callback is responsible for moving the file to its final location (or deleting it):
-        (self.on_log_completion)(CompletedLog {
+        (on_log_completion)(CompletedLog {
             path: path.clone(),
             cid,
             next_cid,
@@ -129,40 +151,93 @@ impl LogFileControlImpl {
             });
         });
     }
-
-    /// Close current logfile, create a MAR entry and starts a new one.
-    fn rotate_log(&mut self) -> Result<()> {
-        // Start a new log and make it the current one. We are now writing there.
-        let closed_log = replace(
-            &mut self.current_log,
-            LogFileImpl::open(&self.tmp_path, Uuid::new_v4(), self.compression_level)?,
-        );
-
-        self.dispatch_on_log_completion(closed_log, self.current_log.cid);
-
-        Ok(())
-    }
-
-    fn rotate_if(&mut self, condition: bool) -> Result<bool> {
-        if condition {
-            self.rotate_log().wrap_err("Error rotating log")?;
-            return Ok(true);
-        }
-        Ok(false)
-    }
 }
 
 impl LogFileControl<LogFileImpl> for LogFileControlImpl {
     fn rotate_if_needed(&mut self) -> Result<bool> {
-        self.rotate_if(
-            self.current_log.bytes_written >= self.max_size
-                || self.current_log.since.elapsed() > self.max_duration,
-        )
+        if self.current_log.bytes_written >= self.max_size
+            || self.current_log.since.elapsed() > self.max_duration
+        {
+            self.rotate_log()?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
-    fn rotate_unless_empty(&mut self) -> Result<bool> {
-        self.rotate_if(self.current_log.bytes_written > 0)
+
+    fn rotate_unless_empty(&mut self) -> Result<()> {
+        if self.current_log.bytes_written > 0 {
+            self.rotate_log()?;
+        }
+        Ok(())
     }
+
     fn current_log(&mut self) -> &mut LogFileImpl {
         &mut self.current_log
+    }
+
+    fn close(mut self) -> Result<()> {
+        if self.current_log.bytes_written > 0 {
+            Self::dispatch_on_log_completion(
+                &mut self.on_log_completion,
+                self.current_log,
+                Uuid::new_v4(),
+            );
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Read;
+
+    use super::*;
+    use flate2::bufread::ZlibDecoder;
+    use rand::distributions::{Alphanumeric, DistString};
+    use rstest::rstest;
+    use tempfile::tempdir;
+
+    // We saw this bug when we tried switching to the rust-based backend for flate2 (miniz-oxide)
+    // With miniz 0.7.1 and flate2 1.0.28, this test does not pass.
+    #[rstest]
+    fn test_write_without_corruption() {
+        let tmp = tempdir().expect("tmpdir");
+
+        // Generate a logfile with lots of bogus data
+        let mut log = LogFileImpl::open(tmp.path(), Uuid::new_v4(), Compression::fast())
+            .expect("open log error");
+        let mut count_lines = 0;
+        while log.bytes_written < 1024 * 1024 {
+            let message = format!(
+                "bogus {} bogum {} bodoum",
+                Alphanumeric.sample_string(&mut rand::thread_rng(), 16),
+                Alphanumeric.sample_string(&mut rand::thread_rng(), 20),
+            );
+            log.write_json_line(json!({ "data": { "message": message, "prio": 42, "unit": "systemd"}, "ts": "2023-22-22T22:22:22Z"})).expect("error writing json line");
+            count_lines += 1;
+        }
+
+        let logfile = log.path.clone();
+        drop(log);
+
+        // Decompress without error
+        let bytes = std::fs::read(&logfile).expect("Unable to read {filename}");
+        let mut z = ZlibDecoder::new(&bytes[..]);
+        let mut loglines = String::new();
+        z.read_to_string(&mut loglines).expect("read error");
+
+        // Check we have all the lines
+        assert_eq!(count_lines, loglines.lines().count());
+
+        // Check all lines are valid json
+        let mut count_invalid_lines = 0;
+        for line in loglines.lines() {
+            if serde_json::from_str::<Value>(line).is_err() {
+                eprintln!("invalid line: {line}");
+                count_invalid_lines += 1;
+            }
+        }
+        assert_eq!(count_invalid_lines, 0);
     }
 }

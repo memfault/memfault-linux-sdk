@@ -10,8 +10,11 @@ use stderrlog::LogLevelNum;
 mod memfault_core_handler;
 mod memfaultctl;
 mod memfaultd;
+mod memfaultd_client;
 mod show_settings;
 mod version;
+
+pub use memfaultd_client::*;
 
 fn init_logger(level: LevelFilter) {
     stderrlog::new()

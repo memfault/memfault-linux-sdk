@@ -5,7 +5,9 @@ mod disk_backed;
 pub use disk_backed::*;
 mod die;
 pub mod disk_size;
+pub mod patterns;
 pub use die::*;
+pub mod can_connect;
 pub mod fs;
 pub mod io;
 pub mod ipc;
@@ -23,4 +25,5 @@ pub mod system;
 pub mod task;
 #[cfg(feature = "logging")]
 pub mod tcp_server;
+pub mod time_measure;
 pub mod zip;

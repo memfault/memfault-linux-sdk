@@ -2,7 +2,7 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 use eyre::{eyre, Context, Result};
-use std::io::Read;
+use std::{io::Read, str::from_utf8, time::Duration};
 
 use reqwest::{blocking::Client, header::ACCEPT, StatusCode};
 
@@ -34,11 +34,11 @@ pub enum ExportDeleteResponse {
 }
 
 impl MemfaultdClient {
-    pub fn from_config(config: &Config) -> Self {
-        MemfaultdClient {
-            client: Client::new(),
+    pub fn from_config(config: &Config) -> Result<Self> {
+        Ok(MemfaultdClient {
+            client: Client::builder().timeout(Duration::from_secs(10)).build()?,
             base_url: format!("http://{}", config.config_file.http_server.bind_address),
-        }
+        })
     }
 
     pub fn export_get(&self, format: &ExportFormat) -> Result<ExportGetResponse> {
@@ -86,6 +86,49 @@ impl MemfaultdClient {
                 "Unexpected status code {}",
                 r.status().as_u16()
             ))),
+        }
+    }
+
+    pub fn add_battery_reading(&self, battery_reading_string: &str) -> Result<()> {
+        let r = self
+            .client
+            .post(format!("{}{}", self.base_url, "/v1/battery/add_reading"))
+            .body(battery_reading_string.to_string())
+            .send()?;
+        match r.status() {
+            StatusCode::OK => Ok(()),
+            _ => Err(eyre!(
+                "Unexpected status code {}: {}",
+                r.status().as_u16(),
+                from_utf8(&r.bytes()?)?
+            )),
+        }
+    }
+
+    pub fn notify_crash(&self) -> Result<()> {
+        self.client
+            .post(format!("{}{}", self.base_url, "/v1/crash/report"))
+            .send()?;
+        Ok(())
+    }
+
+    pub fn report_sync(&self, success: bool) -> Result<()> {
+        let path = if success {
+            "/v1/sync/success"
+        } else {
+            "/v1/sync/failure"
+        };
+        let r = self
+            .client
+            .post(format!("{}{}", self.base_url, path))
+            .send()?;
+        match r.status() {
+            StatusCode::OK => Ok(()),
+            _ => Err(eyre!(
+                "Unexpected status code {}: {}",
+                r.status().as_u16(),
+                from_utf8(&r.bytes()?)?
+            )),
         }
     }
 }

@@ -1,0 +1,50 @@
+[
+    {
+        "values": [1],
+        "dstypes": ["gauge"],
+        "dsnames": ["value"],
+        "time": 1698360892.757,
+        "interval": 10.0,
+        "host": "linux-devbox",
+        "plugin": "statsd",
+        "plugin_instance": "",
+        "type": "count",
+        "type_instance": "mypythonapp.counter1"
+    },
+    {
+        "values": [0.999995505178062],
+        "dstypes": ["derive"],
+        "dsnames": ["value"],
+        "time": 1698360892.757,
+        "interval": 10.0,
+        "host": "linux-devbox",
+        "plugin": "statsd",
+        "plugin_instance": "",
+        "type": "derive",
+        "type_instance": "mypythonapp.counter2"
+    },
+    {
+        "values": [10],
+        "dstypes": ["gauge"],
+        "dsnames": ["value"],
+        "time": 1698360892.757,
+        "interval": 10.0,
+        "host": "linux-devbox",
+        "plugin": "statsd",
+        "plugin_instance": "",
+        "type": "count",
+        "type_instance": "mypythonapp.counter2"
+    },
+    {
+        "values": [0.0999993716964859],
+        "dstypes": ["derive"],
+        "dsnames": ["value"],
+        "time": 1698360892.757,
+        "interval": 10.0,
+        "host": "linux-devbox",
+        "plugin": "statsd",
+        "plugin_instance": "",
+        "type": "derive",
+        "type_instance": "mypythonapp.counter1"
+    }
+]

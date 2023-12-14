@@ -1,0 +1,13 @@
+{
+    "connectivity_monitor": {
+        "interval_seconds": 30,
+        "timeout_seconds": 10,
+        "targets": [
+            {
+                "host": "8.8.8.8",
+                "port": 443,
+                "protocol": "tcp"
+            }
+        ]
+    }
+}
