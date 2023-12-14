@@ -34,7 +34,7 @@ def test_start(qemu: QEMU) -> None:
     qemu.child().expect("Starting with developer mode enabled")
 
     # Check that the service did not fail:
-    # FIXME: pexpect does not have a "not expecting" API :/
+    # TODO: pexpect does not have a "not expecting" API :/
     qemu.exec_cmd("journalctl -u memfaultd.service")
     output = b""
     while True:

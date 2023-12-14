@@ -18,15 +18,15 @@ expression: manifest
     "software_type": "test",
     "device_serial": "001"
   },
+  "producer": {
+    "id": "memfaultd",
+    "version": "tests"
+  },
   "type": "linux-logs",
   "metadata": {
     "format": {
       "id": "v1",
       "serialization": "json-lines"
-    },
-    "producer": {
-      "id": "memfaultd",
-      "version": "tests"
     },
     "log_file_name": "/var/log/syslog",
     "compression": "zlib",

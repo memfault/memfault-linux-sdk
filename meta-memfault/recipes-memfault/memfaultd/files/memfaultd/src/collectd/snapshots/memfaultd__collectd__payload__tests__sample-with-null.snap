@@ -8,7 +8,8 @@ expression: metadatas
     "value": {
       "Gauge": {
         "value": 973577.0,
-        "timestamp": "2023-06-06T22:04:02.785Z"
+        "timestamp": "2023-06-06T22:04:02.785Z",
+        "interval": 20.0
       }
     }
   },
@@ -17,7 +18,8 @@ expression: metadatas
     "value": {
       "Gauge": {
         "value": 11160961024.0,
-        "timestamp": "2023-06-06T22:04:02.785Z"
+        "timestamp": "2023-06-06T22:04:02.785Z",
+        "interval": 20.0
       }
     }
   },
@@ -26,7 +28,8 @@ expression: metadatas
     "value": {
       "Gauge": {
         "value": 11797676032.0,
-        "timestamp": "2023-06-06T22:04:02.785Z"
+        "timestamp": "2023-06-06T22:04:02.785Z",
+        "interval": 20.0
       }
     }
   },
@@ -35,7 +38,8 @@ expression: metadatas
     "value": {
       "Gauge": {
         "value": 3427991552.0,
-        "timestamp": "2023-06-06T22:04:02.785Z"
+        "timestamp": "2023-06-06T22:04:02.785Z",
+        "interval": 20.0
       }
     }
   }

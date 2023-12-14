@@ -116,6 +116,8 @@ pub fn show_settings(config_path: Option<&Path>) -> Result<()> {
         "coredump",
         #[cfg(feature = "logging")]
         "logging",
+        #[cfg(feature = "log-to-metrics")]
+        "log-to-metrics",
         #[cfg(feature = "systemd")]
         "systemd",
     ];

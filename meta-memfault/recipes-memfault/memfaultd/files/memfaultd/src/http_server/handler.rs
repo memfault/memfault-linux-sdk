@@ -54,7 +54,7 @@ impl From<Result<ResponseBox>> for HttpHandlerResult {
 }
 
 /// An HttpHandler can handle a request and send a response.
-pub trait HttpHandler: Send + Sync {
+pub trait HttpHandler: Send {
     /// Handle a request and prepares the response.
     ///
     /// ```

@@ -2,12 +2,13 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 use argh::{FromArgs, TopLevelCommand};
-use std::path::Path;
+use std::{path::Path, str::FromStr};
 
+mod add_battery_reading;
 mod config_file;
 mod coredump;
 mod export;
-mod memfaultd_client;
+mod report_sync;
 mod sync;
 mod write_attributes;
 
@@ -20,9 +21,11 @@ use crate::{
 use crate::{mar::MarEntryBuilder, util::output_arg::OutputArg};
 
 use crate::cli::init_logger;
+use crate::cli::memfaultctl::add_battery_reading::add_battery_reading;
 use crate::cli::memfaultctl::config_file::{set_data_collection, set_developer_mode};
 use crate::cli::memfaultctl::coredump::{trigger_coredump, ErrorStrategy};
 use crate::cli::memfaultctl::export::export;
+use crate::cli::memfaultctl::report_sync::report_sync;
 use crate::cli::memfaultctl::sync::sync;
 use crate::cli::show_settings::show_settings;
 use crate::config::Config;
@@ -94,6 +97,9 @@ enum MemfaultctlCommand {
     Synchronize(SyncArgs),
     TriggerCoredump(TriggerCoredumpArgs),
     WriteAttributes(WriteAttributesArgs),
+    AddBatteryReading(AddBatteryReadingArgs),
+    ReportSyncSuccess(ReportSyncSuccessArgs),
+    ReportSyncFailure(ReportSyncFailureArgs),
 }
 
 #[derive(FromArgs)]
@@ -137,8 +143,8 @@ pub struct ExportArgs {
 #[argh(subcommand, name = "reboot")]
 struct RebootArgs {
     /// a reboot reason ID from https://docs.memfault.com/docs/platform/reference-reboot-reason-ids
-    #[argh(option, default = "0")]
-    reason: u32,
+    #[argh(option)]
+    reason: String,
 }
 
 #[derive(FromArgs)]
@@ -173,6 +179,27 @@ struct WriteAttributesArgs {
     #[argh(positional)]
     attributes: Vec<DeviceAttribute>,
 }
+
+#[derive(FromArgs)]
+/// add a reading to memfaultd's battery metrics in format "[status string]:[0.0-100.0]".
+#[argh(subcommand, name = "add-battery-reading")]
+struct AddBatteryReadingArgs {
+    // Valid status strings are "Charging", "Not charging", "Discharging", "Unknown", and "Full"
+    // These are based off the values that can appear in /sys/class/power_supply/<supply_name>/status
+    // See: https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-class-power
+    #[argh(positional)]
+    reading_string: String,
+}
+
+#[derive(FromArgs)]
+/// Report a successful sync for connectivity metrics
+#[argh(subcommand, name = "report-sync-success")]
+struct ReportSyncSuccessArgs {}
+
+#[derive(FromArgs)]
+/// Report a failed sync for connectivity metrics
+#[argh(subcommand, name = "report-sync-failure")]
+struct ReportSyncFailureArgs {}
 
 fn check_data_collection_enabled(config: &Config, do_what: &str) -> Result<()> {
     match config.config_file.enable_data_collection {
@@ -219,12 +246,8 @@ pub fn main() -> Result<()> {
         }
         MemfaultctlCommand::Export(args) => export(&config, &args).wrap_err("Error exporting data"),
         MemfaultctlCommand::Reboot(args) => {
-            let reason = RebootReason::from_repr(args.reason).ok_or_else(|| {
-                eyre!(
-                    "Invalid reboot reason {}.\nRefer to https://docs.memfault.com/docs/platform/reference-reboot-reason-ids",
-                    args.reason
-                )
-            })?;
+            let reason = RebootReason::from_str(&args.reason)
+                .wrap_err(eyre!("Failed to parse {}", args.reason))?;
             write_reboot_reason_and_reboot(
                 &config.config_file.reboot.last_reboot_reason_file,
                 reason,
@@ -251,5 +274,10 @@ pub fn main() -> Result<()> {
                     .map(|_entry| ())
             }
         }
+        MemfaultctlCommand::AddBatteryReading(AddBatteryReadingArgs { reading_string }) => {
+            add_battery_reading(&config, &reading_string)
+        }
+        MemfaultctlCommand::ReportSyncSuccess(_) => report_sync(&config, true),
+        MemfaultctlCommand::ReportSyncFailure(_) => report_sync(&config, false),
     }
 }

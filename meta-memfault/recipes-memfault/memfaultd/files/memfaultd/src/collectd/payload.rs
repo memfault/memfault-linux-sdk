@@ -95,16 +95,29 @@ impl From<Payload> for Vec<KeyedMetricReading> {
             .map(|(key, value, dstype)| KeyedMetricReading {
                 name: key,
                 value: match dstype {
+                    // Refer to https://github.com/collectd/collectd/wiki/Data-source
+                    // for a general description of what CollectdD datasources are.
+
+                    // Statsd generated counter values.
+                    // See https://github.com/collectd/collectd/blob/7c5ce9f250aafbb6ef89769d7543ea155618b2ad/src/statsd.c#L799-L810
+                    DataSourceType::Gauge if payload.type_str == "count" => {
+                        MetricReading::Counter {
+                            value: *value,
+                            timestamp: payload.time,
+                        }
+                    }
                     DataSourceType::Gauge => MetricReading::Gauge {
-                        value: *value,
-                        timestamp: payload.time,
-                    },
-                    DataSourceType::Derive => MetricReading::Rate {
                         value: *value,
                         timestamp: payload.time,
                         interval: payload.interval,
                     },
-                    DataSourceType::Counter => MetricReading::Rate {
+                    DataSourceType::Derive => MetricReading::Gauge {
+                        value: *value,
+                        timestamp: payload.time,
+                        interval: payload.interval,
+                    },
+                    // A counter is a Derive (rate) that will never be negative.
+                    DataSourceType::Counter => MetricReading::Gauge {
                         value: *value,
                         timestamp: payload.time,
                         interval: payload.interval,
@@ -112,10 +125,12 @@ impl From<Payload> for Vec<KeyedMetricReading> {
                     DataSourceType::Absolute => MetricReading::Gauge {
                         value: *value,
                         timestamp: payload.time,
+                        interval: payload.interval,
                     },
                     DataSourceType::Unknown => MetricReading::Gauge {
                         value: *value,
                         timestamp: payload.time,
+                        interval: payload.interval,
                     },
                 },
             })
@@ -174,6 +189,8 @@ mod tests {
     // Note: sample1 contains multiple payloads. Some have equal timestamps (and need to be consolidated), some have "simple values".
     #[case("sample1")]
     #[case("sample-with-null")]
+    #[case("statsd-counter-first-seen")]
+    #[case("statsd-counter")]
     fn convert_collectd_payload_into_heartbeat_metadata(#[case] name: &str) {
         let input_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("src/collectd/fixtures")

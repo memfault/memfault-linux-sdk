@@ -1,0 +1,44 @@
+---
+source: memfaultd/src/collectd/payload.rs
+expression: metadatas
+---
+[
+  {
+    "name": "statsd/count/mypythonapp.counter1",
+    "value": {
+      "Counter": {
+        "value": 1.0,
+        "timestamp": "2023-10-26T22:54:52.757Z"
+      }
+    }
+  },
+  {
+    "name": "statsd/derive/mypythonapp.counter2",
+    "value": {
+      "Gauge": {
+        "value": 0.999995505178062,
+        "timestamp": "2023-10-26T22:54:52.757Z",
+        "interval": 20.0
+      }
+    }
+  },
+  {
+    "name": "statsd/count/mypythonapp.counter2",
+    "value": {
+      "Counter": {
+        "value": 10.0,
+        "timestamp": "2023-10-26T22:54:52.757Z"
+      }
+    }
+  },
+  {
+    "name": "statsd/derive/mypythonapp.counter1",
+    "value": {
+      "Gauge": {
+        "value": 0.0999993716964859,
+        "timestamp": "2023-10-26T22:54:52.757Z",
+        "interval": 20.0
+      }
+    }
+  }
+]

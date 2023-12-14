@@ -25,6 +25,8 @@ pub struct Manifest {
     schema_version: u32,
     pub collection_time: CollectionTime,
     device: Device,
+    #[serde(default)]
+    producer: Producer,
     #[serde(flatten)]
     pub metadata: Metadata,
 }
@@ -50,6 +52,21 @@ struct Device {
     device_serial: String,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct Producer {
+    pub id: String,
+    pub version: String,
+}
+
+impl Default for Producer {
+    fn default() -> Self {
+        Self {
+            id: "memfaultd".into(),
+            version: VERSION.to_owned(),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Copy, Clone)]
 pub enum CompressionAlgorithm {
     None,
@@ -71,7 +88,6 @@ pub enum Metadata {
     #[serde(rename = "linux-logs")]
     LinuxLogs {
         format: LinuxLogsFormat,
-        producer: LinuxLogsProducer,
         // PathBuf.file_name() -> OsString but serde does not handle it well
         // so we use a String here.
         log_file_name: String,
@@ -96,6 +112,8 @@ pub enum Metadata {
     LinuxHeartbeat {
         #[serde(serialize_with = "crate::util::serialization::sorted_map::sorted_map")]
         metrics: HashMap<MetricStringKey, MetricValue>,
+        #[serde(rename = "duration_ms", with = "milliseconds_to_duration")]
+        duration: Duration,
     },
 }
 
@@ -103,12 +121,6 @@ pub enum Metadata {
 pub struct LinuxLogsFormat {
     id: String,
     serialization: String,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct LinuxLogsProducer {
-    id: String,
-    version: String,
 }
 
 // Note: Memfault manifest defines Cid as an object containing a Uuid.
@@ -162,10 +174,6 @@ impl Metadata {
             format: LinuxLogsFormat {
                 id: "v1".into(),
                 serialization: "json-lines".into(),
-            },
-            producer: LinuxLogsProducer {
-                id: "memfaultd".into(),
-                version: VERSION.to_owned(),
             },
         }
     }
@@ -232,6 +240,7 @@ impl Manifest {
         Manifest {
             collection_time,
             device: Device::from(config),
+            producer: Producer::default(),
             schema_version: 1,
             metadata,
         }
@@ -260,13 +269,14 @@ impl Metadata {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, str::FromStr};
 
-    use crate::{mar::CompressionAlgorithm, metrics::MetricValue};
+    use crate::{mar::CompressionAlgorithm, metrics::MetricValue, reboot::RebootReasonCode};
     use rstest::rstest;
     use uuid::uuid;
 
     use crate::network::NetworkConfig;
+    use crate::reboot::RebootReason;
 
     use super::{CollectionTime, Manifest};
 
@@ -281,7 +291,7 @@ mod tests {
             CollectionTime::test_fixture(),
             super::Metadata::new_coredump("/tmp/core.elf".into(), compression),
         );
-        insta::assert_json_snapshot!(name, manifest, { ".metadata.producer.version" => "tests"});
+        insta::assert_json_snapshot!(name, manifest, { ".producer.version" => "tests"});
     }
 
     #[rstest]
@@ -297,7 +307,7 @@ mod tests {
             CollectionTime::test_fixture(),
             super::Metadata::new_log("/var/log/syslog".into(), this_cid, next_cid, compression),
         );
-        insta::assert_json_snapshot!(name, manifest, { ".metadata.producer.version" => "tests"});
+        insta::assert_json_snapshot!(name, manifest, { ".producer.version" => "tests" });
     }
 
     #[rstest]
@@ -313,7 +323,7 @@ mod tests {
                 ("my_bool", true).try_into().unwrap(),
             ]),
         );
-        insta::assert_json_snapshot!(manifest, { ".metadata.producer.version" => "tests"});
+        insta::assert_json_snapshot!(manifest, { ".producer.version" => "tests"});
     }
 
     #[rstest]
@@ -324,7 +334,7 @@ mod tests {
             CollectionTime::test_fixture(),
             super::Metadata::new_device_config(42),
         );
-        insta::assert_json_snapshot!(manifest, { ".metadata.producer.version" => "tests"});
+        insta::assert_json_snapshot!(manifest, { ".producer.version" => "tests"});
     }
 
     #[rstest]
@@ -333,9 +343,36 @@ mod tests {
         let manifest = Manifest::new(
             &config,
             CollectionTime::test_fixture(),
-            super::Metadata::new_reboot(super::RebootReason::UserShutdown),
+            super::Metadata::new_reboot(RebootReason::from(RebootReasonCode::UserShutdown)),
         );
-        insta::assert_json_snapshot!(manifest, { ".metadata.producer.version" => "tests"});
+        insta::assert_json_snapshot!(manifest, { ".producer.version" => "tests"});
+    }
+
+    #[rstest]
+    fn serialization_of_custom_reboot() {
+        let config = NetworkConfig::test_fixture();
+        let manifest = Manifest::new(
+            &config,
+            CollectionTime::test_fixture(),
+            super::Metadata::new_reboot(
+                RebootReason::from_str("CustomRebootReason").unwrap_or_else(|e| panic!("{}", e)),
+            ),
+        );
+        insta::assert_json_snapshot!(manifest, { ".producer.version" => "tests"});
+    }
+
+    #[rstest]
+    fn serialization_of_custom_unexpected_reboot() {
+        let config = NetworkConfig::test_fixture();
+        let manifest = Manifest::new(
+            &config,
+            CollectionTime::test_fixture(),
+            super::Metadata::new_reboot(
+                RebootReason::from_str("!CustomUnexpectedRebootReason")
+                    .unwrap_or_else(|e| panic!("{}", e)),
+            ),
+        );
+        insta::assert_json_snapshot!(manifest, { ".producer.version" => "tests"});
     }
 
     #[rstest]
@@ -349,8 +386,9 @@ mod tests {
                     ("n1".parse().unwrap(), MetricValue::Number(1.0)),
                     ("n2".parse().unwrap(), MetricValue::Number(42.0)),
                 ]),
+                duration: std::time::Duration::from_secs(42),
             },
         );
-        insta::assert_json_snapshot!(manifest, { ".metadata.producer.version" => "tests"});
+        insta::assert_json_snapshot!(manifest, { ".producer.version" => "tests"});
     }
 }

@@ -3,8 +3,9 @@
 // See License.txt for details
 use eyre::{eyre, Context};
 use serde::{Deserialize, Serialize};
-use std::num::NonZeroU32;
+use std::net::IpAddr;
 use std::time::Duration;
+use std::{collections::HashMap, num::NonZeroU32};
 use std::{net::SocketAddr, path::PathBuf};
 
 use crate::util::*;
@@ -37,6 +38,8 @@ pub struct MemfaultdConfig {
     pub logs: LogsConfig,
     pub mar: MarConfig,
     pub http_server: HttpServerConfig,
+    pub battery_monitor: Option<BatteryMonitorConfig>,
+    pub connectivity_monitor: Option<ConnectivityMonitorConfig>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -109,6 +112,27 @@ pub struct LogsConfig {
     pub compression_level: Compression,
 
     pub max_lines_per_minute: NonZeroU32,
+
+    pub log_to_metrics: Option<LogToMetricsConfig>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct LogToMetricsConfig {
+    pub rules: Vec<LogToMetricRule>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "type")]
+pub enum LogToMetricRule {
+    #[serde(rename = "count_matching")]
+    CountMatching {
+        /// Regex applied on the MESSAGE field
+        pattern: String,
+        metric_name: String,
+        /// List of key-value that must exactly match before the regexp is applied
+        #[serde(default)]
+        filter: HashMap<String, String>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -117,6 +141,46 @@ pub struct MarConfig {
     pub mar_file_max_size: usize,
     #[serde(rename = "mar_entry_max_age_seconds", with = "seconds_to_duration")]
     pub mar_entry_max_age: Duration,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct BatteryMonitorConfig {
+    pub battery_info_command: String,
+    #[serde(with = "seconds_to_duration")]
+    pub interval_seconds: Duration,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ConnectivityMonitorConfig {
+    #[serde(with = "seconds_to_duration")]
+    pub interval_seconds: Duration,
+    pub targets: Vec<ConnectivityMonitorTarget>,
+    #[serde(
+        with = "seconds_to_duration",
+        default = "default_connection_check_timeout"
+    )]
+    pub timeout_seconds: Duration,
+}
+fn default_connection_check_timeout() -> Duration {
+    Duration::from_secs(10)
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ConnectivityMonitorTarget {
+    #[serde(default = "default_connection_check_protocol")]
+    pub protocol: ConnectionCheckProtocol,
+    pub host: IpAddr,
+    pub port: u16,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum ConnectionCheckProtocol {
+    Tcp,
+}
+
+fn default_connection_check_protocol() -> ConnectionCheckProtocol {
+    ConnectionCheckProtocol::Tcp
 }
 
 use flate2::Compression;
@@ -345,6 +409,8 @@ mod test {
     #[case("with_partial_logs")]
     #[case("without_coredump_compression")]
     #[case("with_coredump_capture_strategy_threads")]
+    #[case("with_log_to_metrics_rules")]
+    #[case("with_connectivity_monitor")]
     fn can_parse_test_files(#[case] name: &str) {
         let input_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("src/config/test-config")

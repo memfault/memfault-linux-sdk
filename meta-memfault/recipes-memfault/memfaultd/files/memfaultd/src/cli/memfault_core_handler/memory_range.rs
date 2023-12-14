@@ -24,9 +24,9 @@ impl MemoryRange {
         }
     }
 
-    /// Returns true if the two ranges overlap or touch (end-inclusive checking!).
+    /// Returns true if the two ranges overlap
     pub fn overlaps(&self, other: &Self) -> bool {
-        self.start <= other.end && self.end >= other.start
+        self.start <= other.end && self.end > other.start
     }
 
     pub fn size(&self) -> ElfPtrSize {
@@ -83,7 +83,7 @@ mod test {
     // Two ranges with matching boundaries
     #[case(
         vec![MemoryRange::new(0x1000, 0x2000), MemoryRange::new(0x2000, 0x3000)],
-        vec![MemoryRange::new(0x1000, 0x3000)],
+        vec![MemoryRange::new(0x1000, 0x2000), MemoryRange::new(0x2000, 0x3000)],
     )]
     // Two ranges with overlapping boundaries
     #[case(
@@ -102,7 +102,7 @@ mod test {
             MemoryRange::new(0x1000, 0x2000),
             MemoryRange::new(0x3000, 0x5000),
         ],
-        vec![MemoryRange::new(0x1000, 0x5000)]
+        vec![MemoryRange::new(0x1000, 0x3000), MemoryRange::new(0x3000, 0x5000)]
     )]
     fn test_memory_range_merge(
         #[case] input: Vec<MemoryRange>,

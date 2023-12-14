@@ -1,0 +1,21 @@
+{
+    "logs": {
+        "log_to_metrics": {
+            "rules": [
+                {
+                    "type": "count_matching",
+                    "pattern": "ssh",
+                    "metric_name": "ssh_logins"
+                },
+                {
+                    "type": "count_matching",
+                    "pattern": "ssh",
+                    "metric_name": "ssh_logins",
+                    "filter": {
+                        "_SYSTEMD_UNIT": "sshd.service"
+                    }
+                }
+            ]
+        }
+    }
+}

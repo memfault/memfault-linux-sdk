@@ -16,7 +16,11 @@ use crate::{
 use crate::util::disk_size::DiskSize;
 
 pub use self::{
-    config_file::{CoredumpCaptureStrategy, CoredumpCompression, JsonConfigs, MemfaultdConfig},
+    config_file::{
+        ConnectionCheckProtocol, ConnectivityMonitorConfig, ConnectivityMonitorTarget,
+        CoredumpCaptureStrategy, CoredumpCompression, JsonConfigs, LogToMetricRule,
+        MemfaultdConfig,
+    },
     device_config::{DeviceConfig, Resolution, Sampling},
     device_info::{DeviceInfo, DeviceInfoWarning},
 };
@@ -172,6 +176,28 @@ impl Config {
 
     pub fn mar_entry_max_age(&self) -> Duration {
         self.config_file.mar.mar_entry_max_age
+    }
+
+    pub fn battery_monitor_periodic_update_enabled(&self) -> bool {
+        self.config_file.battery_monitor.is_some()
+    }
+
+    pub fn battery_monitor_battery_info_command(&self) -> &str {
+        match self.config_file.battery_monitor.as_ref() {
+            Some(battery_config) => battery_config.battery_info_command.as_ref(),
+            None => "",
+        }
+    }
+
+    pub fn battery_monitor_interval(&self) -> Duration {
+        match self.config_file.battery_monitor.as_ref() {
+            Some(battery_config) => battery_config.interval_seconds,
+            None => Duration::from_secs(0),
+        }
+    }
+
+    pub fn connectivity_monitor_config(&self) -> Option<&ConnectivityMonitorConfig> {
+        self.config_file.connectivity_monitor.as_ref()
     }
 }
 

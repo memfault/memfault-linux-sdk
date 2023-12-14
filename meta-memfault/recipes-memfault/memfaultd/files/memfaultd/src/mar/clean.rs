@@ -167,7 +167,7 @@ fn mark_entries_for_deletion(
     max_age: Duration,
 ) -> Vec<(AgeSizePath, DeletionReason)> {
     // Sort entries with oldest first
-    let mut entries_by_age = entries.clone();
+    let mut entries_by_age = entries;
     entries_by_age.sort_by(|a, b| b.age.cmp(&a.age));
 
     // Note that (total_space_used).exceeds(max_total_size) would not

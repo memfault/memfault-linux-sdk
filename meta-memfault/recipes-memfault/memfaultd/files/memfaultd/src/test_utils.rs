@@ -15,6 +15,12 @@ use std::{
 
 use rstest::fixture;
 
+mod test_instant;
+pub use test_instant::*;
+
+mod test_connection_checker;
+pub use test_connection_checker::*;
+
 /// A file that will trigger write errors when it reaches a certain size.
 /// Note that we currently enforce the limit on the total number of bytes
 /// written, regardless of where they were written. We do implement Seek but do

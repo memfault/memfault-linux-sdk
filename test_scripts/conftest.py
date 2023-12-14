@@ -51,12 +51,12 @@ def _set_test_id_device_attribute(request: pytest.FixtureRequest) -> Iterable[No
     yield
     # Patch the device attributes after the test has run, because the patch endpoint requires the device to exist.
     key = "test_id"
-    try:
+    try:  # noqa: SIM105
         memfault_service_tester.create_custom_metric(key=key, data_type="STRING")
     except AssertionError:
         pass  # Ignore 409 Conflict errors, which indicate the metric already exists.
 
-    try:
+    try:  # noqa: SIM105
         memfault_service_tester.patch_device_attributes(
             device_serial=qemu_device_id,
             patch={key: f"{request.node.path.name}::{request.node.name}"},
