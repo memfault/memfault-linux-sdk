@@ -3,25 +3,27 @@
 // See License.txt for details
 mod arch;
 mod auxv;
+mod core_elf_memfault_note;
 mod core_elf_note;
-mod core_metadata;
 mod core_reader;
 mod core_transformer;
 mod core_writer;
 mod find_dynamic;
 mod find_elf_headers;
 mod find_stack;
+mod log_wrapper;
 mod memory_range;
 mod procfs;
 mod r_debug;
 #[cfg(test)]
 mod test_utils;
 
-use self::arch::coredump_thread_filter_supported;
 use self::core_reader::CoreReaderImpl;
 use self::core_writer::CoreWriterImpl;
+use self::log_wrapper::CoreHandlerLogWrapper;
 use self::procfs::{proc_mem_stream, read_proc_cmdline, ProcMapsImpl};
-use self::{core_metadata::CoredumpMetadata, core_transformer::CoreTransformerOptions};
+use self::{arch::coredump_thread_filter_supported, log_wrapper::CAPTURE_LOG_CHANNEL_SIZE};
+use self::{core_elf_memfault_note::CoredumpMetadata, core_transformer::CoreTransformerOptions};
 use crate::cli;
 use crate::config::{Config, CoredumpCompression};
 use crate::mar::manifest::{CompressionAlgorithm, Metadata};
@@ -33,15 +35,19 @@ use crate::util::persistent_rate_limiter::PersistentRateLimiter;
 use argh::FromArgs;
 use eyre::{eyre, Result, WrapErr};
 use flate2::write::GzEncoder;
-use log::{debug, error, info, warn, LevelFilter};
+use kernlog::KernelLog;
+use log::{debug, error, info, warn, LevelFilter, Log};
 use prctl::set_dumpable;
-use std::env::{set_var, var};
-use std::io::BufReader;
 use std::io::BufWriter;
-use std::io::Write;
 use std::path::Path;
 use std::thread::scope;
 use std::{cmp::min, fs::File};
+use std::{
+    env::{set_var, var},
+    sync::mpsc::SyncSender,
+};
+use std::{io::BufReader, sync::mpsc::Receiver};
+use std::{io::Write, sync::mpsc::sync_channel};
 use uuid::Uuid;
 
 #[cfg(target_pointer_width = "64")]
@@ -83,6 +89,7 @@ pub fn main() -> Result<()> {
 
     let args: MemfaultCoreHandlerArgs = argh::from_env();
 
+    let (capture_logs_tx, capture_logs_rx) = sync_channel(CAPTURE_LOG_CHANNEL_SIZE);
     let log_level = if args.verbose {
         LevelFilter::Trace
     } else {
@@ -90,7 +97,7 @@ pub fn main() -> Result<()> {
     };
     // When the kernel executes a core dump handler, the stdout/stderr go nowhere.
     // Let's log to the kernel log to aid debugging:
-    init_kernel_logger(log_level);
+    init_kernel_logger(log_level, capture_logs_tx);
 
     if let Err(e) = dumpable_result {
         warn!("Failed to set dumpable: {}", e);
@@ -114,12 +121,12 @@ pub fn main() -> Result<()> {
                 debug!("Failed to notify memfaultd of crash: {:?}", e);
             }
         });
-        process_corefile(&config, args.pid)
+        process_corefile(&config, args.pid, capture_logs_rx)
             .wrap_err(format!("Error processing coredump for PID {}", args.pid))
     })
 }
 
-pub fn process_corefile(config: &Config, pid: i32) -> Result<()> {
+pub fn process_corefile(config: &Config, pid: i32, error_rx: Receiver<String>) -> Result<()> {
     let rate_limiter = if !config.config_file.enable_dev_mode {
         config.coredump_rate_limiter_file_path();
         let mut rate_limiter = PersistentRateLimiter::load(
@@ -190,6 +197,7 @@ pub fn process_corefile(config: &Config, pid: i32) -> Result<()> {
         transformer_options,
         metadata,
         proc_maps,
+        error_rx,
     )?;
 
     match core_transformer.run_transformer() {
@@ -244,7 +252,7 @@ impl From<CoredumpCompression> for CompressionAlgorithm {
     }
 }
 
-fn init_kernel_logger(level: LevelFilter) {
+fn init_kernel_logger(level: LevelFilter, capture_logs_tx: SyncSender<String>) {
     // kernlog::init() reads from the KERNLOG_LEVEL to set the level. There's no public interface
     // to set it otherwise, so: if this environment variable is not set, set it according to the
     // --verbose flag:
@@ -252,8 +260,13 @@ fn init_kernel_logger(level: LevelFilter) {
         set_var("KERNLOG_LEVEL", level.as_str());
     }
     // We fallback to standard output if verbose mode is enabled or if kernel is not available.
-    if let Err(e) = kernlog::init() {
-        cli::init_logger(level);
-        warn!("Cannot log to kernel logs, falling back to stderr: {}", e);
-    }
+
+    let logger: Box<dyn Log> = match KernelLog::from_env() {
+        Ok(logger) => Box::new(logger),
+        Err(_) => Box::new(cli::build_logger(level)),
+    };
+
+    let logger = Box::new(CoreHandlerLogWrapper::new(logger, capture_logs_tx));
+    log::set_boxed_logger(logger).unwrap();
+    log::set_max_level(level);
 }

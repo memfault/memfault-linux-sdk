@@ -5,6 +5,7 @@ use std::io::{Read, Seek};
 
 use elf::program_header::{ProgramHeader, PT_NOTE};
 use eyre::Result;
+use log::debug;
 
 use crate::cli::memfault_core_handler::core_elf_note::{iterate_elf_notes, ElfNote};
 use crate::cli::memfault_core_handler::core_reader::{CoreReader, CoreReaderImpl};
@@ -20,6 +21,11 @@ pub fn find_elf_headers_and_build_id_note_ranges<P: Read + Seek>(
     vaddr_base: ElfPtrSize,
     stream: &mut P,
 ) -> Result<Vec<MemoryRange>> {
+    debug!(
+        "Detecting ELF headers and build ID note ranges from vaddr 0x{:x}",
+        vaddr_base
+    );
+
     let mut elf_reader = CoreReaderImpl::new(stream)?;
     let elf_header = elf_reader.elf_header();
     let program_headers = elf_reader.read_program_headers()?;

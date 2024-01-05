@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.1] - 2024-1-5
+
+This is a small patch release to fix a bug we discoved in
+`memfault-core-handler`
+
+### Fixed
+
+- A bug in `memfault-core-handler` that caused a small number of coredumps in
+  which PT_PHDR is not the first entry in the program header table to be
+  captured incorrectly when in `threads` mode.
+
+### Changed
+
+- Add recording of `info!`, `warn!` and `error!` logs from during coredump
+  capture to a note in the core ELF to allow for better visibility into coredump
+  capture errors.
+
 ## [1.9.0] - 2023-12-14
 
 We are excited to introduce support for the
@@ -735,3 +752,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.8.1-kirkstone
 [1.9.0]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.9.0-kirkstone
+[1.9.1]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.9.1-kirkstone

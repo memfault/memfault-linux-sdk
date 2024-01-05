@@ -5,11 +5,11 @@ use std::io::{Read, Seek, SeekFrom};
 use std::mem::size_of;
 
 use elf::dynamic::{Dyn, DT_DEBUG};
-use elf::program_header::{ProgramHeader, PT_DYNAMIC, SIZEOF_PHDR};
+use elf::program_header::{ProgramHeader, PT_DYNAMIC, PT_PHDR, SIZEOF_PHDR};
 use eyre::{eyre, Result};
 use itertools::Itertools;
 use libc::PATH_MAX;
-use log::warn;
+use log::{debug, warn};
 use scroll::Pread;
 
 use crate::cli::memfault_core_handler::core_reader::read_program_headers;
@@ -24,9 +24,9 @@ use crate::cli::memfault_core_handler::ElfPtrSize;
 /// debuggers like GDB to be able to find and load the symbol files (with debug info) for those
 /// loaded shared objects. In more detail, this function does the following:
 ///
-/// - The function takes the AT_PHDR address from the auxiliary vector as input, as well as the
-///   /proc/<pid>/mem stream. The AT_PHDR address is the virtual address of the program headers of
-///   the main executable.
+/// - The function takes the AT_PHDR address from the auxiliary vector as input, the number of
+///   program headers via AT_PHNUM, as well as the /proc/<pid>/mem stream. The AT_PHDR address is
+///   the virtual address of the program headers of the main executable.
 /// - The function then reads the main executable's program headers, finds the dynamic segment, and
 ///   reads the DT_DEBUG entry from it.
 /// - The DT_DEBUG entry contains the virtual address of the r_debug structure. This is the
@@ -45,10 +45,16 @@ use crate::cli::memfault_core_handler::ElfPtrSize;
 pub fn find_dynamic_linker_ranges<P: Read + Seek>(
     proc_mem_stream: &mut P,
     phdr_vaddr: ElfPtrSize,
+    phdr_num: ElfPtrSize,
     memory_maps: &[MemoryRange],
     output: &mut Vec<MemoryRange>,
 ) -> Result<()> {
-    let phdr = read_main_executable_phdr(proc_mem_stream, phdr_vaddr)?;
+    debug!(
+        "Detecting dynamic linker ranges from vaddr 0x{:x}",
+        phdr_vaddr
+    );
+
+    let phdr = read_main_executable_phdr(proc_mem_stream, phdr_vaddr, phdr_num)?;
     let main_reloc_addr = calc_relocation_addr(phdr_vaddr, phdr);
 
     // Add the main executable's program headers.
@@ -199,7 +205,9 @@ fn read_main_exec_program_headers<P: Read + Seek>(
     read_program_headers(proc_mem_stream, count as usize)
 }
 
-/// Reads the PHDR program header from the main executable. From the ELF spec:
+/// Reads the program header table from the main executable and searches for the `PT_PHDR`
+/// header. From the ELF spec:
+///
 /// "The array element, if present, specifies the location and size of the program header
 /// table itself, both in the file and in the memory image of the program. This segment
 /// type may not occur more than once in a file. Moreover, it may occur only if the
@@ -208,13 +216,15 @@ fn read_main_exec_program_headers<P: Read + Seek>(
 fn read_main_executable_phdr<P: Read + Seek>(
     proc_mem_stream: &mut P,
     phdr_vaddr: ElfPtrSize,
+    phdr_num: ElfPtrSize,
 ) -> Result<ProgramHeader> {
     // Ignore unnecessary cast here as it is needed on 32-bit systems.
     #[allow(clippy::unnecessary_cast)]
     proc_mem_stream.seek(SeekFrom::Start(phdr_vaddr as u64))?;
-    let mut header_buf = [0; SIZEOF_PHDR];
-    proc_mem_stream.read_exact(&mut header_buf)?;
-    Ok(header_buf.pread::<ProgramHeader>(0)?)
+    read_program_headers(proc_mem_stream, phdr_num as usize)?
+        .into_iter()
+        .find(|ph| ph.p_type == PT_PHDR)
+        .ok_or_else(|| eyre!("Main executable PT_PHDR not found"))
 }
 
 /// Calculates the relocation address given the PHDR virtual address and PHDR program header.
@@ -229,12 +239,29 @@ mod test {
 
     use insta::assert_debug_snapshot;
     use rstest::rstest;
-    use scroll::IOwrite;
+    use scroll::{IOwrite, Pwrite};
 
     use crate::cli::memfault_core_handler::procfs::ProcMaps;
     use crate::cli::memfault_core_handler::test_utils::{FakeProcMaps, FakeProcMem};
 
     use super::*;
+
+    #[test]
+    fn test_phdr_not_first_header() {
+        let pdyn_header = build_test_program_header(PT_DYNAMIC);
+        let phdr_header = build_test_program_header(PT_PHDR);
+
+        let mut phdr_bytes = [0; SIZEOF_PHDR * 2];
+        phdr_bytes.pwrite::<ProgramHeader>(pdyn_header, 0).unwrap();
+        phdr_bytes
+            .pwrite::<ProgramHeader>(phdr_header, SIZEOF_PHDR)
+            .unwrap();
+
+        let mut proc_mem_stream = Cursor::new(phdr_bytes);
+        let actual_phdr = read_main_executable_phdr(&mut proc_mem_stream, 0, 2).unwrap();
+
+        assert_eq!(actual_phdr, phdr_header);
+    }
 
     #[test]
     fn test_find_dynamic_linker_ranges() {
@@ -251,6 +278,7 @@ mod test {
         //   Type           Offset   VirtAddr           PhysAddr           FileSiz  MemSiz   Flg Align
         //   PHDR           0x000040 0x0000000000000040 0x0000000000000040 0x0002d8 0x0002d8 R   0x8
         let phdr_vaddr = 0x5587ae8bd000 + 0x40;
+        let phdr_num = 0x02d8 / SIZEOF_PHDR as ElfPtrSize;
 
         let mut fake_proc_maps = FakeProcMaps::new_from_path(&input_path).unwrap();
         let memory_maps = fake_proc_maps.get_process_maps().unwrap();
@@ -261,6 +289,7 @@ mod test {
         find_dynamic_linker_ranges(
             &mut proc_mem_stream,
             phdr_vaddr,
+            phdr_num,
             &memory_maps_ranges,
             &mut output,
         )
@@ -346,5 +375,18 @@ mod test {
             cursor.iowrite::<ElfPtrSize>(value).unwrap();
         }
         cursor.into_inner()
+    }
+
+    fn build_test_program_header(p_type: u32) -> ProgramHeader {
+        ProgramHeader {
+            p_type,
+            p_flags: 1,
+            p_offset: 2,
+            p_vaddr: 3,
+            p_paddr: 4,
+            p_filesz: 5,
+            p_memsz: 6,
+            p_align: 0,
+        }
     }
 }

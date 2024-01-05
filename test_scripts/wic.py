@@ -26,14 +26,12 @@ class WicImage:
         """Add a file into one of the image partitions. Note that this method cannot create new folder."""
         if part is None:
             part = self.default_part
-        subprocess.check_output(
-            [
-                "wic",
-                "cp",
-                src,
-                f"{self.dest_wic}:{part}{to}",
-            ]
-        )
+        subprocess.check_output([
+            "wic",
+            "cp",
+            src,
+            f"{self.dest_wic}:{part}{to}",
+        ])
 
     def extract_file(self, src: str, to: pathlib.Path, part: int | None = None) -> None:
         """Copy a file from one of the image partition to the local machine."""

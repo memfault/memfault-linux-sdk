@@ -1,0 +1,8 @@
+---
+source: memfaultd/src/cli/memfault_core_handler/log_wrapper.rs
+expression: errors
+---
+[
+  "ERROR test:71 - Test message",
+  "WARN test:71 - Test message"
+]

@@ -1,0 +1,36 @@
+---
+source: memfaultd/src/cli/memfault_core_handler/core_elf_memfault_note.rs
+expression: deser_capture_logs
+---
+Map(
+    [
+        (
+            Text(
+                "schema_version",
+            ),
+            Integer(
+                Integer(
+                    1,
+                ),
+            ),
+        ),
+        (
+            Text(
+                "capture_logs",
+            ),
+            Array(
+                [
+                    Text(
+                        "Error 1",
+                    ),
+                    Text(
+                        "Error 2",
+                    ),
+                    Text(
+                        "Error 3",
+                    ),
+                ],
+            ),
+        ),
+    ],
+)

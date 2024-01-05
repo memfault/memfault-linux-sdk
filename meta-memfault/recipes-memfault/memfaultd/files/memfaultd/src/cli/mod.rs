@@ -4,7 +4,7 @@
 use eyre::eyre;
 use log::LevelFilter;
 use std::path::Path;
-use stderrlog::LogLevelNum;
+use stderrlog::{LogLevelNum, StdErrLog};
 
 #[cfg(all(target_os = "linux", feature = "coredump"))]
 mod memfault_core_handler;
@@ -16,12 +16,17 @@ mod version;
 
 pub use memfaultd_client::*;
 
+fn build_logger(level: LevelFilter) -> StdErrLog {
+    let mut log = stderrlog::new();
+
+    log.module("memfaultd");
+    log.verbosity(LogLevelNum::from(level));
+
+    log
+}
+
 fn init_logger(level: LevelFilter) {
-    stderrlog::new()
-        .module("memfaultd")
-        .verbosity(LogLevelNum::from(level))
-        .init()
-        .unwrap();
+    build_logger(level).init().unwrap();
 }
 
 pub fn main() {
