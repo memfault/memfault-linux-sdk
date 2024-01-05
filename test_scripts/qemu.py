@@ -4,7 +4,7 @@
 import os
 import sys
 import time
-from typing import Literal
+from typing import Literal, cast
 
 import pexpect
 
@@ -86,7 +86,7 @@ class QEMU:
     ) -> None:
         """Wait for a specific message from a journald unit."""
         self.exec_cmd(f'(journalctl -f -u {unit} -n {last_lines} &) |grep -q "{message}"')
-        self.pid.expect("#", timeout=timeout)
+        self.pid.expect("#", timeout=cast(int, timeout))
 
     def wait_for_memfaultd_start(self, timeout: float = 3) -> None:
         """Wait for memfaultd to start - Note that this will return immediately if memfaultd was just started."""

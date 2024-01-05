@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# Copyright 2023 Memfault, Inc
+# Copyright 2024 Memfault, Inc
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ from statsd import StatsClient
 statsd = StatsClient(host="localhost", port=8125, prefix="mypythonapp", maxudpsize=512, ipv6=False)
 
 while True:
-    statsd.incr("mycount", 3 * random())  # noqa: S311
-    statsd.gauge("mygauge", 100 * random())  # noqa: S311
+    statsd.incr("mycount", int(3 * random()))  # noqa: S311
+    statsd.gauge("mygauge", int(100 * random()))  # noqa: S311
     with statsd.timer("mytime"):
         time.sleep(2 * random())  # noqa: S311

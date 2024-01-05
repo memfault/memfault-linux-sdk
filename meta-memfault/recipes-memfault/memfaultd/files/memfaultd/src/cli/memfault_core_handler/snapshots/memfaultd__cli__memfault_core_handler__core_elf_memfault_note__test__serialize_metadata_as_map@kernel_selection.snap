@@ -1,5 +1,5 @@
 ---
-source: memfaultd/src/cli/memfault_core_handler/core_metadata.rs
+source: memfaultd/src/cli/memfault_core_handler/core_elf_memfault_note.rs
 expression: deser_map
 ---
 Map(

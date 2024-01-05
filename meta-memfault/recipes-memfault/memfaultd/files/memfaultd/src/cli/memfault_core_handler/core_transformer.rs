@@ -1,12 +1,16 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use std::io::{Read, Seek, SeekFrom};
 use std::mem::size_of;
+use std::{
+    io::{Read, Seek, SeekFrom},
+    sync::mpsc::Receiver,
+};
 
-use crate::cli::memfault_core_handler::auxv::AuxvUint;
+use crate::cli::memfault_core_handler::core_elf_memfault_note::{
+    write_memfault_metadata_note, CoredumpMetadata,
+};
 use crate::cli::memfault_core_handler::core_elf_note::{iterate_elf_notes, ElfNote};
-use crate::cli::memfault_core_handler::core_metadata::{write_memfault_note, CoredumpMetadata};
 use crate::cli::memfault_core_handler::core_reader::CoreReader;
 use crate::cli::memfault_core_handler::core_writer::{CoreWriter, SegmentData};
 use crate::cli::memfault_core_handler::elf;
@@ -20,9 +24,13 @@ use crate::config::CoredumpCaptureStrategy;
 
 use elf::program_header::{ProgramHeader, PT_LOAD, PT_NOTE};
 use eyre::{eyre, Result};
-use libc::AT_PHDR;
-use log::{debug, warn};
+use libc::{AT_PHDR, AT_PHNUM};
+use log::warn;
 use procfs::process::MemoryMap;
+
+use super::{
+    core_elf_memfault_note::write_memfault_debug_data_note, log_wrapper::CAPTURE_LOG_CHANNEL_SIZE,
+};
 
 #[derive(Debug)]
 pub struct CoreTransformerOptions {
@@ -45,6 +53,7 @@ where
     metadata: CoredumpMetadata,
     options: CoreTransformerOptions,
     proc_maps: M,
+    capture_logs_rx: Receiver<String>,
 }
 
 impl<R, W, P, M> CoreTransformer<R, W, P, M>
@@ -62,6 +71,7 @@ where
         options: CoreTransformerOptions,
         metadata: CoredumpMetadata,
         proc_maps: M,
+        capture_logs_rx: Receiver<String>,
     ) -> Result<Self> {
         Ok(Self {
             core_reader,
@@ -70,6 +80,7 @@ where
             metadata,
             options,
             proc_maps,
+            capture_logs_rx,
         })
     }
 
@@ -110,7 +121,8 @@ where
             self.core_writer.add_segment(ph, SegmentData::ProcessMemory);
         }
 
-        self.add_memfault_note()?;
+        self.add_memfault_metadata_note()?;
+        self.add_memfault_debug_data_note()?;
         self.check_output_size()?;
         self.core_writer.write()?;
 
@@ -166,6 +178,7 @@ where
 
         let mut mem_ranges = Vec::new();
         let mut phdr_vaddr = None;
+        let mut phdr_num = None;
 
         for note in &parsed_notes {
             match note {
@@ -178,7 +191,8 @@ where
                     }
                 }
                 ElfNote::Auxv(auxv) => {
-                    phdr_vaddr = auxv.find_value(AT_PHDR as AuxvUint);
+                    phdr_num = auxv.find_value(AT_PHNUM);
+                    phdr_vaddr = auxv.find_value(AT_PHDR);
                 }
                 _ => {}
             }
@@ -192,7 +206,7 @@ where
                     |mmap| match self.elf_metadata_ranges_for_mapped_file(mmap.address.0) {
                         Ok(ranges) => ranges,
                         Err(e) => {
-                            debug!(
+                            warn!(
                                 "Failed to collect metadata for {:?} @ {:#x}: {}",
                                 mmap.pathname, mmap.address.0, e
                             );
@@ -202,19 +216,20 @@ where
                 ),
         );
 
-        match phdr_vaddr {
-            Some(phdr_vaddr) => {
+        match (phdr_vaddr, phdr_num) {
+            (Some(phdr_vaddr), Some(phdr_num)) => {
                 if let Err(e) = find_dynamic_linker_ranges(
                     &mut self.proc_mem_stream,
                     phdr_vaddr,
+                    phdr_num,
                     &memory_maps_ranges,
                     &mut mem_ranges,
                 ) {
                     warn!("Failed to collect dynamic linker ranges: {}", e);
                 }
             }
-            None => {
-                warn!("Missing AT_PHDR auxv entry");
+            _ => {
+                warn!("Missing AT_PHDR or AT_PHNUM auxv entry");
             }
         };
 
@@ -249,19 +264,37 @@ where
         Ok(())
     }
 
+    fn add_memfault_metadata_note(&mut self) -> Result<()> {
+        let note_data = write_memfault_metadata_note(&self.metadata)?;
+        self.add_memfault_note(note_data)
+    }
+
+    fn add_memfault_debug_data_note(&mut self) -> Result<()> {
+        let mut capture_logs = self.capture_logs_rx.try_iter().collect::<Vec<_>>();
+        if capture_logs.is_empty() {
+            return Ok(());
+        }
+
+        if capture_logs.len() == CAPTURE_LOG_CHANNEL_SIZE {
+            capture_logs.push("Log overflow, some logs may have been dropped".to_string());
+        }
+
+        let buffer = write_memfault_debug_data_note(capture_logs)?;
+        self.add_memfault_note(buffer)
+    }
+
     /// Add memfault note to the core elf
     ///
     /// Contains CBOR encoded information about the system capturing the coredump. See
     /// [`CoredumpMetadata`] for more information.
-    fn add_memfault_note(&mut self) -> Result<()> {
-        let note_data = write_memfault_note(&self.metadata)?;
+    fn add_memfault_note(&mut self, desc: Vec<u8>) -> Result<()> {
         let program_header = ProgramHeader {
             p_type: PT_NOTE,
-            p_filesz: note_data.len().try_into()?,
+            p_filesz: desc.len().try_into()?,
             ..Default::default()
         };
         self.core_writer
-            .add_segment(program_header, SegmentData::Buffer(note_data));
+            .add_segment(program_header, SegmentData::Buffer(desc));
 
         Ok(())
     }
@@ -293,6 +326,7 @@ mod test {
     use rstest::rstest;
     use std::fs::File;
     use std::path::PathBuf;
+    use std::sync::mpsc::sync_channel;
 
     use super::*;
 
@@ -331,6 +365,8 @@ mod test {
             capture_strategy,
         };
 
+        let (_capture_logs_tx, capture_log_rx) = sync_channel(32);
+
         let core_reader = CoreReaderImpl::new(input_stream).unwrap();
         let mut segments = vec![];
         let mock_core_writer = MockCoreWriter::new(&mut segments);
@@ -341,6 +377,7 @@ mod test {
             opts,
             metadata,
             proc_maps,
+            capture_log_rx,
         )
         .unwrap();
 
