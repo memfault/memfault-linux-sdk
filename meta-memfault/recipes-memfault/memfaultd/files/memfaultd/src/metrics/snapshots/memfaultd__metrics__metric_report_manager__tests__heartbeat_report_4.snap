@@ -1,0 +1,14 @@
+---
+source: memfaultd/src/metrics/metric_report_manager.rs
+expression: builder.unwrap().get_metadata()
+---
+{
+  "type": "linux-metric-report",
+  "metadata": {
+    "metrics": {
+      "foo": 1.5
+    },
+    "duration_ms": 0,
+    "report_type": "heartbeat"
+  }
+}

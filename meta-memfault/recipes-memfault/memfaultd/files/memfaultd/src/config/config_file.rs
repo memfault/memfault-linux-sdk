@@ -8,6 +8,7 @@ use std::time::Duration;
 use std::{collections::HashMap, num::NonZeroU32};
 use std::{net::SocketAddr, path::PathBuf};
 
+use crate::metrics::{MetricStringKey, SessionName};
 use crate::util::*;
 use crate::util::{path::AbsolutePath, serialization::*};
 
@@ -40,6 +41,7 @@ pub struct MemfaultdConfig {
     pub http_server: HttpServerConfig,
     pub battery_monitor: Option<BatteryMonitorConfig>,
     pub connectivity_monitor: Option<ConnectivityMonitorConfig>,
+    pub sessions: Option<Vec<SessionConfig>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -181,6 +183,12 @@ pub enum ConnectionCheckProtocol {
 
 fn default_connection_check_protocol() -> ConnectionCheckProtocol {
     ConnectionCheckProtocol::Tcp
+}
+
+#[derive(Serialize, Clone, Deserialize, Debug)]
+pub struct SessionConfig {
+    pub name: SessionName,
+    pub captured_metrics: Vec<MetricStringKey>,
 }
 
 use flate2::Compression;
@@ -411,6 +419,7 @@ mod test {
     #[case("with_coredump_capture_strategy_threads")]
     #[case("with_log_to_metrics_rules")]
     #[case("with_connectivity_monitor")]
+    #[case("with_sessions")]
     fn can_parse_test_files(#[case] name: &str) {
         let input_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("src/config/test-config")
@@ -426,6 +435,8 @@ mod test {
     #[rstest]
     #[case("with_invalid_path")]
     #[case("with_invalid_swt_swv")]
+    #[case("with_sessions_invalid_metric_name")]
+    #[case("with_sessions_invalid_session_name")]
     fn will_reject_bad_config(#[case] name: &str) {
         let input_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("src/config/test-config")

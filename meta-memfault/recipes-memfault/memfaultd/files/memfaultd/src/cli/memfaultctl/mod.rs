@@ -9,12 +9,14 @@ mod config_file;
 mod coredump;
 mod export;
 mod report_sync;
+mod session;
 mod sync;
 mod write_attributes;
 
 use crate::{
     cli::version::format_version,
     mar::{DeviceAttribute, ExportFormat, Metadata},
+    metrics::SessionName,
     reboot::{write_reboot_reason_and_reboot, RebootReason},
     service_manager::get_service_manager,
 };
@@ -32,6 +34,8 @@ use crate::config::Config;
 use crate::network::NetworkConfig;
 use eyre::{eyre, Context, Result};
 use log::LevelFilter;
+
+use self::session::{end_session, start_session};
 
 #[derive(FromArgs)]
 /// A command line utility to adjust memfaultd configuration and trigger specific events for
@@ -100,6 +104,8 @@ enum MemfaultctlCommand {
     AddBatteryReading(AddBatteryReadingArgs),
     ReportSyncSuccess(ReportSyncSuccessArgs),
     ReportSyncFailure(ReportSyncFailureArgs),
+    StartSession(StartSessionArgs),
+    EndSession(EndSessionArgs),
 }
 
 #[derive(FromArgs)]
@@ -201,6 +207,24 @@ struct ReportSyncSuccessArgs {}
 #[argh(subcommand, name = "report-sync-failure")]
 struct ReportSyncFailureArgs {}
 
+#[derive(FromArgs)]
+/// Begin a session and start capturing metrics for it
+#[argh(subcommand, name = "start-session")]
+struct StartSessionArgs {
+    // session name (needs to be defined in memfaultd.conf)
+    #[argh(positional)]
+    session_name: SessionName,
+}
+
+#[derive(FromArgs)]
+/// End a session and dump its metrics to MAR staging directory
+#[argh(subcommand, name = "end-session")]
+struct EndSessionArgs {
+    // session name (needs to be defined in memfaultd.conf)
+    #[argh(positional)]
+    session_name: SessionName,
+}
+
 fn check_data_collection_enabled(config: &Config, do_what: &str) -> Result<()> {
     match config.config_file.enable_data_collection {
         true => Ok(()),
@@ -279,5 +303,11 @@ pub fn main() -> Result<()> {
         }
         MemfaultctlCommand::ReportSyncSuccess(_) => report_sync(&config, true),
         MemfaultctlCommand::ReportSyncFailure(_) => report_sync(&config, false),
+        MemfaultctlCommand::StartSession(StartSessionArgs { session_name }) => {
+            start_session(&config, session_name)
+        }
+        MemfaultctlCommand::EndSession(EndSessionArgs { session_name }) => {
+            end_session(&config, session_name)
+        }
     }
 }

@@ -55,5 +55,5 @@ def test_write_on_exit(qemu: QEMU) -> None:
     qemu.exec_cmd("systemctl stop memfaultd")
 
     # Make sure a MAR entry was written
-    qemu.exec_cmd("grep -l linux-heartbeat /media/memfault/mar/*/*")
+    qemu.exec_cmd("grep -l linux-metric-report /media/memfault/mar/*/*")
     qemu.child().expect("manifest.json", timeout=3)

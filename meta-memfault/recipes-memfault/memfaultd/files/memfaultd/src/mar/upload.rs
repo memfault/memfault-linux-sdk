@@ -53,8 +53,9 @@ fn applicable_resolution(metadata: &Metadata, sampling: &Sampling) -> Resolution
         Metadata::DeviceConfig { .. } => Resolution::On, // Always upload device config
         Metadata::ElfCoredump { .. } => sampling.debugging_resolution,
         Metadata::LinuxHeartbeat { .. } => sampling.monitoring_resolution,
+        Metadata::LinuxMetricReport { .. } => sampling.monitoring_resolution,
         Metadata::LinuxLogs { .. } => sampling.logging_resolution,
-        Metadata::LinuxReboot { .. } => sampling.debugging_resolution,
+        Metadata::LinuxReboot { .. } => Resolution::On, // Always upload reboots
     }
 }
 

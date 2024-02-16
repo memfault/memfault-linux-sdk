@@ -11,7 +11,7 @@ use eyre::Result;
 
 use crate::{
     config::{ConnectivityMonitorConfig, ConnectivityMonitorTarget},
-    metrics::HeartbeatManager,
+    metrics::MetricReportManager,
     util::{can_connect::CanConnect, time_measure::TimeMeasure},
 };
 
@@ -22,7 +22,7 @@ pub struct ConnectivityMonitor<T, U> {
     targets: Vec<ConnectivityMonitorTarget>,
     interval: Duration,
     last_checked_at: Option<T>,
-    heartbeat_manager: Arc<Mutex<HeartbeatManager>>,
+    heartbeat_manager: Arc<Mutex<MetricReportManager>>,
     connection_checker: U,
 }
 
@@ -33,7 +33,7 @@ where
 {
     pub fn new(
         config: &ConnectivityMonitorConfig,
-        heartbeat_manager: Arc<Mutex<HeartbeatManager>>,
+        heartbeat_manager: Arc<Mutex<MetricReportManager>>,
     ) -> Self {
         Self {
             targets: config.targets.clone(),
@@ -95,12 +95,12 @@ mod tests {
     use crate::test_utils::{TestConnectionChecker, TestInstant};
     use crate::{
         config::{ConnectionCheckProtocol, ConnectivityMonitorConfig, ConnectivityMonitorTarget},
-        metrics::HeartbeatManager,
+        metrics::MetricReportManager,
     };
 
     #[rstest]
     fn test_while_connected() {
-        let heartbeat_manager = Arc::new(Mutex::new(HeartbeatManager::new()));
+        let heartbeat_manager = Arc::new(Mutex::new(MetricReportManager::new()));
         let config = ConnectivityMonitorConfig {
             targets: vec![ConnectivityMonitorTarget {
                 host: IpAddr::from_str("8.8.8.8").unwrap(),
@@ -127,7 +127,7 @@ mod tests {
             .update_connected_time()
             .expect("Couldn't update connected time monitor!");
 
-        let metrics = heartbeat_manager.lock().unwrap().take_metrics();
+        let metrics = heartbeat_manager.lock().unwrap().take_heartbeat_metrics();
 
         // Need to sort the map so the JSON string is consistent
         let sorted_metrics: BTreeMap<_, _> = metrics.iter().collect();
@@ -137,7 +137,7 @@ mod tests {
 
     #[rstest]
     fn test_half_connected_half_disconnected() {
-        let heartbeat_manager = Arc::new(Mutex::new(HeartbeatManager::new()));
+        let heartbeat_manager = Arc::new(Mutex::new(MetricReportManager::new()));
         let config = ConnectivityMonitorConfig {
             targets: vec![ConnectivityMonitorTarget {
                 host: IpAddr::from_str("8.8.8.8").unwrap(),
@@ -169,7 +169,7 @@ mod tests {
         connectivity_monitor
             .update_connected_time()
             .expect("Couldn't update connected time monitor!");
-        let metrics = heartbeat_manager.lock().unwrap().take_metrics();
+        let metrics = heartbeat_manager.lock().unwrap().take_heartbeat_metrics();
 
         // Need to sort the map so the JSON string is consistent
         let sorted_metrics: BTreeMap<_, _> = metrics.iter().collect();
@@ -178,7 +178,7 @@ mod tests {
 
     #[rstest]
     fn test_fully_disconnected() {
-        let heartbeat_manager = Arc::new(Mutex::new(HeartbeatManager::new()));
+        let heartbeat_manager = Arc::new(Mutex::new(MetricReportManager::new()));
         let config = ConnectivityMonitorConfig {
             targets: vec![ConnectivityMonitorTarget {
                 host: IpAddr::from_str("8.8.8.8").unwrap(),
@@ -207,7 +207,7 @@ mod tests {
         connectivity_monitor
             .update_connected_time()
             .expect("Couldn't update connected time monitor!");
-        let metrics = heartbeat_manager.lock().unwrap().take_metrics();
+        let metrics = heartbeat_manager.lock().unwrap().take_heartbeat_metrics();
 
         // Need to sort the map so the JSON string is consistent
         let sorted_metrics: BTreeMap<_, _> = metrics.iter().collect();

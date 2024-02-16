@@ -70,7 +70,7 @@ class MemfaultServiceTester:
         url = f"{self._project_url}/devices/{device_serial}/reboots"
         resp = self.session.get(
             url,
-            params=params,  # type: ignore[arg-type]
+            params=params,  # pyright: ignore[reportArgumentType]
         )
         assert resp.status_code == expect_status
         return cast(list[dict[str, Json]], resp.json()["data"]) if resp.ok else None
@@ -101,7 +101,7 @@ class MemfaultServiceTester:
     ) -> list[dict[str, Json]]:
         rv = self.session.get(
             f"{self._project_url}/reports",
-            params=params,  # type: ignore[arg-type]
+            params=params,  # pyright: ignore[reportArgumentType]
         )
         assert rv.status_code == expect_status or ignore_errors
         return cast(list[dict[str, Json]], rv.json()["data"]) if rv.status_code == 200 else []
@@ -141,7 +141,7 @@ class MemfaultServiceTester:
     ) -> list[dict[str, Json]]:
         rv = self.session.get(
             f"{self._project_url}/elf_coredumps",
-            params=params,  # type: ignore[arg-type]
+            params=params,  # pyright: ignore[reportArgumentType]
         )
         assert rv.status_code == expect_status or ignore_errors
         return cast(list[dict[str, Json]], rv.json()["data"]) if rv.status_code == 200 else []
@@ -178,7 +178,7 @@ class MemfaultServiceTester:
         url = f"{self._project_url}/devices/{device_serial}/attributes"
         resp = self.session.get(
             url,
-            params=params,  # type: ignore[arg-type]
+            params=params,  # pyright: ignore[reportArgumentType]
         )
         assert resp.status_code == expect_status
         return cast(list[dict[str, Json]], resp.json()["data"]) if resp.ok else None
@@ -219,7 +219,7 @@ class MemfaultServiceTester:
     ) -> list[dict[str, Json]]:
         rv = self.session.get(
             f"{self._project_url}/devices/{device_serial}/log-files",
-            params=params,  # type: ignore[arg-type]
+            params=params,  # pyright: ignore[reportArgumentType]
         )
         assert rv.status_code == 200
         return cast(list[dict[str, Json]], rv.json()["data"])

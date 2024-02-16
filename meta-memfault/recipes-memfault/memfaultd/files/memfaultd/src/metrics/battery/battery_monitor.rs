@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use eyre::{eyre, ErrReport, Result};
 
-use crate::metrics::{HeartbeatManager, KeyedMetricReading, MetricReading, MetricStringKey};
+use crate::metrics::{KeyedMetricReading, MetricReading, MetricReportManager, MetricStringKey};
 use crate::util::time_measure::TimeMeasure;
 
 const METRIC_BATTERY_DISCHARGE_DURATION_MS: &str = "battery_discharge_duration_ms";
@@ -82,14 +82,14 @@ impl FromStr for BatteryMonitorReading {
 pub struct BatteryMonitor<T: TimeMeasure> {
     previous_reading: Option<BatteryMonitorReading>,
     last_reading_time: T,
-    heartbeat_manager: Arc<Mutex<HeartbeatManager>>,
+    heartbeat_manager: Arc<Mutex<MetricReportManager>>,
 }
 
 impl<T> BatteryMonitor<T>
 where
     T: TimeMeasure + Copy + Ord + Sub<T, Output = Duration>,
 {
-    pub fn new(heartbeat_manager: Arc<Mutex<HeartbeatManager>>) -> Self {
+    pub fn new(heartbeat_manager: Arc<Mutex<MetricReportManager>>) -> Self {
         Self {
             previous_reading: None,
             last_reading_time: T::now(),
@@ -298,7 +298,7 @@ mod tests {
         #[case] expected_discharge_duration: f64,
     ) {
         let now = TestInstant::now();
-        let heartbeat_manager = Arc::new(Mutex::new(HeartbeatManager::new()));
+        let heartbeat_manager = Arc::new(Mutex::new(MetricReportManager::new()));
         let mut battery_monitor = BatteryMonitor {
             heartbeat_manager,
             last_reading_time: now,
@@ -317,7 +317,7 @@ mod tests {
             .heartbeat_manager
             .lock()
             .unwrap()
-            .take_metrics();
+            .take_heartbeat_metrics();
         let soc_pct_key = METRIC_BATTERY_SOC_PCT.parse::<MetricStringKey>().unwrap();
 
         match metrics.get(&soc_pct_key).unwrap() {

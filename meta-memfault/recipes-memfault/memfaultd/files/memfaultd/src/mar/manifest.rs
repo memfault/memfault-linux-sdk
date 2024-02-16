@@ -12,11 +12,11 @@ use uuid::Uuid;
 use crate::{
     build_info::VERSION,
     metrics::MetricStringKey,
-    metrics::MetricValue,
+    metrics::{MetricReportType, MetricValue},
     network::DeviceConfigRevision,
     network::NetworkConfig,
     reboot::RebootReason,
-    util::serialization::milliseconds_to_duration,
+    util::serialization::{milliseconds_to_duration, optional_milliseconds_to_duration},
     util::system::{get_system_clock, read_system_boot_id, Clock},
 };
 
@@ -108,12 +108,27 @@ pub enum Metadata {
     },
     #[serde(rename = "linux-reboot")]
     LinuxReboot { reason: RebootReason },
+    // DEPRECATED but need to keep the variant for backwards compatibility
+    // with MARs produced by earlier SDK versions
     #[serde(rename = "linux-heartbeat")]
     LinuxHeartbeat {
         #[serde(serialize_with = "crate::util::serialization::sorted_map::sorted_map")]
         metrics: HashMap<MetricStringKey, MetricValue>,
+        #[serde(
+            default,
+            rename = "duration_ms",
+            skip_serializing_if = "Option::is_none",
+            with = "optional_milliseconds_to_duration"
+        )]
+        duration: Option<Duration>,
+    },
+    #[serde(rename = "linux-metric-report")]
+    LinuxMetricReport {
+        #[serde(serialize_with = "crate::util::serialization::sorted_map::sorted_map")]
+        metrics: HashMap<MetricStringKey, MetricValue>,
         #[serde(rename = "duration_ms", with = "milliseconds_to_duration")]
         duration: Duration,
+        report_type: MetricReportType,
     },
 }
 
@@ -255,6 +270,7 @@ impl Manifest {
             Metadata::DeviceAttributes { .. } => vec![],
             Metadata::DeviceConfig { .. } => vec![],
             Metadata::LinuxHeartbeat { .. } => vec![],
+            Metadata::LinuxMetricReport { .. } => vec![],
             Metadata::LinuxReboot { .. } => vec![],
         }
     }
@@ -269,9 +285,13 @@ impl Metadata {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, str::FromStr};
+    use std::{collections::HashMap, path::PathBuf, str::FromStr};
 
-    use crate::{mar::CompressionAlgorithm, metrics::MetricValue, reboot::RebootReasonCode};
+    use crate::{
+        mar::CompressionAlgorithm,
+        metrics::{MetricReportType, MetricValue},
+        reboot::RebootReasonCode,
+    };
     use rstest::rstest;
     use uuid::uuid;
 
@@ -381,14 +401,33 @@ mod tests {
         let manifest = Manifest::new(
             &config,
             CollectionTime::test_fixture(),
-            super::Metadata::LinuxHeartbeat {
+            super::Metadata::LinuxMetricReport {
                 metrics: HashMap::from([
                     ("n1".parse().unwrap(), MetricValue::Number(1.0)),
                     ("n2".parse().unwrap(), MetricValue::Number(42.0)),
                 ]),
                 duration: std::time::Duration::from_secs(42),
+                report_type: MetricReportType::Heartbeat,
             },
         );
         insta::assert_json_snapshot!(manifest, { ".producer.version" => "tests"});
+    }
+
+    #[rstest]
+    #[case("heartbeat")]
+    #[case("heartbeat_with_duration")]
+    #[case("metric_report")]
+    #[case("device_config")]
+    #[case("reboot")]
+    #[case("attributes")]
+    #[case("elf_coredump")]
+    fn can_parse_test_manifests(#[case] name: &str) {
+        let input_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("src/mar/test-manifests")
+            .join(name)
+            .with_extension("json");
+        let manifest_json = std::fs::read_to_string(input_path).unwrap();
+        let manifest: Manifest = serde_json::from_str(manifest_json.as_str()).unwrap();
+        insta::assert_json_snapshot!(name, manifest, { ".producer.version" => "tests"});
     }
 }

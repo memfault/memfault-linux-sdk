@@ -16,13 +16,14 @@ use eyre::{eyre, Context};
 use log::{error, info, trace, warn};
 
 use crate::metrics::{
-    BatteryMonitor, BatteryReadingHandler, ConnectivityMonitor, ReportSyncEventHandler,
+    BatteryMonitor, BatteryReadingHandler, ConnectivityMonitor, MetricReportType,
+    ReportSyncEventHandler, SessionEventHandler,
 };
 
 use crate::{
     config::Config,
     mar::upload::collect_and_upload,
-    metrics::{CrashFreeIntervalTracker, HeartbeatManager},
+    metrics::{CrashFreeIntervalTracker, MetricReportManager},
 };
 use crate::{http_server::HttpHandler, util::UpdateStatus};
 use crate::{
@@ -112,10 +113,15 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         vec![Box::new(MarExportHandler::new(config.mar_staging_path()))];
 
     // Metric store
-    let heartbeat_manager = Arc::new(Mutex::new(HeartbeatManager::new()));
+    let metric_report_manager = match config.session_configs() {
+        Some(session_configs) => Arc::new(Mutex::new(
+            MetricReportManager::new_with_session_configs(session_configs),
+        )),
+        None => Arc::new(Mutex::new(MetricReportManager::new())),
+    };
 
     let battery_monitor = Arc::new(Mutex::new(BatteryMonitor::<Instant>::new(
-        heartbeat_manager.clone(),
+        metric_report_manager.clone(),
     )));
     let battery_reading_handler = BatteryReadingHandler::new(
         config.config_file.enable_data_collection,
@@ -125,15 +131,23 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
 
     let report_sync_event_handler = ReportSyncEventHandler::new(
         config.config_file.enable_data_collection,
-        heartbeat_manager.clone(),
+        metric_report_manager.clone(),
     );
     http_handlers.push(Box::new(report_sync_event_handler));
+
+    let session_event_handler = SessionEventHandler::new(
+        config.config_file.enable_data_collection,
+        metric_report_manager.clone(),
+        config.mar_staging_path(),
+        NetworkConfig::from(&config),
+    );
+    http_handlers.push(Box::new(session_event_handler));
 
     #[cfg(feature = "collectd")]
     {
         let collectd_handler = CollectdHandler::new(
             config.config_file.enable_data_collection,
-            heartbeat_manager.clone(),
+            metric_report_manager.clone(),
         );
         http_handlers.push(Box::new(collectd_handler));
     }
@@ -143,8 +157,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         let net_config = NetworkConfig::from(&config);
         let mar_staging_path = config.mar_staging_path();
         let heartbeat_interval = config.config_file.heartbeat_interval;
-
-        let heartbeat_manager = heartbeat_manager.clone();
+        let metric_report_manager = metric_report_manager.clone();
         spawn(move || {
             let mut next_heartbeat = Instant::now() + heartbeat_interval;
             loop {
@@ -152,10 +165,11 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                     sleep(next_heartbeat - Instant::now());
                 }
                 next_heartbeat += heartbeat_interval;
-                if let Err(e) = HeartbeatManager::dump_heartbeat_manager_to_mar_entry(
-                    &heartbeat_manager,
+                if let Err(e) = MetricReportManager::dump_report_to_mar_entry(
+                    &metric_report_manager,
                     &mar_staging_path,
                     &net_config,
+                    MetricReportType::Heartbeat,
                 ) {
                     warn!("Unable to dump metrics: {}", e);
                 }
@@ -189,7 +203,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     if let Some(connectivity_monitor_config) = config.connectivity_monitor_config() {
         let mut connectivity_monitor = ConnectivityMonitor::<Instant, TcpConnectionChecker>::new(
             connectivity_monitor_config,
-            heartbeat_manager.clone(),
+            metric_report_manager.clone(),
         );
         spawn(move || {
             let mut next_connectivity_reading_time =
@@ -210,12 +224,13 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         let net_config = NetworkConfig::from(&config);
         let mar_staging_path = config.mar_staging_path();
 
-        let heartbeat_manager = heartbeat_manager.clone();
+        let heartbeat_manager = metric_report_manager.clone();
         sync_tasks.push(Box::new(move |forced| match forced {
-            true => HeartbeatManager::dump_heartbeat_manager_to_mar_entry(
+            true => MetricReportManager::dump_report_to_mar_entry(
                 &heartbeat_manager,
                 &mar_staging_path,
                 &net_config,
+                MetricReportType::Heartbeat,
             ),
             false => Ok(()),
         }));
@@ -225,18 +240,19 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         let net_config = NetworkConfig::from(&config);
         let mar_staging_path = config.mar_staging_path();
 
-        let heartbeat_manager = heartbeat_manager.clone();
+        let heartbeat_manager = metric_report_manager.clone();
         shutdown_tasks.push(Box::new(move || {
-            HeartbeatManager::dump_heartbeat_manager_to_mar_entry(
+            MetricReportManager::dump_report_to_mar_entry(
                 &heartbeat_manager,
                 &mar_staging_path,
                 &net_config,
+                MetricReportType::Heartbeat,
             )
         }));
     }
     // Schedule a task to compute operational and crashfree hours
     {
-        let heartbeat_manager = heartbeat_manager.clone();
+        let heartbeat_manager = metric_report_manager.clone();
 
         let mut crashfree_tracker = CrashFreeIntervalTracker::<Instant>::new_hourly();
         http_handlers.push(crashfree_tracker.http_handler());
@@ -313,7 +329,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                 log_config,
                 on_log_completion,
                 headroom_limiter,
-                heartbeat_manager.clone(),
+                metric_report_manager.clone(),
             )?;
             log_collector.spawn_collect_from(FluentBitAdapter::new(
                 fluent_bit_receiver,
@@ -412,11 +428,11 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                 );
                 let _metric_result = match result {
                     Ok(0) => Ok(()),
-                    Ok(_count) => heartbeat_manager
+                    Ok(_count) => metric_report_manager
                         .lock()
                         .unwrap()
                         .increment_counter(METRIC_MF_SYNC_SUCCESS),
-                    Err(_) => heartbeat_manager
+                    Err(_) => metric_report_manager
                         .lock()
                         .unwrap()
                         .increment_counter(METRIC_MF_SYNC_FAILURE),

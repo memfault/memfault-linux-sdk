@@ -9,6 +9,7 @@ use reqwest::{blocking::Client, header::ACCEPT, StatusCode};
 use crate::{
     config::Config,
     mar::{ExportFormat, EXPORT_MAR_URL},
+    metrics::SessionName,
 };
 
 /// Client to Memfaultd localhost HTTP API
@@ -121,6 +122,38 @@ impl MemfaultdClient {
         let r = self
             .client
             .post(format!("{}{}", self.base_url, path))
+            .send()?;
+        match r.status() {
+            StatusCode::OK => Ok(()),
+            _ => Err(eyre!(
+                "Unexpected status code {}: {}",
+                r.status().as_u16(),
+                from_utf8(&r.bytes()?)?
+            )),
+        }
+    }
+
+    pub fn start_session(&self, session_name: &SessionName) -> Result<()> {
+        let r = self
+            .client
+            .post(format!("{}/v1/session/start", self.base_url))
+            .body(session_name.to_string())
+            .send()?;
+        match r.status() {
+            StatusCode::OK => Ok(()),
+            _ => Err(eyre!(
+                "Unexpected status code {}: {}",
+                r.status().as_u16(),
+                from_utf8(&r.bytes()?)?
+            )),
+        }
+    }
+
+    pub fn end_session(&self, session_name: &SessionName) -> Result<()> {
+        let r = self
+            .client
+            .post(format!("{}/v1/session/end", self.base_url))
+            .body(session_name.to_string())
             .send()?;
         match r.status() {
             StatusCode::OK => Ok(()),

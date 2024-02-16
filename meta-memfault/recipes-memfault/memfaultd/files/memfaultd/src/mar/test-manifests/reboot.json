@@ -1,0 +1,21 @@
+{
+    "schema_version": 1,
+    "collection_time": {
+        "timestamp": "2023-05-24T18:20:21.371852623Z",
+        "uptime_ms": 17445527,
+        "linux_boot_id": "48af0b97-79c3-4e95-ba80-8c436b4b9e8f",
+        "elapsed_realtime_ms": 17445527,
+        "boot_count": 0
+    },
+    "device": {
+        "project_key": "INSERT_PROJECT_KEY_HERE",
+        "hardware_version": "qemuarm64",
+        "software_version": "0.0.1",
+        "software_type": "main",
+        "device_serial": "DEMOSERIAL"
+    },
+    "type": "linux-reboot",
+    "metadata": {
+        "reason": 3
+    }
+}

@@ -17,7 +17,7 @@ import collectd
 path = "/proc/uptime"
 
 
-def config_fn(config) -> None:  # type: ignore[no-untyped-def]
+def config_fn(config) -> None:  # pyright: ignore[reportArgumentType]
     for node in config.children:
         key = node.key.lower()
         if key == "path":

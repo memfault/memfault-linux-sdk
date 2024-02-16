@@ -8,7 +8,7 @@ use tiny_http::{Method, Request, Response};
 
 use crate::{
     http_server::{HttpHandler, HttpHandlerResult},
-    metrics::HeartbeatManager,
+    metrics::MetricReportManager,
 };
 
 const METRIC_SYNC_SUCCESS: &str = "sync_successful";
@@ -18,11 +18,14 @@ const METRIC_SYNC_FAILURE: &str = "sync_failure";
 #[derive(Clone)]
 pub struct ReportSyncEventHandler {
     data_collection_enabled: bool,
-    metrics_store: Arc<Mutex<HeartbeatManager>>,
+    metrics_store: Arc<Mutex<MetricReportManager>>,
 }
 
 impl ReportSyncEventHandler {
-    pub fn new(data_collection_enabled: bool, metrics_store: Arc<Mutex<HeartbeatManager>>) -> Self {
+    pub fn new(
+        data_collection_enabled: bool,
+        metrics_store: Arc<Mutex<MetricReportManager>>,
+    ) -> Self {
         Self {
             data_collection_enabled,
             metrics_store,
@@ -67,7 +70,7 @@ mod tests {
 
     use crate::{
         http_server::{HttpHandler, HttpHandlerResult},
-        metrics::HeartbeatManager,
+        metrics::MetricReportManager,
     };
 
     use super::ReportSyncEventHandler;
@@ -82,7 +85,11 @@ mod tests {
             HttpHandlerResult::Response(_)
         ));
 
-        let metrics = handler.metrics_store.lock().unwrap().take_metrics();
+        let metrics = handler
+            .metrics_store
+            .lock()
+            .unwrap()
+            .take_heartbeat_metrics();
         assert_json_snapshot!(&metrics);
     }
 
@@ -96,7 +103,11 @@ mod tests {
             HttpHandlerResult::Response(_)
         ));
 
-        let metrics = handler.metrics_store.lock().unwrap().take_metrics();
+        let metrics = handler
+            .metrics_store
+            .lock()
+            .unwrap()
+            .take_heartbeat_metrics();
         assert_json_snapshot!(&metrics);
     }
 
@@ -121,7 +132,11 @@ mod tests {
                 HttpHandlerResult::Response(_)
             ));
         }
-        let metrics = handler.metrics_store.lock().unwrap().take_metrics();
+        let metrics = handler
+            .metrics_store
+            .lock()
+            .unwrap()
+            .take_heartbeat_metrics();
         // Need to sort the map so the JSON string is consistent
         let sorted_metrics: BTreeMap<_, _> = metrics.iter().collect();
 
@@ -130,6 +145,6 @@ mod tests {
 
     #[fixture]
     fn handler() -> ReportSyncEventHandler {
-        ReportSyncEventHandler::new(true, Arc::new(Mutex::new(HeartbeatManager::new())))
+        ReportSyncEventHandler::new(true, Arc::new(Mutex::new(MetricReportManager::new())))
     }
 }

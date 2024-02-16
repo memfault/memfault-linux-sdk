@@ -97,13 +97,13 @@ mod tests {
     use crate::test_utils::TestInstant;
     use crate::{
         http_server::{HttpHandler, HttpHandlerResult},
-        metrics::{BatteryMonitor, HeartbeatManager},
+        metrics::{BatteryMonitor, MetricReportManager},
     };
 
     use super::BatteryReadingHandler;
     #[rstest]
     fn handle_push() {
-        let heartbeat_manager = Arc::new(Mutex::new(HeartbeatManager::new()));
+        let heartbeat_manager = Arc::new(Mutex::new(MetricReportManager::new()));
         let handler = BatteryReadingHandler::new(
             true,
             Arc::new(Mutex::new(BatteryMonitor::<TestInstant>::new(
@@ -119,7 +119,7 @@ mod tests {
             HttpHandlerResult::Response(_)
         ));
 
-        let metrics = heartbeat_manager.lock().unwrap().take_metrics();
+        let metrics = heartbeat_manager.lock().unwrap().take_heartbeat_metrics();
 
         // Need to sort the map so the JSON string is consistent
         let sorted_metrics: BTreeMap<_, _> = metrics.iter().collect();
@@ -139,7 +139,7 @@ mod tests {
         #[case] seconds_between_readings: u64,
         #[case] test_name: &str,
     ) {
-        let heartbeat_manager = Arc::new(Mutex::new(HeartbeatManager::new()));
+        let heartbeat_manager = Arc::new(Mutex::new(MetricReportManager::new()));
         let handler = BatteryReadingHandler::new(
             true,
             Arc::new(Mutex::new(BatteryMonitor::<TestInstant>::new(
@@ -158,7 +158,7 @@ mod tests {
             TestInstant::sleep(Duration::from_secs(seconds_between_readings));
         }
 
-        let metrics = heartbeat_manager.lock().unwrap().take_metrics();
+        let metrics = heartbeat_manager.lock().unwrap().take_heartbeat_metrics();
 
         // Need to sort the map so the JSON string is consistent
         let sorted_metrics: BTreeMap<_, _> = metrics.iter().collect();
@@ -168,7 +168,7 @@ mod tests {
 
     #[rstest]
     fn errors_when_body_is_invalid() {
-        let heartbeat_manager = Arc::new(Mutex::new(HeartbeatManager::new()));
+        let heartbeat_manager = Arc::new(Mutex::new(MetricReportManager::new()));
         let handler = BatteryReadingHandler::<TestInstant>::new(
             true,
             Arc::new(Mutex::new(BatteryMonitor::<TestInstant>::new(

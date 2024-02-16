@@ -18,7 +18,7 @@ use crate::logs::headroom::HeadroomCheck;
 use crate::logs::log_file::{LogFile, LogFileControl, LogFileControlImpl};
 use crate::logs::recovery::recover_old_logs;
 use crate::util::rate_limiter::RateLimiter;
-use crate::{config::Config, metrics::HeartbeatManager};
+use crate::{config::Config, metrics::MetricReportManager};
 use crate::{config::LogToMetricRule, logs::completed_log::CompletedLog};
 
 #[cfg(feature = "log-to-metrics")]
@@ -37,7 +37,7 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
         mut on_log_completion: R,
         headroom_limiter: H,
         #[cfg_attr(not(feature = "log-to-metrics"), allow(unused_variables))]
-        heartbeat_manager: Arc<Mutex<HeartbeatManager>>,
+        heartbeat_manager: Arc<Mutex<MetricReportManager>>,
     ) -> Result<Self> {
         fs::create_dir_all(&log_config.log_tmp_path).wrap_err_with(|| {
             format!(
@@ -263,7 +263,7 @@ mod tests {
 
     use crate::logs::headroom::HeadroomCheck;
     use crate::logs::log_file::{LogFile, LogFileControl};
-    use crate::{logs::completed_log::CompletedLog, metrics::HeartbeatManager};
+    use crate::{logs::completed_log::CompletedLog, metrics::MetricReportManager};
     use eyre::Context;
     use flate2::Compression;
     use rstest::{fixture, rstest};
@@ -413,7 +413,7 @@ mod tests {
 
         let on_completion_should_fail = Arc::new(AtomicBool::new(false));
 
-        let heartbeat_manager = Arc::new(Mutex::new(HeartbeatManager::new()));
+        let heartbeat_manager = Arc::new(Mutex::new(MetricReportManager::new()));
 
         let collector = {
             let on_completion_should_fail = on_completion_should_fail.clone();

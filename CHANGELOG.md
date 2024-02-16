@@ -6,6 +6,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] - 2024-02-15
+
+This release introduces support for session-based metric reporting in the
+Memfault Linux SDK! While full support in the Memfault web application is coming
+soon, starting with this release users can begin experimenting with how to best
+make use of sessions for their devices. Sessions allow for the capture of
+metrics aggregated over dynamic spans of time in addition to the periodic
+heartbeat. If you are interested in trying out this feature while it is brewing,
+please contact us for more details!
+
+### Added
+
+- Support for the `sessions` `memfaultd.conf` field. This configuration allows
+  users to define sessions and specify which metrics should be captured for each
+  type of session.
+- New `memfaultctl` commands `start-session` and `end-session` to start and end
+  session metric reports respectively. When `end-session` is called for an
+  ongoing session, a MAR file with the aggregated metrics for that session is
+  dumped to disk and will be uploaded to Memfault at the next upload interval.
+- The `"linux-metric-report"` (formerly `linux-heartbeat`) MAR type now contains
+  a `"report_type"` field indicating what type of metric report it is. Currently
+  the two types produced by `memfaultd` are `heartbeat` and `session` (with the
+  latter including a field for the name of the session)
+
+### Changed
+
+- The MAR type `"linux-heartbeat"` has been renamed `"linux-metric-report"`.
+- `memfaultd` can now capture multiple metric reports at once. This enables the
+  capture of a session-based metric report without interrupting the capture of
+  the periodic heartbeat report.
+- Updated the whitespace formatting in the default `memfaultd.service` file for
+  more broad drop-in compatibility across `systemd` versions.
+- Reboot reasons are now uploaded to the Memfault backend regardless of the
+  fleet sampling resolution for the device.
+- The preferred version for dependencies of the `memfaultd` bitbake recipe is
+  now set with the `?=` operator to avoid conflicts with other recipes in users'
+  Yocto build that also use these dependencies.
+- `libmemfaultc` is now compiled with the -fPIC flag
+- The error message that is printed when `memfaultctl` can't find a PID file for
+  `memfaultd` has been modified to make the source of the error more clear.
+- The log level for the log output when the last reboot reason file cannot be
+  found has been downgraded to `debug!`.
+
+### Fixed
+
+- A bug in which MAR files generated from a pre-1.9.0 version of `memfaultd`
+  could not be parsed and uploaded by versions 1.9.0 and 1.9.1.
+
 ## [1.9.1] - 2024-1-5
 
 This is a small patch release to fix a bug we discoved in
@@ -754,3 +802,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.9.0-kirkstone
 [1.9.1]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.9.1-kirkstone
+[1.10.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.10.0-kirkstone

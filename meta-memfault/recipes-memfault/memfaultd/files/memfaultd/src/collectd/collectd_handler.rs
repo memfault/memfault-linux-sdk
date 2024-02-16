@@ -13,18 +13,21 @@ use tiny_http::{Method, Request, Response};
 use crate::{
     collectd::payload::Payload,
     http_server::{HttpHandler, HttpHandlerResult},
-    metrics::{HeartbeatManager, KeyedMetricReading},
+    metrics::{KeyedMetricReading, MetricReportManager},
 };
 
 /// A server that listens for collectd JSON pushes and stores them in memory.
 #[derive(Clone)]
 pub struct CollectdHandler {
     data_collection_enabled: bool,
-    metrics_store: Arc<Mutex<HeartbeatManager>>,
+    metrics_store: Arc<Mutex<MetricReportManager>>,
 }
 
 impl CollectdHandler {
-    pub fn new(data_collection_enabled: bool, metrics_store: Arc<Mutex<HeartbeatManager>>) -> Self {
+    pub fn new(
+        data_collection_enabled: bool,
+        metrics_store: Arc<Mutex<MetricReportManager>>,
+    ) -> Self {
         CollectdHandler {
             data_collection_enabled,
             metrics_store,
@@ -89,7 +92,7 @@ mod tests {
 
     use crate::{
         http_server::{HttpHandler, HttpHandlerResult},
-        metrics::HeartbeatManager,
+        metrics::MetricReportManager,
     };
 
     use super::CollectdHandler;
@@ -104,14 +107,18 @@ mod tests {
             HttpHandlerResult::Response(_)
         ));
 
-        let metrics = handler.metrics_store.lock().unwrap().take_metrics();
+        let metrics = handler
+            .metrics_store
+            .lock()
+            .unwrap()
+            .take_heartbeat_metrics();
         assert_snapshot!(serde_json::to_string_pretty(&metrics)
             .expect("heartbeat_manager should be serializable"));
     }
 
     #[rstest]
     fn ignores_data_when_data_collection_is_off() {
-        let handler = CollectdHandler::new(false, Arc::new(Mutex::new(HeartbeatManager::new())));
+        let handler = CollectdHandler::new(false, Arc::new(Mutex::new(MetricReportManager::new())));
         let r = TestRequest::new().with_method(Method::Post).with_path("/v1/collectd").with_body(
             r#"[{"values":[0],"dstypes":["derive"],"dsnames":["value"],"time":1619712000.000,"interval":10.000,"host":"localhost","plugin":"cpu","plugin_instance":"0","type":"cpu","type_instance":"idle"}]"#,
         );
@@ -120,13 +127,17 @@ mod tests {
             HttpHandlerResult::Response(_)
         ));
 
-        let metrics = handler.metrics_store.lock().unwrap().take_metrics();
+        let metrics = handler
+            .metrics_store
+            .lock()
+            .unwrap()
+            .take_heartbeat_metrics();
         assert_snapshot!(serde_json::to_string_pretty(&metrics)
             .expect("heartbeat_manager should be serializable"));
     }
 
     #[fixture]
     fn handler() -> CollectdHandler {
-        CollectdHandler::new(true, Arc::new(Mutex::new(HeartbeatManager::new())))
+        CollectdHandler::new(true, Arc::new(Mutex::new(MetricReportManager::new())))
     }
 }

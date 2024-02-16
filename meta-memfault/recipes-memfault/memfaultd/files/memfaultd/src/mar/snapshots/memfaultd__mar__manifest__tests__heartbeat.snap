@@ -1,0 +1,52 @@
+---
+source: memfaultd/src/mar/manifest.rs
+expression: manifest
+---
+{
+  "schema_version": 1,
+  "collection_time": {
+    "timestamp": "2023-06-08T23:47:39.021439227Z",
+    "uptime_ms": 35587,
+    "linux_boot_id": "ebf5f46f-fca6-4149-93cf-1c12a5e4d019",
+    "elapsed_realtime_ms": 35588,
+    "boot_count": 0
+  },
+  "device": {
+    "project_key": "INSERT_PROJECT_KEY_HERE",
+    "hardware_version": "qemuarm64",
+    "software_version": "0.0.1",
+    "software_type": "main",
+    "device_serial": "DEMOSERIAL"
+  },
+  "producer": {
+    "id": "memfaultd",
+    "version": "tests"
+  },
+  "type": "linux-heartbeat",
+  "metadata": {
+    "metrics": {
+      "cpu/sum/percent/idle": 482.959065568454,
+      "cpu/sum/percent/interrupt": 0.0,
+      "cpu/sum/percent/nice": 0.0,
+      "cpu/sum/percent/softirq": 0.403632694248234,
+      "cpu/sum/percent/steal": 0.0,
+      "cpu/sum/percent/system": 4.32826849339439,
+      "cpu/sum/percent/user": 15.6038091933719,
+      "cpu/sum/percent/wait": 0.702826448134218,
+      "df/media/df_complex/free": 416471040.0,
+      "df/media/df_complex/reserved": 27681792.0,
+      "df/media/df_complex/used": 19456.0,
+      "interface/enp0s1/if_dropped/rx": 0.0,
+      "interface/enp0s1/if_dropped/tx": 0.0,
+      "interface/enp0s1/if_errors/rx": 0.0,
+      "interface/enp0s1/if_errors/tx": 0.0,
+      "interface/enp0s1/if_octets/rx": 523.064016916174,
+      "interface/enp0s1/if_octets/tx": 152.289523564009,
+      "interface/enp0s1/if_packets/rx": 1.39990546332198,
+      "interface/enp0s1/if_packets/tx": 1.1999189685617,
+      "memory/memory/free": 260657152.0,
+      "memory/memory/used": 29261824.0,
+      "uptime/uptime": 26.0
+    }
+  }
+}

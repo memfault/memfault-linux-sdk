@@ -43,7 +43,7 @@ class QEMU:
         self.pid.sendline("root")
         self._set_env()
 
-    def child(self) -> pexpect.spawn:  # type: ignore[no-any-unimported]
+    def child(self) -> pexpect.spawn:  # pyright: ignore[reportArgumentType]
         return self.pid
 
     def exec_cmd(self, cmd: str) -> None:

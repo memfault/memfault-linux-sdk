@@ -5,7 +5,7 @@ use std::fs::{remove_file, OpenOptions};
 use std::io::{ErrorKind, Write};
 use std::path::Path;
 
-use eyre::{Report, Result, WrapErr};
+use eyre::{eyre, Report, Result, WrapErr};
 use nix::unistd::Pid;
 
 const PID_FILE: &str = "/var/run/memfaultd.pid";
@@ -45,7 +45,7 @@ pub fn get_pid_from_file() -> Result<Pid> {
                 .wrap_err("Failed to parse PID file contents")?;
             Ok(Pid::from_raw(pid))
         }
-        Err(e) => Err(e.into()),
+        Err(_) => Err(eyre!("Couldn't read memfaultd PID file at {}.", PID_FILE)),
     }
 }
 

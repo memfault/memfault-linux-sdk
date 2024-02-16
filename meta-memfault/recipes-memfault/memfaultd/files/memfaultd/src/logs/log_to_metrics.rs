@@ -11,20 +11,20 @@ use log::{debug, warn};
 use regex::Regex;
 use serde_json::{Map, Value};
 
-use crate::{config::LogToMetricRule, metrics::HeartbeatManager};
+use crate::{config::LogToMetricRule, metrics::MetricReportManager};
 
 const SEARCH_FIELD: &str = "MESSAGE";
 
 pub struct LogToMetrics {
     rules: Vec<LogToMetricRule>,
-    heartbeat_manager: Arc<Mutex<HeartbeatManager>>,
+    heartbeat_manager: Arc<Mutex<MetricReportManager>>,
     regex_cache: HashMap<String, Regex>,
 }
 
 impl LogToMetrics {
     pub fn new(
         rules: Vec<LogToMetricRule>,
-        heartbeat_manager: Arc<Mutex<HeartbeatManager>>,
+        heartbeat_manager: Arc<Mutex<MetricReportManager>>,
     ) -> Self {
         Self {
             rules,
@@ -75,7 +75,7 @@ impl LogToMetrics {
         regex_cache: &mut HashMap<String, Regex>,
         metric_name: &str,
         filter: &HashMap<String, String>,
-        heartbeat_manager: Arc<Mutex<HeartbeatManager>>,
+        heartbeat_manager: Arc<Mutex<MetricReportManager>>,
     ) {
         // Use filter to quickly disqualify a log entry
         for (key, value) in filter {
@@ -174,15 +174,18 @@ mod tests {
         #[case] expected_value: f64,
         _setup_logger: (),
     ) {
-        let heartbeat_manager = Arc::new(Mutex::new(HeartbeatManager::new()));
-        let mut log_to_metrics = LogToMetrics::new(rules, heartbeat_manager.clone());
+        let metric_report_manager = Arc::new(Mutex::new(MetricReportManager::new()));
+        let mut log_to_metrics = LogToMetrics::new(rules, metric_report_manager.clone());
 
         for log in logs {
             log_to_metrics
                 .process(&json!({ "data": log }))
                 .expect("process error");
         }
-        let metrics = heartbeat_manager.lock().unwrap().take_metrics();
+        let metrics = metric_report_manager
+            .lock()
+            .unwrap()
+            .take_heartbeat_metrics();
 
         if expected_value == 0.0 {
             assert!(!metrics.iter().any(|m| m.0.as_str() == metric_name));

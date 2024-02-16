@@ -132,6 +132,10 @@ impl MarEntryBuilder<Metadata> {
             inodes: self.attachments.len() as u64 + 1,
         }
     }
+
+    pub fn get_metadata(&self) -> &Metadata {
+        &self.metadata
+    }
 }
 
 /// Helper structure that will clean up the entry directory on Drop if mark_saved() was not called.

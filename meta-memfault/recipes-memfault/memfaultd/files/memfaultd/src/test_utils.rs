@@ -8,11 +8,13 @@
 
 use std::cmp::min;
 use std::path::Path;
+use std::str::FromStr;
 use std::{
     fs::File,
     io::{ErrorKind, Seek, Write},
 };
 
+use chrono::Duration;
 use rstest::fixture;
 
 mod test_instant;
@@ -20,6 +22,8 @@ pub use test_instant::*;
 
 mod test_connection_checker;
 pub use test_connection_checker::*;
+
+use crate::metrics::{KeyedMetricReading, MetricReading, MetricStringKey, MetricTimestamp};
 
 /// A file that will trigger write errors when it reaches a certain size.
 /// Note that we currently enforce the limit on the total number of bytes
@@ -104,6 +108,26 @@ macro_rules! set_snapshot_suffix {
         settings.set_snapshot_suffix(format!($($expr,)*));
         let _guard = settings.bind_to_scope();
     }
+}
+
+#[cfg(test)]
+/// Constructs an interator of Gauge metric readings for tests
+/// to easily generate mock data
+pub fn in_gauges(
+    metrics: Vec<(&'static str, i64, f64)>,
+) -> impl Iterator<Item = KeyedMetricReading> {
+    metrics
+        .into_iter()
+        .enumerate()
+        .map(|(i, (name, interval, value))| KeyedMetricReading {
+            name: MetricStringKey::from_str(name).unwrap(),
+            value: MetricReading::Gauge {
+                value,
+                interval: Duration::milliseconds(interval),
+                timestamp: MetricTimestamp::from_str("2021-01-01T00:00:00Z").unwrap()
+                    + chrono::Duration::seconds(i as i64),
+            },
+        })
 }
 
 pub(crate) use set_snapshot_suffix;
