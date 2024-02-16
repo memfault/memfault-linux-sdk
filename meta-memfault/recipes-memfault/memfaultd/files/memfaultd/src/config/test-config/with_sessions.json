@@ -1,0 +1,8 @@
+{
+    "sessions": [
+        {
+            "name": "test-session",
+            "captured_metrics": ["cpu.total", "statsd.wefaultd.blendpower"]
+        }
+    ]
+}

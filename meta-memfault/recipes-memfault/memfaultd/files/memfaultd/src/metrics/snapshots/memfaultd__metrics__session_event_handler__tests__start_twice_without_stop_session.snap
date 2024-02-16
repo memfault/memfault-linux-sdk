@@ -1,0 +1,8 @@
+---
+source: memfaultd/src/metrics/session_event_handler.rs
+expression: metrics
+---
+{
+  "bar": 2.0,
+  "foo": 1.0
+}

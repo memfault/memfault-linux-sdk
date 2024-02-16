@@ -1,0 +1,11 @@
+{
+    "sessions": [
+        {
+            "name": "test-session",
+            "captured_metrics": [
+                "string-with-non-ascii-\u{1F4A9}",
+                "statsd.wefaultd.blendpower"
+            ]
+        }
+    ]
+}

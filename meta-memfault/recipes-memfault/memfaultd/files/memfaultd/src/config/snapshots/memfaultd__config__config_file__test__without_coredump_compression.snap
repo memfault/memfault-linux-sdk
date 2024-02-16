@@ -54,5 +54,6 @@ expression: content
     "bind_address": "127.0.0.1:8787"
   },
   "battery_monitor": null,
-  "connectivity_monitor": null
+  "connectivity_monitor": null,
+  "sessions": null
 }

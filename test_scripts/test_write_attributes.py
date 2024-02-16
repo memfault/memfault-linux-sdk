@@ -1,6 +1,7 @@
 #
 # Copyright (c) Memfault, Inc.
 # See License.txt for details
+import time
 from typing import Any
 
 import pytest
@@ -19,6 +20,9 @@ def test(qemu: QEMU, memfault_service_tester: MemfaultServiceTester, qemu_device
     qemu.exec_cmd(
         'memfaultctl write-attributes a_string=running a_bool=false a_boolish_string=\\"true\\" a_float=42.42'
     )
+
+    # Wait for MAR to get written
+    time.sleep(5)
 
     # Poke memfaultd to upload now
     qemu.exec_cmd("memfaultctl sync")

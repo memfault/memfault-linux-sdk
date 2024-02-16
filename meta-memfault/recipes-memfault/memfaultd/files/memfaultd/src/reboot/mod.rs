@@ -216,7 +216,7 @@ fn read_reboot_reason_and_clear_file(file_name: &PathBuf) -> Option<RebootReason
     let reboot_reason_string = match std::fs::read_to_string(file_name) {
         Ok(reboot_reason) => reboot_reason,
         Err(e) => {
-            warn!("Failed to open {:?}: {}", file_name, e.kind());
+            debug!("Failed to open {:?}: {}", file_name, e.kind());
             return None;
         }
     };

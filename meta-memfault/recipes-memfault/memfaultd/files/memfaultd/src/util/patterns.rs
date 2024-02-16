@@ -15,6 +15,15 @@ pub fn alphanum_slug_is_valid(s: &str, max_len: usize) -> eyre::Result<()> {
     }
 }
 
+pub fn alphanum_slug_is_valid_and_starts_alpha(s: &str, max_len: usize) -> eyre::Result<()> {
+    alphanum_slug_is_valid(s, max_len)?;
+    if s.starts_with(char::is_alphabetic) {
+        Ok(())
+    } else {
+        Err(eyre::eyre!("Must start with an alphabetic character"))
+    }
+}
+
 pub fn alphanum_slug_dots_colon_is_valid(s: &str, max_len: usize) -> eyre::Result<()> {
     match (
         (1..max_len).contains(&s.len()),

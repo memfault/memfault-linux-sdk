@@ -1,0 +1,25 @@
+{
+    "schema_version": 1,
+    "collection_time": {
+        "timestamp": "1970-01-01T00:00:04.321Z",
+        "uptime_ms": 800000,
+        "elapsed_realtime_ms": 900000,
+        "linux_boot_id": "230295cb-04d4-40b8-8624-ec37089b9b75",
+        "boot_count": 0
+    },
+    "type": "linux-logs",
+    "device": {
+        "project_key": "INSERT_PROJECT_KEY_HERE",
+        "hardware_version": "evt",
+        "software_version": "1.0.0",
+        "software_type": "linux-build",
+        "device_serial": "DEMOSERIAL"
+    },
+    "metadata": {
+        "format": { "id": "v1", "serialization": "json-lines" },
+        "producer": { "id": "memfaultd", "version": "2.0.0" },
+        "log_file_name": "logs.txt",
+        "cid": { "uuid": "271e5249-1e3f-4c89-b4a5-ed96cc8f42a7" },
+        "next_cid": { "uuid": "4276a26b-ba89-4c57-832f-d9e90e9629dd" }
+    }
+}

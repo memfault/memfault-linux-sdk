@@ -1,0 +1,22 @@
+{
+    "schema_version": 1,
+    "collection_time": {
+        "timestamp": "1970-01-01T00:00:04.321Z",
+        "uptime_ms": 800000,
+        "elapsed_realtime_ms": 900000,
+        "linux_boot_id": "230295cb-04d4-40b8-8624-ec37089b9b75",
+        "boot_count": 0
+    },
+    "device": {
+        "project_key": "INSERT_PROJECT_KEY_HERE",
+        "hardware_version": "evt",
+        "software_version": "1.0.0",
+        "software_type": "linux-build",
+        "device_serial": "DEMOSERIAL"
+    },
+    "type": "elf-coredump",
+    "metadata": {
+        "coredump_file_name": "core-da01317a-902f-48f8-8c3f-aabf8b14facc.elf.gz",
+        "compression": "gzip"
+    }
+}

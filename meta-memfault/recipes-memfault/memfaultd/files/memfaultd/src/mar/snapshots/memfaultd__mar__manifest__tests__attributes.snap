@@ -1,0 +1,46 @@
+---
+source: memfaultd/src/mar/manifest.rs
+expression: manifest
+---
+{
+  "schema_version": 1,
+  "collection_time": {
+    "timestamp": "1970-01-01T00:00:04.321Z",
+    "uptime_ms": 800000,
+    "linux_boot_id": "230295cb-04d4-40b8-8624-ec37089b9b75",
+    "elapsed_realtime_ms": 900000,
+    "boot_count": 0
+  },
+  "device": {
+    "project_key": "INSERT_PROJECT_KEY_HERE",
+    "hardware_version": "evt",
+    "software_version": "1.0.0",
+    "software_type": "linux-build",
+    "device_serial": "DEMOSERIAL"
+  },
+  "producer": {
+    "id": "memfaultd",
+    "version": "tests"
+  },
+  "type": "device-attributes",
+  "metadata": {
+    "attributes": [
+      {
+        "string_key": "my_string",
+        "value": "foo"
+      },
+      {
+        "string_key": "my_integer",
+        "value": 123
+      },
+      {
+        "string_key": "my_float",
+        "value": 123.456
+      },
+      {
+        "string_key": "my_bool",
+        "value": true
+      }
+    ]
+  }
+}

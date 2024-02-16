@@ -19,7 +19,7 @@ pub use self::{
     config_file::{
         ConnectionCheckProtocol, ConnectivityMonitorConfig, ConnectivityMonitorTarget,
         CoredumpCaptureStrategy, CoredumpCompression, JsonConfigs, LogToMetricRule,
-        MemfaultdConfig,
+        MemfaultdConfig, SessionConfig,
     },
     device_config::{DeviceConfig, Resolution, Sampling},
     device_info::{DeviceInfo, DeviceInfoWarning},
@@ -198,6 +198,10 @@ impl Config {
 
     pub fn connectivity_monitor_config(&self) -> Option<&ConnectivityMonitorConfig> {
         self.config_file.connectivity_monitor.as_ref()
+    }
+
+    pub fn session_configs(&self) -> Option<&Vec<SessionConfig>> {
+        self.config_file.sessions.as_ref()
     }
 }
 

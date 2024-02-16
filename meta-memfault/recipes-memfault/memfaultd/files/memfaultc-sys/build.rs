@@ -13,6 +13,7 @@ fn main() {
     env::set_var("CRATE_CC_NO_DEFAULTS", "true");
 
     let mut cc = Build::new();
+    cc.flag("-fPIC");
     cc.include(format!("{}/include", LIBMEMFAULTC));
 
     cc.file(format!("{}/src/crash.c", LIBMEMFAULTC));

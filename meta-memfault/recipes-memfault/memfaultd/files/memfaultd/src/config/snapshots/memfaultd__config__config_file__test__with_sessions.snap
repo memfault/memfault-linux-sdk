@@ -1,0 +1,67 @@
+---
+source: memfaultd/src/config/config_file.rs
+expression: content
+---
+{
+  "persist_dir": "/media/memfault",
+  "tmp_dir": null,
+  "tmp_dir_min_headroom_kib": 10240,
+  "tmp_dir_min_inodes": 100,
+  "tmp_dir_max_usage_kib": 102400,
+  "upload_interval_seconds": 3600,
+  "heartbeat_interval_seconds": 3600,
+  "enable_data_collection": false,
+  "enable_dev_mode": false,
+  "software_version": "0.0.0-memfault-unknown",
+  "software_type": "memfault-unknown",
+  "project_key": "",
+  "base_url": "https://device.memfault.com",
+  "swupdate": {
+    "input_file": "/etc/swupdate.cfg",
+    "output_file": "/tmp/swupdate.cfg"
+  },
+  "reboot": {
+    "last_reboot_reason_file": "/media/last_reboot_reason"
+  },
+  "coredump": {
+    "compression": "gzip",
+    "coredump_max_size_kib": 96000,
+    "rate_limit_count": 5,
+    "rate_limit_duration_seconds": 3600,
+    "capture_strategy": {
+      "type": "threads",
+      "max_thread_size_kib": 32
+    }
+  },
+  "fluent-bit": {
+    "extra_fluentd_attributes": [],
+    "bind_address": "127.0.0.1:5170",
+    "max_buffered_lines": 1000,
+    "max_connections": 4
+  },
+  "logs": {
+    "rotate_size_kib": 10240,
+    "rotate_after_seconds": 3600,
+    "compression_level": 1,
+    "max_lines_per_minute": 500,
+    "log_to_metrics": null
+  },
+  "mar": {
+    "mar_file_max_size_kib": 10240,
+    "mar_entry_max_age_seconds": 604800
+  },
+  "http_server": {
+    "bind_address": "127.0.0.1:8787"
+  },
+  "battery_monitor": null,
+  "connectivity_monitor": null,
+  "sessions": [
+    {
+      "name": "test-session",
+      "captured_metrics": [
+        "cpu.total",
+        "statsd.wefaultd.blendpower"
+      ]
+    }
+  ]
+}

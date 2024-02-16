@@ -72,13 +72,11 @@ def memfault_device_info(
     fn = tmpdir / "memfault-device-info"
     with open(fn, "w") as f:
         f.write(
-            textwrap.dedent(
-                f"""\
+            textwrap.dedent(f"""\
                 #!/bin/sh
                 echo MEMFAULT_DEVICE_ID={qemu_device_id}
                 echo MEMFAULT_HARDWARE_VERSION={qemu_hardware_version}
-                """
-            )
+                """)
         )
     os.chmod(fn, 0o755)  # noqa: S103
     return fn

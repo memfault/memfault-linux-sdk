@@ -32,7 +32,7 @@ pub enum MetricReading {
     },
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct KeyedMetricReading {
     pub name: MetricStringKey,
     pub value: MetricReading,
