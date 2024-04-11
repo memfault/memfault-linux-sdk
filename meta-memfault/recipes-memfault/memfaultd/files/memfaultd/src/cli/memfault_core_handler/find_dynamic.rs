@@ -41,7 +41,7 @@ use crate::cli::memfault_core_handler::ElfPtrSize;
 /// # Arguments
 /// * `memory_maps` - The list of the memory regions of the process's memory mappings. This
 /// is used to bound the size reads from /proc/<pid>/mem, when determining the size of path strings.
-/// * `ouput` - Memory regions for all of the aforementioned structures are added to this vector.
+/// * `output` - Memory regions for all of the aforementioned structures are added to this vector.
 pub fn find_dynamic_linker_ranges<P: Read + Seek>(
     proc_mem_stream: &mut P,
     phdr_vaddr: ElfPtrSize,

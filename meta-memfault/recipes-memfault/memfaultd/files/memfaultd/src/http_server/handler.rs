@@ -8,7 +8,7 @@ use tiny_http::{Request, ResponseBox};
 pub enum HttpHandlerResult {
     /// Request was processed and response is proposed.
     Response(ResponseBox),
-    /// An error occured while processing the request (will return 500).
+    /// An error occurred while processing the request (will return 500).
     Error(String),
     /// Request not handled by this handler. Continue to next handler.
     NotHandled,

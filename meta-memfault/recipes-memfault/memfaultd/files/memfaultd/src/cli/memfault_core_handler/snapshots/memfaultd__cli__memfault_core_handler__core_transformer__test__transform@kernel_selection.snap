@@ -376,7 +376,7 @@ expression: segments
             p_offset: 0x0,
             p_vaddr: 0x0,
             p_paddr: 0x0,
-            p_filesz: 0x74,
+            p_filesz: 0xb8,
             p_memsz: 0x0,
             p_align: 0,
         },

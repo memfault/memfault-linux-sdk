@@ -33,8 +33,6 @@ def test(qemu: QEMU, memfault_service_tester: MemfaultServiceTester, qemu_device
     qemu.exec_cmd("memfaultctl sync")
 
     # Check that the backend created the coredump:
-    memfault_service_tester.poll_elf_coredumps_until_count(
-        1, device_serial=qemu_device_id, timeout_secs=90
-    )
+    memfault_service_tester.poll_elf_coredumps_until_count(1, device_serial=qemu_device_id)
 
     # TODO: upload symbol files, so we can assert that the processing was w/o errors here and an issue got created.

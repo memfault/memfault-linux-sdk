@@ -5,19 +5,21 @@ use serde::{Deserialize, Serialize};
 
 use crate::network::{DeviceConfigResponse, DeviceConfigResponseResolution, DeviceConfigRevision};
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Resolution {
     Off,
-    On,
+    Low,
+    Normal,
+    High,
 }
 
 impl From<DeviceConfigResponseResolution> for Resolution {
     fn from(resolution: DeviceConfigResponseResolution) -> Self {
         match resolution {
             DeviceConfigResponseResolution::Off => Resolution::Off,
-            DeviceConfigResponseResolution::Low => Resolution::On,
-            DeviceConfigResponseResolution::Normal => Resolution::On,
-            DeviceConfigResponseResolution::High => Resolution::On,
+            DeviceConfigResponseResolution::Low => Resolution::Low,
+            DeviceConfigResponseResolution::Normal => Resolution::Normal,
+            DeviceConfigResponseResolution::High => Resolution::High,
         }
     }
 }
@@ -83,9 +85,9 @@ impl Default for DeviceConfig {
 impl Sampling {
     pub fn development() -> Self {
         Self {
-            debugging_resolution: Resolution::On,
-            logging_resolution: Resolution::On,
-            monitoring_resolution: Resolution::On,
+            debugging_resolution: Resolution::High,
+            logging_resolution: Resolution::High,
+            monitoring_resolution: Resolution::High,
         }
     }
 }

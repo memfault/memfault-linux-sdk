@@ -1,5 +1,4 @@
-meta-rust-bin
-=============
+# meta-rust-bin
 
 An OpenEmebdded/Yocto layer providing pre-built toolchains for the
 [Rust programming language](https://www.rust-lang.org).
@@ -20,12 +19,12 @@ An OpenEmebdded/Yocto layer providing pre-built toolchains for the
 
 <!-- tocstop -->
 
-
 ## Basic Example
 
-A basic class for cargo-based executables is provided. The following is a
-simple recipe called gpio_utils.bb that builds the [gpio-utils](https://github.com/rust-embedded/gpio-utils)
-crate from branch master.
+A basic class for cargo-based executables is provided. The following is a simple
+recipe called gpio_utils.bb that builds the
+[gpio-utils](https://github.com/rust-embedded/gpio-utils) crate from branch
+master.
 
 ```bitbake
 SUMMARY = "GPIO Utilities"
@@ -44,29 +43,28 @@ As you can see, there is almost no overhead introduced from the `cargo` class
 beyond simply inheriting it. The `cargo` class adds the appropriate Rust
 dependencies as well as default compile and install steps.
 
-
 ## Features
 
 Currently supported:
 
-  * Rust 1.68.0 (and many older, stable versions)
-  * x86 (32 and 64-bit), ARM (32 and 64-bit) build systems.
-  * All Linux architectures that Rust itself supports (Multiple flavors of:
-    x86, ARM, PPC, and MIPS)
-  * Statically-linked libstd, dynamically-linked system libraries (libc, libm,
-    etc)
+- Rust 1.68.0 (and many older, stable versions)
+- x86 (32 and 64-bit), ARM (32 and 64-bit) build systems.
+- All Linux architectures that Rust itself supports (Multiple flavors of: x86,
+  ARM, PPC, and MIPS)
+- Statically-linked libstd, dynamically-linked system libraries (libc, libm,
+  etc)
 
 Future:
 
-  * [ ] Building and installing `dev` and `staticdev` packages (i.e. allow build
-    and install of static and dynamic library builds).
-  * [ ] Debug builds with separated debug info to allow gdbserver usage.
-  * [ ] Running Rust/Cargo on target.
-  * [ ] Vendoring of Cargo dependencies (to better play with the Yocto offline
-    build model).
-  * [ ] Use of a shared libstd across all Rust packages on a target system
-    (provides space savings).
-  * [ ] Total static linking using MUSL.
+- [ ] Building and installing `dev` and `staticdev` packages (i.e. allow build
+      and install of static and dynamic library builds).
+- [ ] Debug builds with separated debug info to allow gdbserver usage.
+- [ ] Running Rust/Cargo on target.
+- [ ] Vendoring of Cargo dependencies (to better play with the Yocto offline
+      build model).
+- [ ] Use of a shared libstd across all Rust packages on a target system
+      (provides space savings).
+- [ ] Total static linking using MUSL.
 
 ### Use with Yocto Release 4.0 (kirkstone) and Above
 
@@ -114,7 +112,6 @@ Note that while there is nothing explicitly preventing the installation of Rust
 on the target, it hasn't been tested and is likely not to work. Pull requests
 are welcome!
 
-
 ## Pre-built vs. Compiled
 
 This layer exists as a tradeoff against other options, e.g. the
@@ -122,22 +119,22 @@ This layer exists as a tradeoff against other options, e.g. the
 different requirements.
 
 Because this layer uses the upstream compiled versions of Rust and Cargo, it
-will never be able to support architectures or options not supported by the
-Rust team itself.
+will never be able to support architectures or options not supported by the Rust
+team itself.
 
 Also, because this layer uses pre-built Rust standard libraries, it is possible
-that the standard libraries provided with this layer will be less efficient
-than code produced by a custom-compiled standard library.
+that the standard libraries provided with this layer will be less efficient than
+code produced by a custom-compiled standard library.
 
 However, using pre-built tools has advantages:
 
-  * Updating the layer to a new version of Rust is as easy as updating
-    checksums and file names, so new versions of Rust are available quickly.
-  * In almost all modern systems, it is faster to download the binaries than it
-    is to download source and build the Rust toolchain from scratch.
-  * Compatability across multiple versions of Yocto is maximized since only
-    basic, stable recipe features are used.
-  * Trivial support for all architectures supported by upstream Rust.
+- Updating the layer to a new version of Rust is as easy as updating checksums
+  and file names, so new versions of Rust are available quickly.
+- In almost all modern systems, it is faster to download the binaries than it is
+  to download source and build the Rust toolchain from scratch.
+- Compatibility across multiple versions of Yocto is maximized since only basic,
+  stable recipe features are used.
+- Trivial support for all architectures supported by upstream Rust.
 
 ## Adding Support for New Versions
 
@@ -147,21 +144,21 @@ be done by running `build-new-version.sh` as follows:
     ./build-new-version.sh <version>
 
 This will create two new recipes:
- - recipes-devtools/rust/rust-bin-<version>.bb
- - recipes-devtools/rust/cargo-bin-<date>.bb
 
- Where the cargo version generated is the one packaged with the associated
- release of rust itself (using the published channel data consumed by other
- tools like rustup).
+- recipes-devtools/rust/rust-bin-<version>.bb
+- recipes-devtools/rust/cargo-bin-<date>.bb
+
+Where the cargo version generated is the one packaged with the associated
+release of rust itself (using the published channel data consumed by other tools
+like rustup).
 
 For latest nightly version:
 
     ./build-new-version.sh nightly
-    
+
 For specified nightly version:
-    
+
     ./build-new-version.sh nightly 2019-07-08
-    
 
 ## Copyright
 

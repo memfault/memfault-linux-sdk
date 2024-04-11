@@ -37,9 +37,7 @@ def test(qemu: QEMU, memfault_service_tester: MemfaultServiceTester, qemu_device
         # Note: sometimes the first heartbeat is an empty dict:
         assert any(report["metrics"] for report in reports)
 
-    memfault_service_tester.poll_until_not_raising(
-        _check, timeout_seconds=60, poll_interval_seconds=1
-    )
+    memfault_service_tester.poll_until_not_raising(_check, poll_interval_seconds=1)
 
     # Now check how many reports we got
     reports = memfault_service_tester.list_reports(

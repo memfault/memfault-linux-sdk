@@ -11,12 +11,13 @@ use std::time::Duration;
 
 use eyre::{eyre, ErrReport, Result};
 
-use crate::metrics::{KeyedMetricReading, MetricReading, MetricReportManager, MetricStringKey};
+use crate::metrics::{
+    core_metrics::{
+        METRIC_BATTERY_DISCHARGE_DURATION_MS, METRIC_BATTERY_SOC_PCT, METRIC_BATTERY_SOC_PCT_DROP,
+    },
+    KeyedMetricReading, MetricReading, MetricReportManager, MetricStringKey,
+};
 use crate::util::time_measure::TimeMeasure;
-
-const METRIC_BATTERY_DISCHARGE_DURATION_MS: &str = "battery_discharge_duration_ms";
-const METRIC_BATTERY_SOC_PCT_DROP: &str = "battery_soc_pct_drop";
-pub const METRIC_BATTERY_SOC_PCT: &str = "battery_soc_pct";
 
 // These states are based off the valid values for
 // sys/class/power_supply/<supply_name>/status
@@ -64,7 +65,16 @@ impl FromStr for BatteryMonitorReading {
             match (charging_state, pct) {
                 (ChargingState::Invalid, _) => Err(eyre!("Invalid charging state: {}", state_str)),
                 (_, Err(e)) => Err(eyre!("Couldn't parse battery percentage: {}", e)),
-                (charging_state, Ok(p)) => Ok(BatteryMonitorReading::new(p, charging_state)),
+                (charging_state, Ok(p)) => {
+                    if (0.0..=100.0).contains(&p) {
+                        Ok(BatteryMonitorReading::new(p, charging_state))
+                    } else {
+                        Err(eyre!(
+                            "Battery SOC percentage value {} is not in the range [0.0, 100.0]!",
+                            p
+                        ))
+                    }
+                }
             }
         } else {
             Err(eyre!(
@@ -137,7 +147,7 @@ where
                     .unwrap_or_else(|_| panic!("Invalid metric name: {}", METRIC_BATTERY_SOC_PCT));
                 heartbeat_manager.add_metric(KeyedMetricReading::new(
                     battery_soc_pct_key,
-                    MetricReading::Gauge {
+                    MetricReading::TimeWeightedAverage {
                         value: soc_pct,
                         timestamp: wall_time,
                         interval: chrono::Duration::from_std(reading_duration)?,
@@ -160,7 +170,7 @@ where
                     .unwrap_or_else(|_| panic!("Invalid metric name: {}", METRIC_BATTERY_SOC_PCT));
                 heartbeat_manager.add_metric(KeyedMetricReading::new(
                     battery_soc_pct_key,
-                    MetricReading::Gauge {
+                    MetricReading::TimeWeightedAverage {
                         value: soc_pct,
                         timestamp: wall_time,
                         interval: chrono::Duration::from_std(reading_duration)?,
@@ -216,6 +226,11 @@ mod tests {
     #[case("Charging:42.5", true)]
     #[case("Charging:42.five", false)]
     #[case("Charging:42.3.5", false)]
+    #[case("Charging:-1", false)]
+    #[case("Discharging:100.1", false)]
+    #[case("Discharging:100.0", true)]
+    #[case("Discharging:0.0", true)]
+    #[case("Discharging:-0.1", false)]
     #[case("Full:100.0", true)]
     #[case("Unknown:80", true)]
     fn test_parse(#[case] cmd_output: &str, #[case] is_ok: bool) {
@@ -238,7 +253,7 @@ mod tests {
            87.0,
            15.0,
            60000.0)]
-    // Continous discharge
+    // Continuous discharge
     #[case(vec![BatteryMonitorReading::new(90.0, ChargingState::Discharging),
                 BatteryMonitorReading::new(80.0, ChargingState::Discharging),
                 BatteryMonitorReading::new(70.0, ChargingState::Discharging),
@@ -247,7 +262,7 @@ mod tests {
            75.0,
            30.0,
            90000.0)]
-    // Continous charge
+    // Continuous charge
     #[case(vec![BatteryMonitorReading::new(60.0, ChargingState::Charging),
                 BatteryMonitorReading::new(70.0, ChargingState::Charging),
                 BatteryMonitorReading::new(80.0, ChargingState::Charging),

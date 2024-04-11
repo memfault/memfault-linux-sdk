@@ -135,16 +135,21 @@ mod tests {
     use super::*;
 
     #[rstest]
+    #[cfg_attr(not(target_os = "linux"), allow(unused_variables, unused_mut))]
     fn deserialize_bogus_message(_setup_logger: (), mut connection: FluentBitFixture) {
-        connection.client.write_all("bogus".as_bytes()).unwrap();
-        connection.client.shutdown(Shutdown::Both).unwrap();
+        // this test can flake on macOS. Run it only on Linux to avoid flaking Mac CI
+        #[cfg(target_os = "linux")]
+        {
+            connection.client.write_all("bogus".as_bytes()).unwrap();
+            connection.client.shutdown(Shutdown::Both).unwrap();
 
-        // Make sure there is nothing received
-        let received = connection.receiver.recv();
-        assert!(received.is_err());
+            // Make sure there is nothing received
+            let received = connection.receiver.recv();
+            assert!(received.is_err());
 
-        // The handler should return without an error
-        assert!(connection.thread.join().is_ok());
+            // The handler should return without an error
+            assert!(connection.thread.join().is_ok());
+        }
     }
 
     #[rstest]

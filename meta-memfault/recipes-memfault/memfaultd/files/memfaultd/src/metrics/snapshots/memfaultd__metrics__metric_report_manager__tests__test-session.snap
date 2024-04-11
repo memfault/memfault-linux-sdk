@@ -1,0 +1,17 @@
+---
+source: memfaultd/src/metrics/metric_report_manager.rs
+expression: builder.get_metadata()
+---
+{
+  "type": "linux-metric-report",
+  "metadata": {
+    "metrics": {
+      "bar": 3.5,
+      "foo": 5.0
+    },
+    "duration_ms": 0,
+    "report_type": {
+      "session": "test-session"
+    }
+  }
+}

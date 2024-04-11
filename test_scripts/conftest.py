@@ -166,6 +166,7 @@ def memfault_service_tester() -> MemfaultServiceTester:
         organization_slug=os.environ["MEMFAULT_E2E_ORGANIZATION_SLUG"],
         project_slug=os.environ["MEMFAULT_E2E_PROJECT_SLUG"],
         organization_token=os.environ["MEMFAULT_E2E_ORG_TOKEN"],
+        test_timeout_seconds=float(os.environ["MEMFAULT_E2E_TIMEOUT_SECONDS"]),
     )
 
 

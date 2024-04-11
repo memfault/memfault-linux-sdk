@@ -19,7 +19,8 @@ apt install libsystemd-dev libconfig-dev
 brew install libconfig
 ```
 
-(note: `libsystemd` is not available on macOS and the build system will not try to link it)
+(note: `libsystemd` is not available on macOS and the build system will not try
+to link it)
 
 ### Building
 
@@ -40,6 +41,15 @@ Do this after running a build, inside the (cmake) build directory:
 
 ```sh
 cargo test
+```
+
+### Updating snapshots
+
+Install `insta` if necessary, and run the command:
+
+```bash
+cargo install cargo-insta
+cargo insta review
 ```
 
 ## IDE integration

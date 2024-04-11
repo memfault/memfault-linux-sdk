@@ -8,14 +8,17 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use eyre::Result;
+use eyre::{eyre, Result};
+use log::warn;
 use tiny_http::{Method, Request, Response};
 
 use crate::{
-    http_server::{HttpHandler, HttpHandlerResult},
+    http_server::{HttpHandler, HttpHandlerResult, SessionRequest},
     metrics::{MetricReportManager, MetricReportType, SessionName},
     network::NetworkConfig,
 };
+
+use super::KeyedMetricReading;
 
 /// A server that listens for session management requests
 #[derive(Clone)]
@@ -41,11 +44,39 @@ impl SessionEventHandler {
         }
     }
 
-    fn parse_request(stream: &mut dyn Read) -> Result<SessionName> {
+    fn parse_request(stream: &mut dyn Read) -> Result<SessionRequest> {
         let mut buf = vec![];
         stream.read_to_end(&mut buf)?;
-        let reading = SessionName::from_str(from_utf8(&buf)?)?;
-        Ok(reading)
+        let body = from_utf8(&buf)?;
+        match serde_json::from_str(body) {
+            Ok(request_body) => Ok(request_body),
+            // Fall back to legacy API, SessionName as raw str in body (no JSON)
+            Err(e) => {
+                // If the request doesn't match either the JSON API or legacy API,
+                // include JSON API parse error in response (as that is currently
+                // the standard API)
+                Ok(SessionRequest::new_without_readings(
+                    SessionName::from_str(body)
+                        .map_err(|_| eyre!("Couldn't parse request: {}", e))?,
+                ))
+            }
+        }
+    }
+
+    fn add_metric_readings_to_session(
+        session_name: &SessionName,
+        metric_reports: Arc<Mutex<MetricReportManager>>,
+        metric_readings: Vec<KeyedMetricReading>,
+    ) -> Result<()> {
+        let mut metric_reports = metric_reports.lock().expect("Mutex poisoned!");
+        for metric_reading in metric_readings {
+            metric_reports.add_metric_to_report(
+                &MetricReportType::Session(session_name.clone()),
+                metric_reading,
+            )?
+        }
+
+        Ok(())
     }
 }
 
@@ -59,21 +90,42 @@ impl HttpHandler for SessionEventHandler {
 
         if self.data_collection_enabled {
             match Self::parse_request(request.as_reader()) {
-                Ok(session_name) => {
+                Ok(SessionRequest {
+                    session_name,
+                    gauge_readings,
+                }) => {
                     if request.url() == "/v1/session/start" {
-                        let mut metrics_store = self.metrics_store.lock().unwrap();
-                        if let Err(e) = metrics_store.start_session(session_name) {
+                        if let Err(e) = self
+                            .metrics_store
+                            .lock()
+                            .expect("Mutex poisoned")
+                            .start_session(session_name.clone())
+                        {
                             return HttpHandlerResult::Error(format!(
                                 "Failed to start session: {:?}",
                                 e
                             ));
                         }
-                    } else if request.url() == "/v1/session/end" {
+                    }
+
+                    // Add additional metric readings after the session has started
+                    // (if starting) but before it has ended (if ending)
+                    if !gauge_readings.is_empty() {
+                        if let Err(e) = Self::add_metric_readings_to_session(
+                            &session_name,
+                            self.metrics_store.clone(),
+                            gauge_readings,
+                        ) {
+                            warn!("Failed to add metrics to session report: {}", e);
+                        }
+                    }
+
+                    if request.url() == "/v1/session/end" {
                         if let Err(e) = MetricReportManager::dump_report_to_mar_entry(
                             &self.metrics_store,
                             &self.mar_staging_path,
                             &self.network_config,
-                            MetricReportType::Session(session_name),
+                            &MetricReportType::Session(session_name),
                         ) {
                             return HttpHandlerResult::Error(format!(
                                 "Failed to end session: {:?}",
@@ -83,10 +135,11 @@ impl HttpHandler for SessionEventHandler {
                     }
                 }
                 Err(e) => {
+                    warn!("Failed to parse session request: {:?}", e);
                     return HttpHandlerResult::Error(format!(
                         "Failed to parse session request: {:?}",
                         e
-                    ))
+                    ));
                 }
             }
         }
@@ -98,6 +151,7 @@ impl HttpHandler for SessionEventHandler {
 mod tests {
     use std::{
         collections::BTreeMap,
+        path::Path,
         str::FromStr,
         sync::{Arc, Mutex},
     };
@@ -110,12 +164,14 @@ mod tests {
     use crate::{
         config::SessionConfig,
         http_server::{HttpHandler, HttpHandlerResult},
+        mar::manifest::{Manifest, Metadata},
         metrics::{MetricReportManager, MetricStringKey, SessionName},
         network::NetworkConfig,
-        test_utils::in_gauges,
+        test_utils::in_histograms,
     };
 
-    use super::SessionEventHandler;
+    use super::*;
+    use crate::test_utils::setup_logger;
 
     #[rstest]
     fn test_start_without_stop_session(handler: SessionEventHandler) {
@@ -129,11 +185,7 @@ mod tests {
         ));
 
         let mut metric_report_manager = handler.metrics_store.lock().unwrap();
-        let readings = in_gauges(vec![
-            ("foo", 1000, 1.0),
-            ("bar", 1000, 2.0),
-            ("baz", 1000, 3.0),
-        ]);
+        let readings = in_histograms(vec![("foo", 1.0), ("bar", 2.0), ("baz", 3.0)]);
 
         for reading in readings {
             metric_report_manager
@@ -151,7 +203,49 @@ mod tests {
     }
 
     #[rstest]
-    fn test_start_twice_without_stop_session(handler: SessionEventHandler) {
+    fn test_start_with_metrics(_setup_logger: (), handler: SessionEventHandler) {
+        let r = TestRequest::new()
+            .with_method(Method::Post)
+            .with_path("/v1/session/start")
+            .with_body("{\"session_name\": \"test-session\", 
+                         \"gauge_readings\": 
+                                [ 
+                                  {\"name\": \"foo\", \"value\": {\"Gauge\": {\"value\": 1.0, \"timestamp\": \"2024-01-01 00:00:00 UTC\"}}},
+                                  {\"name\": \"bar\", \"value\": {\"Gauge\": {\"value\": 4.0, \"timestamp\": \"2024-01-01 00:00:00 UTC\"}}}
+                                ]
+                         }");
+        let response = handler.handle_request(&mut r.into());
+        assert!(matches!(response, HttpHandlerResult::Response(_)));
+
+        let mut metric_report_manager = handler.metrics_store.lock().unwrap();
+        let metrics: BTreeMap<_, _> = metric_report_manager
+            .take_session_metrics(&SessionName::from_str("test-session").unwrap())
+            .unwrap()
+            .into_iter()
+            .collect();
+
+        assert_json_snapshot!(metrics);
+    }
+
+    #[rstest]
+    fn test_end_with_metrics(_setup_logger: ()) {
+        let session_config = SessionConfig {
+            name: SessionName::from_str("test-session").unwrap(),
+            captured_metrics: vec![
+                MetricStringKey::from_str("foo").unwrap(),
+                MetricStringKey::from_str("bar").unwrap(),
+            ],
+        };
+
+        let tempdir = TempDir::new().unwrap();
+        let handler = SessionEventHandler::new(
+            true,
+            Arc::new(Mutex::new(MetricReportManager::new_with_session_configs(
+                &[session_config],
+            ))),
+            tempdir.path().to_path_buf(),
+            NetworkConfig::test_fixture(),
+        );
         let r = TestRequest::new()
             .with_method(Method::Post)
             .with_path("/v1/session/start")
@@ -161,13 +255,39 @@ mod tests {
             HttpHandlerResult::Response(_)
         ));
 
+        let r = TestRequest::new()
+            .with_method(Method::Post)
+            .with_path("/v1/session/end")
+            .with_body("{\"session_name\": \"test-session\", 
+                         \"gauge_readings\": 
+                                [ 
+                                  {\"name\": \"foo\", \"value\": {\"Gauge\": {\"value\": 1.0, \"timestamp\": \"2024-01-01 00:00:00 UTC\"}}},
+                                  {\"name\": \"bar\", \"value\": {\"Gauge\": {\"value\": 3.0, \"timestamp\": \"2024-01-01 00:00:00 UTC\"}}}
+                                ]
+                         }");
+        assert!(matches!(
+            handler.handle_request(&mut r.into()),
+            HttpHandlerResult::Response(_)
+        ));
+
+        verify_dumped_metric_report(&handler.mar_staging_path, "end_with_metrics")
+    }
+
+    #[rstest]
+    fn test_start_twice_without_stop_session(_setup_logger: (), handler: SessionEventHandler) {
+        let r = TestRequest::new()
+            .with_method(Method::Post)
+            .with_path("/v1/session/start")
+            .with_body("test-session");
+
+        assert!(matches!(
+            handler.handle_request(&mut r.into()),
+            HttpHandlerResult::Response(_)
+        ));
+
         {
             let mut metric_report_manager = handler.metrics_store.lock().unwrap();
-            let readings = in_gauges(vec![
-                ("foo", 1000, 10.0),
-                ("bar", 1000, 20.0),
-                ("baz", 1000, 30.0),
-            ]);
+            let readings = in_histograms(vec![("foo", 10.0), ("bar", 20.0), ("baz", 30.0)]);
 
             for reading in readings {
                 metric_report_manager
@@ -186,11 +306,7 @@ mod tests {
         ));
 
         let mut metric_report_manager = handler.metrics_store.lock().unwrap();
-        let readings = in_gauges(vec![
-            ("foo", 1000, 1.0),
-            ("bar", 1000, 2.0),
-            ("baz", 1000, 3.0),
-        ]);
+        let readings = in_histograms(vec![("foo", 1.0), ("bar", 2.0), ("baz", 3.0)]);
 
         for reading in readings {
             metric_report_manager
@@ -208,24 +324,59 @@ mod tests {
     }
 
     #[rstest]
-    fn test_start_then_stop_session(handler: SessionEventHandler) {
+    fn test_start_then_stop_session(_setup_logger: ()) {
+        let session_config = SessionConfig {
+            name: SessionName::from_str("test-session").unwrap(),
+            captured_metrics: vec![
+                MetricStringKey::from_str("foo").unwrap(),
+                MetricStringKey::from_str("bar").unwrap(),
+            ],
+        };
+
+        let tempdir = TempDir::new().unwrap();
+        let handler = SessionEventHandler::new(
+            true,
+            Arc::new(Mutex::new(MetricReportManager::new_with_session_configs(
+                &[session_config],
+            ))),
+            tempdir.path().to_path_buf(),
+            NetworkConfig::test_fixture(),
+        );
+
         let r = TestRequest::new()
             .with_method(Method::Post)
             .with_path("/v1/session/start")
-            .with_body("test-session");
+            .with_body("{\"session_name\": \"test-session\", \"gauge_readings\": []}");
+        assert!(matches!(
+            handler.handle_request(&mut r.into()),
+            HttpHandlerResult::Response(_)
+        ));
+        {
+            let mut metric_report_manager = handler.metrics_store.lock().unwrap();
+            let readings = in_histograms(vec![("bar", 20.0), ("baz", 30.0)]);
+
+            for reading in readings {
+                metric_report_manager
+                    .add_metric(reading)
+                    .expect("Failed to add metric reading");
+            }
+        }
+
+        let r = TestRequest::new()
+            .with_method(Method::Post)
+            .with_path("/v1/session/end")
+            .with_body("{\"session_name\": \"test-session\", 
+                         \"gauge_readings\": 
+                                [ 
+                                  {\"name\": \"foo\", \"value\": {\"Gauge\": {\"value\": 100, \"timestamp\": \"2024-01-01 00:00:00 UTC\"}}}
+                                ]
+                         }");
         assert!(matches!(
             handler.handle_request(&mut r.into()),
             HttpHandlerResult::Response(_)
         ));
 
-        let r = TestRequest::new()
-            .with_method(Method::Post)
-            .with_path("/v1/session/end")
-            .with_body("test-session");
-        assert!(matches!(
-            handler.handle_request(&mut r.into()),
-            HttpHandlerResult::Response(_)
-        ));
+        verify_dumped_metric_report(&handler.mar_staging_path, "start_then_stop");
         let mut metric_report_manager = handler.metrics_store.lock().unwrap();
 
         // Should error as session should have been removed from MetricReportManager
@@ -267,5 +418,25 @@ mod tests {
             TempDir::new().unwrap().path().to_path_buf(),
             NetworkConfig::test_fixture(),
         )
+    }
+
+    fn verify_dumped_metric_report(mar_staging_path: &Path, test_name: &str) {
+        let mar_dir = std::fs::read_dir(mar_staging_path)
+            .expect("Failed to read temp dir")
+            .filter_map(|entry| entry.ok())
+            .collect::<Vec<_>>();
+
+        // There should only be an entry for the reboot reason
+        assert_eq!(mar_dir.len(), 1);
+
+        let mar_manifest = mar_dir[0].path().join("manifest.json");
+        let manifest_string = std::fs::read_to_string(mar_manifest).unwrap();
+        let manifest: Manifest = serde_json::from_str(&manifest_string).unwrap();
+
+        if let Metadata::LinuxMetricReport { .. } = manifest.metadata {
+            assert_json_snapshot!(test_name, manifest.metadata);
+        } else {
+            panic!("Unexpected metadata type");
+        }
     }
 }

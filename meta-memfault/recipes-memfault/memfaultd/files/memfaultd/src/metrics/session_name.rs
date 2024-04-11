@@ -8,7 +8,9 @@ use std::{borrow::Cow, fmt::Display};
 
 use eyre::{eyre, ErrReport, Result};
 
+use crate::metrics::metric_report::{DAILY_HEARTBEAT_REPORT_TYPE, HEARTBEAT_REPORT_TYPE};
 use crate::util::patterns::alphanum_slug_is_valid_and_starts_alpha;
+const RESERVED_SESSION_NAMES: &[&str; 2] = &[HEARTBEAT_REPORT_TYPE, DAILY_HEARTBEAT_REPORT_TYPE];
 
 /// Struct containing a valid session name
 #[derive(Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -34,9 +36,15 @@ impl FromStr for SessionName {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match alphanum_slug_is_valid_and_starts_alpha(s, 64) {
-            Ok(()) => Ok(Self {
-                inner: s.to_string(),
-            }),
+            Ok(()) => {
+                if RESERVED_SESSION_NAMES.contains(&s) {
+                    Err(eyre!("Cannot use reserved session name: {}", s))
+                } else {
+                    Ok(Self {
+                        inner: s.to_string(),
+                    })
+                }
+            }
             Err(e) => Err(eyre!("Invalid session name {}: {}", s, e)),
         }
     }
@@ -71,6 +79,8 @@ mod tests {
     #[case("")]
     #[case("\u{1F4A9}")]
     #[case("Wi-fi Connected")]
+    #[case("heartbeat")]
+    #[case("daily-heartbeat")]
     fn validation_errors(#[case] input: &str) {
         assert!(SessionName::from_str(input).is_err())
     }

@@ -17,13 +17,16 @@ use log::{error, info, trace, warn};
 
 use crate::metrics::{
     BatteryMonitor, BatteryReadingHandler, ConnectivityMonitor, MetricReportType,
-    ReportSyncEventHandler, SessionEventHandler,
+    PeriodicMetricReportDumper, ReportSyncEventHandler, SessionEventHandler,
 };
 
 use crate::{
     config::Config,
     mar::upload::collect_and_upload,
-    metrics::{CrashFreeIntervalTracker, MetricReportManager},
+    metrics::{
+        core_metrics::{METRIC_MF_SYNC_FAILURE, METRIC_MF_SYNC_SUCCESS},
+        CrashFreeIntervalTracker, MetricReportManager,
+    },
 };
 use crate::{http_server::HttpHandler, util::UpdateStatus};
 use crate::{
@@ -52,8 +55,7 @@ use crate::{
 };
 
 const CONFIG_REFRESH_INTERVAL: Duration = Duration::from_secs(60 * 120);
-const METRIC_MF_SYNC_SUCCESS: &str = "sync_memfault_successful";
-const METRIC_MF_SYNC_FAILURE: &str = "sync_memfault_failure";
+const DAILY_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60 * 60 * 24);
 
 #[derive(PartialEq, Eq)]
 pub enum MemfaultLoopResult {
@@ -159,23 +161,36 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         let heartbeat_interval = config.config_file.heartbeat_interval;
         let metric_report_manager = metric_report_manager.clone();
         spawn(move || {
-            let mut next_heartbeat = Instant::now() + heartbeat_interval;
-            loop {
-                while Instant::now() < next_heartbeat {
-                    sleep(next_heartbeat - Instant::now());
-                }
-                next_heartbeat += heartbeat_interval;
-                if let Err(e) = MetricReportManager::dump_report_to_mar_entry(
-                    &metric_report_manager,
-                    &mar_staging_path,
-                    &net_config,
-                    MetricReportType::Heartbeat,
-                ) {
-                    warn!("Unable to dump metrics: {}", e);
-                }
-            }
+            let periodic_metric_report_dumper = PeriodicMetricReportDumper::new(
+                mar_staging_path,
+                net_config,
+                metric_report_manager,
+                heartbeat_interval,
+                MetricReportType::Heartbeat,
+            );
+
+            periodic_metric_report_dumper.start();
         });
     }
+
+    // Start a thread to dump metrics every 24 hours
+    if config.config_file.metrics.enable_daily_heartbeats {
+        let net_config = NetworkConfig::from(&config);
+        let mar_staging_path = config.mar_staging_path();
+        let metric_report_manager = metric_report_manager.clone();
+        spawn(move || {
+            let periodic_metric_report_dumper = PeriodicMetricReportDumper::new(
+                mar_staging_path,
+                net_config,
+                metric_report_manager,
+                DAILY_HEARTBEAT_INTERVAL,
+                MetricReportType::DailyHeartbeat,
+            );
+
+            periodic_metric_report_dumper.start();
+        });
+    }
+
     // Start a thread to update battery metrics
     // periodically if enabled by configuration
     if config.battery_monitor_periodic_update_enabled() {
@@ -224,14 +239,30 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         let net_config = NetworkConfig::from(&config);
         let mar_staging_path = config.mar_staging_path();
 
-        let heartbeat_manager = metric_report_manager.clone();
+        let heartbeat_report_manager = metric_report_manager.clone();
         sync_tasks.push(Box::new(move |forced| match forced {
             true => MetricReportManager::dump_report_to_mar_entry(
-                &heartbeat_manager,
+                &heartbeat_report_manager,
                 &mar_staging_path,
                 &net_config,
-                MetricReportType::Heartbeat,
+                &MetricReportType::Heartbeat,
             ),
+            false => Ok(()),
+        }));
+
+        let daily_heartbeat_report_manager = metric_report_manager.clone();
+        let net_config = NetworkConfig::from(&config);
+        let mar_staging_path = config.mar_staging_path();
+        sync_tasks.push(Box::new(move |forced| match forced {
+            true => {
+                trace!("Dumping daily heartbeat metrics");
+                MetricReportManager::dump_report_to_mar_entry(
+                    &daily_heartbeat_report_manager,
+                    &mar_staging_path,
+                    &net_config,
+                    &MetricReportType::DailyHeartbeat,
+                )
+            }
             false => Ok(()),
         }));
     }
@@ -240,19 +271,18 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         let net_config = NetworkConfig::from(&config);
         let mar_staging_path = config.mar_staging_path();
 
-        let heartbeat_manager = metric_report_manager.clone();
+        let metric_report_manager = metric_report_manager.clone();
         shutdown_tasks.push(Box::new(move || {
-            MetricReportManager::dump_report_to_mar_entry(
-                &heartbeat_manager,
+            MetricReportManager::dump_metric_reports(
+                &metric_report_manager,
                 &mar_staging_path,
                 &net_config,
-                MetricReportType::Heartbeat,
             )
         }));
     }
     // Schedule a task to compute operational and crashfree hours
     {
-        let heartbeat_manager = metric_report_manager.clone();
+        let metric_report_manager = metric_report_manager.clone();
 
         let mut crashfree_tracker = CrashFreeIntervalTracker::<Instant>::new_hourly();
         http_handlers.push(crashfree_tracker.http_handler());
@@ -266,7 +296,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                 next_compute += interval;
 
                 let metrics = crashfree_tracker.update();
-                let mut store = heartbeat_manager.lock().unwrap();
+                let mut store = metric_report_manager.lock().unwrap();
                 trace!("Crashfree hours metrics: {:?}", metrics);
                 for m in metrics {
                     if let Err(e) = store.add_metric(m) {
@@ -335,6 +365,9 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                 fluent_bit_receiver,
                 &config.config_file.fluent_bit.extra_fluentd_attributes,
             ));
+
+            let crash_log_handler = log_collector.crash_log_handler();
+            http_handlers.push(Box::new(crash_log_handler));
 
             sync_tasks.push(Box::new(move |forced_sync| {
                 // Check if we have received a signal to force-sync and reset the flag.
@@ -449,7 +482,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
             (true, _) => LoopContinuation::Stop,
             // If we received a SIGUSR1 signal while we were in the loop, rerun immediately.
             (false, true) => LoopContinuation::RerunImmediately,
-            // Otherwise, keep runnin normally
+            // Otherwise, keep running normally
             (false, false) => LoopContinuation::KeepRunning,
         },
         upload_interval,

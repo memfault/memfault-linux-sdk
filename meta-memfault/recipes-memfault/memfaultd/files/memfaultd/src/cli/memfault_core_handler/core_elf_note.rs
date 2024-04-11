@@ -88,11 +88,12 @@ impl<'a> ElfNote<'a> {
         match Self::try_parse(name, note_type, description) {
             Ok(Some(note)) => note,
             r => {
-                if r.is_err() {
+                if let Err(e) = r {
                     warn!(
-                        "Failed to parse ELF note: name={} type={}",
+                        "Failed to parse ELF note: name={} type={}: {}",
                         String::from_utf8_lossy(name),
-                        note_type
+                        note_type,
+                        e
                     );
                 }
                 Self::Unknown {
@@ -177,8 +178,8 @@ pub fn iterate_elf_notes(note_buffer: &[u8]) -> ElfNoteIterator {
 #[repr(C)]
 /// Time value for a process.
 pub struct ProcessTimeVal {
-    pub tv_sec: u64,
-    pub tv_usec: u64,
+    pub tv_sec: usize,
+    pub tv_usec: usize,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -193,8 +194,8 @@ pub struct ProcessStatusNote {
     pub si_errno: u32,
     pub pr_cursig: u16,
     pub pad0: u16,
-    pub pr_sigpend: u64,
-    pub pr_sighold: u64,
+    pub pr_sigpend: usize,
+    pub pr_sighold: usize,
     pub pr_pid: u32,
     pub pr_ppid: u32,
     pub pr_pgrp: u32,
@@ -205,6 +206,9 @@ pub struct ProcessStatusNote {
     pub pr_cstime: ProcessTimeVal,
     pub pr_reg: ElfGRegSet,
     pub pr_fpvalid: u32,
+    // Padding only needed on 64 bit systems for proper alignment. We could
+    // just set alignment for this struct, but being explicit is better.
+    #[cfg(target_pointer_width = "64")]
     pub pad1: u32,
 }
 
@@ -213,7 +217,11 @@ impl<'a> TryFrom<&'a [u8]> for &'a ProcessStatusNote {
 
     fn try_from(value: &'a [u8]) -> std::result::Result<Self, Self::Error> {
         if value.len() != size_of::<ProcessStatusNote>() {
-            return Err(eyre!("Invalid size for ProcessStatusNote: {}", value.len()));
+            return Err(eyre!(
+                "Invalid size for ProcessStatusNote: actual size: {} - expected size: {}",
+                value.len(),
+                size_of::<ProcessStatusNote>(),
+            ));
         }
 
         // SAFETY: ProcessStatusNote only contains scalar values, no pointers.

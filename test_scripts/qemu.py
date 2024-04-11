@@ -73,7 +73,7 @@ class QEMU:
         last_state_idx = -1
         while time.time() < timeout:
             self.exec_cmd(f"systemctl is-active {service}")
-            last_state_idx = self.child().expect(states)
+            last_state_idx = self.child().expect(states)  # pyright: ignore[reportArgumentType]
             if last_state_idx == expected_state_idx:
                 return
             time.sleep(0.1)

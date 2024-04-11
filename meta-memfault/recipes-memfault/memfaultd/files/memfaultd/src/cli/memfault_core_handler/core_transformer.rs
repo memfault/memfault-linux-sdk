@@ -1,15 +1,12 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use std::mem::size_of;
 use std::{
     io::{Read, Seek, SeekFrom},
     sync::mpsc::Receiver,
 };
+use std::{mem::size_of, time::Duration};
 
-use crate::cli::memfault_core_handler::core_elf_memfault_note::{
-    write_memfault_metadata_note, CoredumpMetadata,
-};
 use crate::cli::memfault_core_handler::core_elf_note::{iterate_elf_notes, ElfNote};
 use crate::cli::memfault_core_handler::core_reader::CoreReader;
 use crate::cli::memfault_core_handler::core_writer::{CoreWriter, SegmentData};
@@ -21,15 +18,22 @@ use crate::cli::memfault_core_handler::memory_range::{merge_memory_ranges, Memor
 use crate::cli::memfault_core_handler::procfs::ProcMaps;
 use crate::cli::memfault_core_handler::ElfPtrSize;
 use crate::config::CoredumpCaptureStrategy;
+use crate::{
+    cli::memfault_core_handler::core_elf_memfault_note::{
+        write_memfault_metadata_note, CoredumpMetadata,
+    },
+    mar::LinuxLogsFormat,
+};
 
 use elf::program_header::{ProgramHeader, PT_LOAD, PT_NOTE};
 use eyre::{eyre, Result};
 use libc::{AT_PHDR, AT_PHNUM};
-use log::warn;
+use log::{debug, warn};
 use procfs::process::MemoryMap;
 
 use super::{
-    core_elf_memfault_note::write_memfault_debug_data_note, log_wrapper::CAPTURE_LOG_CHANNEL_SIZE,
+    core_elf_memfault_note::{write_memfault_debug_data_note, MemfaultMetadataLogs},
+    log_wrapper::CAPTURE_LOG_CHANNEL_SIZE,
 };
 
 #[derive(Debug)]
@@ -53,7 +57,7 @@ where
     metadata: CoredumpMetadata,
     options: CoreTransformerOptions,
     proc_maps: M,
-    capture_logs_rx: Receiver<String>,
+    log_fetcher: CoreTransformerLogFetcher,
 }
 
 impl<R, W, P, M> CoreTransformer<R, W, P, M>
@@ -71,7 +75,7 @@ where
         options: CoreTransformerOptions,
         metadata: CoredumpMetadata,
         proc_maps: M,
-        capture_logs_rx: Receiver<String>,
+        log_fetcher: CoreTransformerLogFetcher,
     ) -> Result<Self> {
         Ok(Self {
             core_reader,
@@ -80,7 +84,7 @@ where
             metadata,
             options,
             proc_maps,
-            capture_logs_rx,
+            log_fetcher,
         })
     }
 
@@ -265,12 +269,19 @@ where
     }
 
     fn add_memfault_metadata_note(&mut self) -> Result<()> {
+        let app_logs = self
+            .log_fetcher
+            .get_app_logs()
+            .map(|logs| MemfaultMetadataLogs::new(logs, LinuxLogsFormat::default()));
+
+        self.metadata.app_logs = app_logs;
+
         let note_data = write_memfault_metadata_note(&self.metadata)?;
         self.add_memfault_note(note_data)
     }
 
     fn add_memfault_debug_data_note(&mut self) -> Result<()> {
-        let mut capture_logs = self.capture_logs_rx.try_iter().collect::<Vec<_>>();
+        let mut capture_logs = self.log_fetcher.get_capture_logs();
         if capture_logs.is_empty() {
             return Ok(());
         }
@@ -297,6 +308,55 @@ where
             .add_segment(program_header, SegmentData::Buffer(desc));
 
         Ok(())
+    }
+}
+
+/// Convenience struct to hold the log receivers for the core transformer.
+///
+/// This is used to receive logs from the `CoreHandlerLogWrapper` and the the circular buffer
+/// capture logs.
+#[derive(Debug)]
+pub struct CoreTransformerLogFetcher {
+    capture_logs_rx: Receiver<String>,
+    app_logs_rx: Receiver<Option<Vec<String>>>,
+}
+
+impl CoreTransformerLogFetcher {
+    /// A timeout of 500s is used to prevent the coredump handler from blocking indefinitely.
+    /// This is to prevent a slow http request from blocking the coredump handler indefinitely.
+    const APPLICATION_LOGS_TIMEOUT: Duration = Duration::from_millis(500);
+
+    pub fn new(
+        capture_logs_rx: Receiver<String>,
+        app_logs_rx: Receiver<Option<Vec<String>>>,
+    ) -> Self {
+        Self {
+            capture_logs_rx,
+            app_logs_rx,
+        }
+    }
+
+    /// Fetches all logs that were captured in the coredump handler during execution.
+    pub fn get_capture_logs(&self) -> Vec<String> {
+        self.capture_logs_rx.try_iter().collect()
+    }
+
+    /// Fetches all application logs that were in the circular buffer at time of crash.
+    ///
+    /// This method will block for a maximum of 500ms before returning. This is to prevent a
+    /// slow http request from blocking the coredump handler indefinitely.
+    pub fn get_app_logs(&self) -> Option<Vec<String>> {
+        let logs = self
+            .app_logs_rx
+            .recv_timeout(Self::APPLICATION_LOGS_TIMEOUT);
+
+        match logs {
+            Ok(logs) => logs,
+            Err(e) => {
+                debug!("Failed to fetch application logs within timeout: {}", e);
+                None
+            }
+        }
     }
 }
 
@@ -363,13 +423,26 @@ mod test {
             captured_time_epoch_s: 1234,
             cmd_line: "binary -a -b -c".to_string(),
             capture_strategy,
+            app_logs: None,
         };
 
-        let (_capture_logs_tx, capture_log_rx) = sync_channel(32);
+        let (_capture_logs_tx, capture_logs_rx) = sync_channel(32);
+        let (app_logs_tx, app_logs_rx) = sync_channel(1);
+        app_logs_tx
+            .send(Some(vec![
+                "Error 1".to_string(),
+                "Error 2".to_string(),
+                "Error 3".to_string(),
+            ]))
+            .unwrap();
 
         let core_reader = CoreReaderImpl::new(input_stream).unwrap();
         let mut segments = vec![];
         let mock_core_writer = MockCoreWriter::new(&mut segments);
+        let log_rx = CoreTransformerLogFetcher {
+            capture_logs_rx,
+            app_logs_rx,
+        };
         let mut transformer = CoreTransformer::new(
             core_reader,
             mock_core_writer,
@@ -377,7 +450,7 @@ mod test {
             opts,
             metadata,
             proc_maps,
-            capture_log_rx,
+            log_rx,
         )
         .unwrap();
 

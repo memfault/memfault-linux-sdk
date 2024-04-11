@@ -16,7 +16,7 @@ mod write_attributes;
 use crate::{
     cli::version::format_version,
     mar::{DeviceAttribute, ExportFormat, Metadata},
-    metrics::SessionName,
+    metrics::{KeyedMetricReading, SessionName},
     reboot::{write_reboot_reason_and_reboot, RebootReason},
     service_manager::get_service_manager,
 };
@@ -214,6 +214,9 @@ struct StartSessionArgs {
     // session name (needs to be defined in memfaultd.conf)
     #[argh(positional)]
     session_name: SessionName,
+    // List of gauge key value pairs to write in the format <KEY=float ...>
+    #[argh(positional)]
+    gauge_readings: Vec<KeyedMetricReading>,
 }
 
 #[derive(FromArgs)]
@@ -223,6 +226,9 @@ struct EndSessionArgs {
     // session name (needs to be defined in memfaultd.conf)
     #[argh(positional)]
     session_name: SessionName,
+    // List of gauge key value pairs to write in the format <KEY=float ...>
+    #[argh(positional)]
+    gauge_readings: Vec<KeyedMetricReading>,
 }
 
 fn check_data_collection_enabled(config: &Config, do_what: &str) -> Result<()> {
@@ -303,11 +309,13 @@ pub fn main() -> Result<()> {
         }
         MemfaultctlCommand::ReportSyncSuccess(_) => report_sync(&config, true),
         MemfaultctlCommand::ReportSyncFailure(_) => report_sync(&config, false),
-        MemfaultctlCommand::StartSession(StartSessionArgs { session_name }) => {
-            start_session(&config, session_name)
-        }
-        MemfaultctlCommand::EndSession(EndSessionArgs { session_name }) => {
-            end_session(&config, session_name)
-        }
+        MemfaultctlCommand::StartSession(StartSessionArgs {
+            session_name,
+            gauge_readings,
+        }) => start_session(&config, session_name, gauge_readings),
+        MemfaultctlCommand::EndSession(EndSessionArgs {
+            session_name,
+            gauge_readings,
+        }) => end_session(&config, session_name, gauge_readings),
     }
 }

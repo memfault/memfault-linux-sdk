@@ -33,9 +33,7 @@ def test_logs(
         logs = memfault_service_tester.log_files_get_list(device_serial=qemu_device_id)
         assert len(logs) > 0
 
-    memfault_service_tester.poll_until_not_raising(
-        _check, timeout_seconds=60, poll_interval_seconds=1
-    )
+    memfault_service_tester.poll_until_not_raising(_check, poll_interval_seconds=1)
 
     # Now download the log file and check the content
     logs = memfault_service_tester.log_files_get_list(device_serial=qemu_device_id)

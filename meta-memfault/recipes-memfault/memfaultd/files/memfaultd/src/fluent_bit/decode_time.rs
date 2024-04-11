@@ -121,7 +121,7 @@ impl<'de> Visitor<'de> for EventTimeVisitor {
         let tag = seq.next_element::<i8>()?;
         let buf = seq.next_element::<ByteBuf>()?;
 
-        // Validate the tag value is 0 for a timestmap.
+        // Validate the tag value is 0 for a timestamp.
         match (tag, buf) {
             (Some(FLUENTD_TIME_EXT_TYPE), Some(bytes)) => bytes_to_timestamp(bytes),
             (Some(tag), _) => Err(serde::de::Error::custom(format!(

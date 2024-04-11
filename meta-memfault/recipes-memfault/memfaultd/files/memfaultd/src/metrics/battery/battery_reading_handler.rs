@@ -52,7 +52,7 @@ where
     T: TimeMeasure + Copy + Ord + Sub<T, Output = Duration> + Send + Sync,
 {
     fn handle_request(&self, request: &mut Request) -> HttpHandlerResult {
-        if request.url() != "/v1/metrics/battery/add_reading" || *request.method() != Method::Post {
+        if request.url() != "/v1/battery/add_reading" || *request.method() != Method::Post {
             return HttpHandlerResult::NotHandled;
         }
         if self.data_collection_enabled {
@@ -112,7 +112,7 @@ mod tests {
         );
         let r = TestRequest::new()
             .with_method(Method::Post)
-            .with_path("/v1/metrics/battery/add_reading")
+            .with_path("/v1/battery/add_reading")
             .with_body("Charging:80");
         assert!(matches!(
             handler.handle_request(&mut r.into()),
@@ -149,7 +149,7 @@ mod tests {
         for reading in readings {
             let r = TestRequest::new()
                 .with_method(Method::Post)
-                .with_path("/v1/metrics/battery/add_reading")
+                .with_path("/v1/battery/add_reading")
                 .with_body(reading);
             assert!(matches!(
                 handler.handle_request(&mut r.into()),
@@ -163,7 +163,8 @@ mod tests {
         // Need to sort the map so the JSON string is consistent
         let sorted_metrics: BTreeMap<_, _> = metrics.iter().collect();
 
-        assert_json_snapshot!(test_name, &sorted_metrics);
+        // Set battery_soc_pct to 0.0 to avoid flakiness due to it being weighted by wall time
+        assert_json_snapshot!(test_name, &sorted_metrics, {".battery_soc_pct" => 0.0 });
     }
 
     #[rstest]
@@ -177,7 +178,7 @@ mod tests {
         );
         let r = TestRequest::new()
             .with_method(Method::Post)
-            .with_path("/v1/metrics/battery/add_reading")
+            .with_path("/v1/battery/add_reading")
             .with_body("{\"state\": \"Charging\", \"percent\":80}");
         matches!(
             handler.handle_request(&mut r.into()),

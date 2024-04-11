@@ -25,9 +25,7 @@ def test(qemu: QEMU, memfault_service_tester: MemfaultServiceTester, qemu_device
         assert device
         assert device["reported_config_revision"] == device["assigned_config_revision"]
 
-    memfault_service_tester.poll_until_not_raising(
-        _check, timeout_seconds=60, poll_interval_seconds=1
-    )
+    memfault_service_tester.poll_until_not_raising(_check, poll_interval_seconds=1)
 
 
 @pytest.mark.parametrize("data_collection_enabled", [False])

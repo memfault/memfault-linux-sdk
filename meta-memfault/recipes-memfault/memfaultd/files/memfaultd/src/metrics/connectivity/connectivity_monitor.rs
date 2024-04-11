@@ -11,12 +11,12 @@ use eyre::Result;
 
 use crate::{
     config::{ConnectivityMonitorConfig, ConnectivityMonitorTarget},
-    metrics::MetricReportManager,
+    metrics::{
+        core_metrics::{METRIC_CONNECTED_TIME, METRIC_EXPECTED_CONNECTED_TIME},
+        MetricReportManager,
+    },
     util::{can_connect::CanConnect, time_measure::TimeMeasure},
 };
-
-const METRIC_CONNECTED_TIME: &str = "connectivity_connected_time_ms";
-const METRIC_EXPECTED_CONNECTED_TIME: &str = "connectivity_expected_time_ms";
 
 pub struct ConnectivityMonitor<T, U> {
     targets: Vec<ConnectivityMonitorTarget>,

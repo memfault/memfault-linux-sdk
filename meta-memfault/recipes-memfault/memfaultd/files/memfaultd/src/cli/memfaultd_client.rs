@@ -1,15 +1,16 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use eyre::{eyre, Context, Result};
 use std::{io::Read, str::from_utf8, time::Duration};
 
+use eyre::{eyre, Context, Result};
 use reqwest::{blocking::Client, header::ACCEPT, StatusCode};
 
 use crate::{
     config::Config,
+    http_server::SessionRequest,
     mar::{ExportFormat, EXPORT_MAR_URL},
-    metrics::SessionName,
+    metrics::{KeyedMetricReading, SessionName},
 };
 
 /// Client to Memfaultd localhost HTTP API
@@ -133,11 +134,20 @@ impl MemfaultdClient {
         }
     }
 
-    pub fn start_session(&self, session_name: &SessionName) -> Result<()> {
+    pub fn start_session(
+        &self,
+        session_name: SessionName,
+        gauge_readings: Vec<KeyedMetricReading>,
+    ) -> Result<()> {
+        let body = if gauge_readings.is_empty() {
+            session_name.to_string()
+        } else {
+            serde_json::to_string(&SessionRequest::new(session_name, gauge_readings))?
+        };
         let r = self
             .client
             .post(format!("{}/v1/session/start", self.base_url))
-            .body(session_name.to_string())
+            .body(body)
             .send()?;
         match r.status() {
             StatusCode::OK => Ok(()),
@@ -149,11 +159,20 @@ impl MemfaultdClient {
         }
     }
 
-    pub fn end_session(&self, session_name: &SessionName) -> Result<()> {
+    pub fn end_session(
+        &self,
+        session_name: SessionName,
+        gauge_readings: Vec<KeyedMetricReading>,
+    ) -> Result<()> {
+        let body = if gauge_readings.is_empty() {
+            session_name.to_string()
+        } else {
+            serde_json::to_string(&SessionRequest::new(session_name, gauge_readings))?
+        };
         let r = self
             .client
             .post(format!("{}/v1/session/end", self.base_url))
-            .body(session_name.to_string())
+            .body(body)
             .send()?;
         match r.status() {
             StatusCode::OK => Ok(()),
@@ -163,5 +182,25 @@ impl MemfaultdClient {
                 from_utf8(&r.bytes()?)?
             )),
         }
+    }
+
+    #[cfg(feature = "logging")]
+    pub fn get_crash_logs(&self) -> Result<Option<Vec<String>>> {
+        use crate::logs::log_collector::{CrashLogs, CRASH_LOGS_URL};
+
+        let r = self
+            .client
+            .get(format!("{}{}", self.base_url, CRASH_LOGS_URL))
+            .send()?;
+
+        match r.status() {
+            StatusCode::OK => Ok(Some(r.json::<CrashLogs>()?.logs)),
+            _ => Err(eyre!("Unexpected status code {}", r.status().as_u16())),
+        }
+    }
+
+    #[cfg(not(feature = "logging"))]
+    pub fn get_crash_logs(&self) -> Result<Option<Vec<String>>> {
+        Ok(None)
     }
 }

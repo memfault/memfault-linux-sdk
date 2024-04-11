@@ -1,7 +1,7 @@
 FROM ubuntu:jammy
 
 # **NOTE: DO NOT PUT ANYTHING SECRET / CONFIDENTIAL IN THE DOCKER IMAGE** The
-# image is publically published.
+# image is publicly published.
 
 ENV DEBIAN_FRONTEND noninteractive
 ENV YOCTO_RELEASE ${YOCTO_RELEASE}

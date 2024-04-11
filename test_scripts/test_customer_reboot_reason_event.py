@@ -24,8 +24,6 @@ def test_customer_reboot_reason_user_reset(
     qemu.child().expect("reboot: Restarting system")
     qemu.child().expect(" login:")
 
-    events = memfault_service_tester.poll_reboot_events_until_count(
-        2, device_serial=qemu_device_id, timeout_secs=60
-    )
+    events = memfault_service_tester.poll_reboot_events_until_count(2, device_serial=qemu_device_id)
     assert events
     assert events[-1]["reason"] == 6  # Button Reset

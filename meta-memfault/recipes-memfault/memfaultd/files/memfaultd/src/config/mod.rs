@@ -15,11 +15,16 @@ use crate::{
 
 use crate::util::disk_size::DiskSize;
 
+#[cfg(test)]
+pub use self::config_file::ConnectionCheckProtocol;
+
+#[cfg(target_os = "linux")]
+pub use self::config_file::{CoredumpCaptureStrategy, CoredumpCompression};
+
 pub use self::{
     config_file::{
-        ConnectionCheckProtocol, ConnectivityMonitorConfig, ConnectivityMonitorTarget,
-        CoredumpCaptureStrategy, CoredumpCompression, JsonConfigs, LogToMetricRule,
-        MemfaultdConfig, SessionConfig,
+        ConnectivityMonitorConfig, ConnectivityMonitorTarget, JsonConfigs, LogToMetricRule,
+        MemfaultdConfig, SessionConfig, StorageConfig,
     },
     device_config::{DeviceConfig, Resolution, Sampling},
     device_info::{DeviceInfo, DeviceInfoWarning},
@@ -264,10 +269,11 @@ mod tests {
 
     #[test]
     fn test_info_overrides_file() {
-        let config = Config::test_fixture_with_info_overrides("1.0.0-overriden", "overriden-type");
+        let config =
+            Config::test_fixture_with_info_overrides("1.0.0-overridden", "overridden-type");
 
-        assert_eq!(config.software_version(), "1.0.0-overriden");
-        assert_eq!(config.software_type(), "overriden-type");
+        assert_eq!(config.software_version(), "1.0.0-overridden");
+        assert_eq!(config.software_type(), "overridden-type");
     }
 
     #[rstest]
