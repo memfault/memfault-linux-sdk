@@ -15,10 +15,9 @@ expression: metadatas
   {
     "name": "statsd/derive/mypythonapp.counter2",
     "value": {
-      "Gauge": {
+      "Histogram": {
         "value": 0.999995505178062,
-        "timestamp": "2023-10-26T22:54:52.757Z",
-        "interval": 20.0
+        "timestamp": "2023-10-26T22:54:52.757Z"
       }
     }
   },
@@ -34,10 +33,9 @@ expression: metadatas
   {
     "name": "statsd/derive/mypythonapp.counter1",
     "value": {
-      "Gauge": {
+      "Histogram": {
         "value": 0.0999993716964859,
-        "timestamp": "2023-10-26T22:54:52.757Z",
-        "interval": 20.0
+        "timestamp": "2023-10-26T22:54:52.757Z"
       }
     }
   }

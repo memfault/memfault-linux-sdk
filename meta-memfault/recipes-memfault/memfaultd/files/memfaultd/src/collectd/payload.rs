@@ -41,6 +41,7 @@ pub struct Payload {
     host: String,
     // CollectD encodes time and duration to a float before sending as JSON.
     // https://github.com/collectd/collectd/blob/main/src/utils/format_json/format_json.c#L344-L345
+    #[allow(dead_code)]
     #[serde(with = "float_to_duration")]
     interval: Duration,
     plugin: String,
@@ -106,31 +107,26 @@ impl From<Payload> for Vec<KeyedMetricReading> {
                             timestamp: payload.time,
                         }
                     }
-                    DataSourceType::Gauge => MetricReading::Gauge {
+                    DataSourceType::Gauge => MetricReading::Histogram {
                         value: *value,
                         timestamp: payload.time,
-                        interval: payload.interval,
                     },
-                    DataSourceType::Derive => MetricReading::Gauge {
+                    DataSourceType::Derive => MetricReading::Histogram {
                         value: *value,
                         timestamp: payload.time,
-                        interval: payload.interval,
                     },
                     // A counter is a Derive (rate) that will never be negative.
-                    DataSourceType::Counter => MetricReading::Gauge {
+                    DataSourceType::Counter => MetricReading::Histogram {
                         value: *value,
                         timestamp: payload.time,
-                        interval: payload.interval,
                     },
-                    DataSourceType::Absolute => MetricReading::Gauge {
+                    DataSourceType::Absolute => MetricReading::Histogram {
                         value: *value,
                         timestamp: payload.time,
-                        interval: payload.interval,
                     },
-                    DataSourceType::Unknown => MetricReading::Gauge {
+                    DataSourceType::Unknown => MetricReading::Histogram {
                         value: *value,
                         timestamp: payload.time,
-                        interval: payload.interval,
                     },
                 },
             })

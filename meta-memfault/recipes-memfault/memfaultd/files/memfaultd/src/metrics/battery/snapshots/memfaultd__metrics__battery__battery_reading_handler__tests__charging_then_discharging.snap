@@ -1,9 +1,9 @@
 ---
 source: memfaultd/src/metrics/battery/battery_reading_handler.rs
-expression: "serde_json::to_string_pretty(&sorted_metrics).expect(\"metric_store should be serializable\")"
+expression: "&sorted_metrics"
 ---
 {
   "battery_discharge_duration_ms": 30000.0,
-  "battery_soc_pct": null,
+  "battery_soc_pct": 0.0,
   "battery_soc_pct_drop": 10.0
 }

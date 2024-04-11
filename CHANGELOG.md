@@ -6,6 +6,77 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0] - 2024-04-10
+
+This release builds upon the session-based metric reporting first shipped in
+[1.10.0] as well as adds an exciting new feature: the capture of system logs in
+coredumps. This means in addition to everything the Memfault Linux SDK currently
+captures in a coredump when a process on your device crashes, a configurable
+number of system log lines will also be captured in the coredump and visible on
+the Memfault web app! Additionally, we've added a new type of metric report in
+addition to session reports and the periodic heartbeat - a daily heartbeat
+report. This is intended to allow devices that are not able to report a full set
+of periodic heartbeats to Memfault to provide a once-a-day report that
+aggregates metrics over a 24 hour window.
+
+### Added
+
+- Log storage persistence configuration - via the new `logs.storage` config
+  field users can select whether logs processed by `memfautld` should be written
+  to disk or not. If they are not written, creating metrics based on log
+  patterns and including logs in coredumps will still function but log files
+  will not be uploaded to Memfault. The intention behind this option is to limit
+  the number of unnecessary disk writes for systems that are not sending full
+  log files to Memfault.
+- Daily heartbeats - a once-a-day metric report that aggregates 24 hours of
+  metrics captured from your device. It can be enabled with the new
+  `metrics.enable_daily_heartbeat` configuration.
+- The `memfaultctl start-session/end-session` command has been updated to
+  optionally accept Gauge metric readings that will be added to the resulting
+  metric report. Readings are accepted in the format `<metric key>=<number>`,
+  similar to the `memfaultctl write-attributes` command. Example:
+  `memfaultctl end-session camera_recording recording_failed=0`.
+- Logs from around the time of the crash are now recorded in coredumps and
+  displayed in the Memfault web app. This can be configured via
+  `coredumps.log_lines`, which has a default of 100 (meaning the 100 most recent
+  log lines will be recorded in a coredump)
+- `memfaultd` will now dump all ongoing sessions when it shuts down.
+- Adds an internal circlular queue implementation (used by logs in coredumps
+  feature).
+
+### Changed
+
+- [Memfault Core Metrics](https://docs.memfault.com/docs/platform/memfault-core-metrics/)
+  are always captured in a session metric report, regardless of the
+  `captured_metrics` configuration for that session type.
+- The internal names of the `MetricReading` variants have been updated make it
+  more clear how each type is aggregated.
+- Some internal refactoring to centralize the constants for the keys of Memfault
+  Core Metrics.
+- Session names that conflict with the reserved names of "heartbeat" and
+  "daily-heartbeat" are now rejected.
+- Starting a session of a type that is already in progress is now a no-op.
+  Previously, this reset the metric report for that session type as if the prior
+  one had never been started.
+
+### Fixed
+
+- Updated the path in `memfault-core-handler` for `/proc/<pid>/maps` to be an
+  absolute path instead of a relative path to keep behavior consistent
+  regardless of where the `memfault-core-handler` binary is executed from.
+- Some flaky `memfaultd` tests have been updated to consistently pass.
+- Battery readings with an SOC % less than 0 or greater than 100 are now
+  rejected.
+- Empty log files are no longer written to disk nor are they subsequently
+  uploaded to Memfault.
+- A bug that caused some coredumps from 32-bit machines to be captured
+  incorrectly while in thread capture mode.
+
+### Security
+
+- Bump version for external dependency `reqwest` to 0.11.26 to address a
+  vulnerability in earlier versions.
+
 ## [1.10.0] - 2024-02-15
 
 This release introduces support for session-based metric reporting in the
@@ -56,7 +127,7 @@ please contact us for more details!
 
 ## [1.9.1] - 2024-1-5
 
-This is a small patch release to fix a bug we discoved in
+This is a small patch release to fix a bug we discovered in
 `memfault-core-handler`
 
 ### Fixed
@@ -227,7 +298,7 @@ be easier to integrate and run on a wider variety of configuration.
   When `systemd` is not used, `memfaultd` will not be able to detect "user
   triggered" shutdown or reboot. You should use the [`last_reboot_reason` file
   API][reboot-reason-api] to notify `memfaultd` before doing a normal shutdown.
-- `memfaultd` will now default to using a Rust TLS libary in place of OpenSSL.
+- `memfaultd` will now default to using a Rust TLS library in place of OpenSSL.
   This adds about 800kB to the `memfaultd` binary. If you do have OpenSSL on
   your system and prefer to use it, you can set the `openssl-tls` option (in
   your `PACKAGECONFIG` for the `memfaultd` recipe) to continue using OpenSSL.
@@ -593,7 +664,7 @@ project:
     example integration, making it possible to test out the tracking of kernel
     panic reboot reasons using the QEMU device.
 - [memfaultd] The unit test set up is now run on `x86_64` as well as `i386` to
-  get coverage on a 64-bit architecture as wel as a 32-bit one.
+  get coverage on a 64-bit architecture as well as a 32-bit one.
 
 ### Fixed
 
@@ -804,3 +875,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.9.1-kirkstone
 [1.10.0]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.10.0-kirkstone
+[1.11.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.11.0-kirkstone

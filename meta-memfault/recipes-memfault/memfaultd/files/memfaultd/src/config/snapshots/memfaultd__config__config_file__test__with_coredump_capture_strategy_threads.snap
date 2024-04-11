@@ -31,7 +31,8 @@ expression: content
     "capture_strategy": {
       "type": "threads",
       "max_thread_size_kib": 32
-    }
+    },
+    "log_lines": 100
   },
   "fluent-bit": {
     "extra_fluentd_attributes": [],
@@ -44,7 +45,8 @@ expression: content
     "rotate_after_seconds": 3600,
     "compression_level": 1,
     "max_lines_per_minute": 500,
-    "log_to_metrics": null
+    "log_to_metrics": null,
+    "storage": "persist"
   },
   "mar": {
     "mar_file_max_size_kib": 10240,
@@ -55,5 +57,8 @@ expression: content
   },
   "battery_monitor": null,
   "connectivity_monitor": null,
-  "sessions": null
+  "sessions": null,
+  "metrics": {
+    "enable_daily_heartbeats": true
+  }
 }

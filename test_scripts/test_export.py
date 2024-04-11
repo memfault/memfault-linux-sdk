@@ -38,7 +38,7 @@ def test_export_chunk(
     qemu.child().expect("Export saved and data cleared")
 
     qemu.exec_cmd(
-        f"curl -v -X POST https://chunks.memfault.com/api/v0/chunks/{ qemu_device_id } -H 'Memfault-Project-Key: {os.environ['MEMFAULT_PROJECT_KEY']}' -H 'Content-Type: application/octet-stream' --data-binary @test.bin"
+        f"curl -v -X POST https://chunks.memfault.com/api/v0/chunks/{qemu_device_id} -H 'Memfault-Project-Key: {os.environ['MEMFAULT_PROJECT_KEY']}' -H 'Content-Type: application/octet-stream' --data-binary @test.bin"
     )
     qemu.child().expect("Accepted")
 
@@ -56,6 +56,4 @@ def test_export_chunk(
 
         assert d["export_works"] is True
 
-    memfault_service_tester.poll_until_not_raising(
-        _check, timeout_seconds=5 * 60, poll_interval_seconds=1
-    )
+    memfault_service_tester.poll_until_not_raising(_check, poll_interval_seconds=1)

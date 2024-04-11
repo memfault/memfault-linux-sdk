@@ -74,7 +74,7 @@ impl MarExportHandler {
 const DEFAULT_MAX_ZIP_FILE: usize = 10 * 1024 * 1024;
 
 impl MarExportHandler {
-    /// Looks at data in the mar_staging folder and returns content that should be included in next ZIP dowload
+    /// Looks at data in the mar_staging folder and returns content that should be included in next ZIP download
     fn prepare_next_export(&self) -> Result<Option<ExportInfo>> {
         let mut entries = MarEntry::iterate_from_container(&self.mar_staging)?;
 
@@ -192,7 +192,7 @@ impl MarExportHandler {
             .map_err(|e| eyre!("Mutex poisoned: {:#}", e))?;
 
         if let Some(export) = export_opt.as_ref() {
-            // Optionnaly, check that the ETag matches (to confirm we are deleting the data client just read).
+            // Optionally, check that the ETag matches (to confirm we are deleting the data client just read).
             if let Some(if_match_header) =
                 request.headers().iter().find(|h| h.field.equiv("If-Match"))
             {

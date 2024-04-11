@@ -132,10 +132,19 @@ pub enum Metadata {
     },
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct LinuxLogsFormat {
     id: String,
     serialization: String,
+}
+
+impl Default for LinuxLogsFormat {
+    fn default() -> Self {
+        Self {
+            id: "v1".into(),
+            serialization: "json-lines".into(),
+        }
+    }
 }
 
 // Note: Memfault manifest defines Cid as an object containing a Uuid.
@@ -186,10 +195,7 @@ impl Metadata {
             compression,
             cid: Cid { uuid: cid },
             next_cid: Cid { uuid: next_cid },
-            format: LinuxLogsFormat {
-                id: "v1".into(),
-                serialization: "json-lines".into(),
-            },
+            format: LinuxLogsFormat::default(),
         }
     }
 
@@ -203,6 +209,18 @@ impl Metadata {
 
     pub fn new_reboot(reason: RebootReason) -> Self {
         Self::LinuxReboot { reason }
+    }
+
+    pub fn new_metric_report(
+        metrics: HashMap<MetricStringKey, MetricValue>,
+        duration: Duration,
+        report_type: MetricReportType,
+    ) -> Self {
+        Self::LinuxMetricReport {
+            metrics,
+            duration,
+            report_type,
+        }
     }
 }
 

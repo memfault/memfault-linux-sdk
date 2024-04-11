@@ -5,33 +5,65 @@ use chrono::Utc;
 use eyre::{eyre, Result};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::Path,
+    str::FromStr,
     time::{Duration, Instant},
 };
 
 use crate::{
     mar::{MarEntryBuilder, Metadata},
-    metrics::{MetricReading, MetricStringKey, MetricValue, SessionName},
-};
-
-use super::{
-    battery::METRIC_BATTERY_SOC_PCT,
-    metric_reading::KeyedMetricReading,
-    timeseries::{Counter, Histogram, TimeSeries, TimeWeightedAverage},
+    metrics::{
+        core_metrics::{
+            METRIC_BATTERY_DISCHARGE_DURATION_MS, METRIC_BATTERY_SOC_PCT_DROP,
+            METRIC_CONNECTED_TIME, METRIC_EXPECTED_CONNECTED_TIME, METRIC_MF_SYNC_FAILURE,
+            METRIC_MF_SYNC_SUCCESS, METRIC_OPERATIONAL_CRASHES, METRIC_SYNC_FAILURE,
+            METRIC_SYNC_SUCCESS,
+        },
+        metric_reading::KeyedMetricReading,
+        timeseries::{Counter, Gauge, Histogram, TimeSeries, TimeWeightedAverage},
+        MetricReading, MetricStringKey, MetricValue, SessionName,
+    },
 };
 
 pub enum CapturedMetrics {
     All,
-    Metrics(Vec<MetricStringKey>),
+    Metrics(HashSet<MetricStringKey>),
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+pub const HEARTBEAT_REPORT_TYPE: &str = "heartbeat";
+pub const DAILY_HEARTBEAT_REPORT_TYPE: &str = "daily-heartbeat";
+
+const SESSION_CORE_METRICS: &[&str; 9] = &[
+    METRIC_MF_SYNC_FAILURE,
+    METRIC_MF_SYNC_SUCCESS,
+    METRIC_BATTERY_DISCHARGE_DURATION_MS,
+    METRIC_BATTERY_SOC_PCT_DROP,
+    METRIC_CONNECTED_TIME,
+    METRIC_EXPECTED_CONNECTED_TIME,
+    METRIC_SYNC_FAILURE,
+    METRIC_SYNC_SUCCESS,
+    METRIC_OPERATIONAL_CRASHES,
+];
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum MetricReportType {
     #[serde(rename = "heartbeat")]
     Heartbeat,
     #[serde(rename = "session")]
     Session(SessionName),
+    #[serde(rename = "daily-heartbeat")]
+    DailyHeartbeat,
+}
+
+impl MetricReportType {
+    pub fn as_str(&self) -> &str {
+        match self {
+            MetricReportType::Heartbeat => HEARTBEAT_REPORT_TYPE,
+            MetricReportType::Session(session_name) => session_name.as_str(),
+            MetricReportType::DailyHeartbeat => DAILY_HEARTBEAT_REPORT_TYPE,
+        }
+    }
 }
 
 pub struct MetricReport {
@@ -53,7 +85,28 @@ struct MetricReportSnapshot {
 }
 
 impl MetricReport {
-    pub fn new(report_type: MetricReportType, captured_metrics: CapturedMetrics) -> Self {
+    pub fn new(
+        report_type: MetricReportType,
+        configured_captured_metrics: CapturedMetrics,
+    ) -> Self {
+        // Always include session core metrics regardless of configuration
+        let captured_metrics = match configured_captured_metrics {
+            CapturedMetrics::All => CapturedMetrics::All,
+            CapturedMetrics::Metrics(metrics) => {
+                let mut merged_set = SESSION_CORE_METRICS
+                    .iter()
+                    .map(|core_metric_key| {
+                        // This expect should never be hit as SESSION_CORE_METRICS is
+                        // an array of static strings
+                        MetricStringKey::from_str(core_metric_key)
+                            .expect("Invalid Metric Key in SESSION_CORE_METRICS")
+                    })
+                    .collect::<HashSet<_>>();
+                merged_set.extend(metrics);
+                CapturedMetrics::Metrics(merged_set)
+            }
+        };
+
         Self {
             metrics: HashMap::new(),
             start: Instant::now(),
@@ -62,9 +115,14 @@ impl MetricReport {
         }
     }
 
-    // Creates a heartbeat report that captures all metrics
+    /// Creates a heartbeat report that captures all metrics
     pub fn new_heartbeat() -> Self {
         MetricReport::new(MetricReportType::Heartbeat, CapturedMetrics::All)
+    }
+
+    /// Creates a daily heartbeat report that captures all metrics
+    pub fn new_daily_heartbeat() -> Self {
+        MetricReport::new(MetricReportType::DailyHeartbeat, CapturedMetrics::All)
     }
 
     fn is_captured(&self, metric_key: &MetricStringKey) -> bool {
@@ -81,10 +139,9 @@ impl MetricReport {
         if self.is_captured(&m.name) {
             match self.metrics.entry(m.name) {
                 std::collections::hash_map::Entry::Occupied(mut o) => {
-                    let key = o.key().clone();
                     let state = o.get_mut();
                     if let Err(e) = (*state).aggregate(&m.value) {
-                        *state = Self::select_aggregate_for(&key, &m.value)?;
+                        *state = Self::select_aggregate_for(&m.value)?;
                         log::warn!(
                             "New value for metric {} is incompatible ({}). Resetting timeseries.",
                             o.key(),
@@ -93,7 +150,7 @@ impl MetricReport {
                     }
                 }
                 std::collections::hash_map::Entry::Vacant(v) => {
-                    let timeseries = Self::select_aggregate_for(v.key(), &m.value)?;
+                    let timeseries = Self::select_aggregate_for(&m.value)?;
                     v.insert(timeseries);
                 }
             };
@@ -135,6 +192,7 @@ impl MetricReport {
     }
 
     /// Create one metric report MAR entry with all the metrics in the store.
+    ///
     /// All data will be timestamped with current time measured by CollectionTime::now(), effectively
     /// disregarding the collectd timestamps.
     pub fn prepare_metric_report(
@@ -148,29 +206,27 @@ impl MetricReport {
         }
 
         Ok(Some(MarEntryBuilder::new(mar_staging_area)?.set_metadata(
-            Metadata::LinuxMetricReport {
-                metrics: snapshot.metrics,
-                duration: snapshot.duration,
-                report_type: self.report_type.clone(),
-            },
+            Metadata::new_metric_report(
+                snapshot.metrics,
+                snapshot.duration,
+                self.report_type.clone(),
+            ),
         )))
     }
 
-    fn select_aggregate_for(
-        key: &MetricStringKey,
-        event: &MetricReading,
-    ) -> Result<Box<dyn TimeSeries + Send>> {
+    fn select_aggregate_for(event: &MetricReading) -> Result<Box<dyn TimeSeries + Send>> {
         match event {
-            MetricReading::Gauge { .. } => {
-                // Very basic heuristic for now - in the future we may want to make this user-configurable.
-                if key.as_str().eq(METRIC_BATTERY_SOC_PCT) {
-                    Ok(Box::new(TimeWeightedAverage::new(event)?))
-                } else {
-                    Ok(Box::new(Histogram::new(event)?))
-                }
-            }
+            MetricReading::Histogram { .. } => Ok(Box::new(Histogram::new(event)?)),
             MetricReading::Counter { .. } => Ok(Box::new(Counter::new(event)?)),
+            MetricReading::Gauge { .. } => Ok(Box::new(Gauge::new(event)?)),
+            MetricReading::TimeWeightedAverage { .. } => {
+                Ok(Box::new(TimeWeightedAverage::new(event)?))
+            }
         }
+    }
+
+    pub fn report_type(&self) -> &MetricReportType {
+        &self.report_type
     }
 }
 
@@ -181,19 +237,18 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::metrics::MetricTimestamp;
-    use chrono::Duration;
+    use crate::test_utils::in_histograms;
     use std::str::FromStr;
 
     use insta::assert_json_snapshot;
     use rstest::rstest;
 
     #[rstest]
-    #[case(in_gauges(vec![("foo", 1000, 1.0), ("bar", 1000, 2.0), ("baz", 1000, 3.0)]), "heartbeat_report_1")]
-    #[case(in_gauges(vec![("foo", 1000, 1.0), ("foo", 1000, 2.0), ("foo", 1000, 3.0)]), "heartbeat_report_2")]
-    #[case(in_gauges(vec![("foo", 1000, 1.0), ("foo", 1000, 1.0)]), "heartbeat_report_3")]
-    #[case(in_gauges(vec![("foo", 1000, 1.0), ("foo", 1000, 2.0)]), "heartbeat_report_4")]
-    #[case(in_gauges(vec![("foo", 1000, 1.0), ("foo", 1000, 2.0), ("foo", 1000, 2.0)]), "heartbeat_report_5")]
+    #[case(in_histograms(vec![("foo", 1.0), ("bar", 2.0), ("baz",  3.0)]), "heartbeat_report_1")]
+    #[case(in_histograms(vec![("foo", 1.0), ("foo", 2.0), ("foo",  3.0)]), "heartbeat_report_2")]
+    #[case(in_histograms(vec![("foo", 1.0), ("foo", 1.0)]), "heartbeat_report_3")]
+    #[case(in_histograms(vec![("foo", 1.0), ("foo", 2.0)]), "heartbeat_report_4")]
+    #[case(in_histograms(vec![("foo", 1.0), ("foo", 2.0), ("foo",  2.0)]), "heartbeat_report_5")]
     fn test_aggregate_metrics(
         #[case] metrics: impl Iterator<Item = KeyedMetricReading>,
         #[case] test_name: &str,
@@ -208,21 +263,25 @@ mod tests {
     }
 
     #[rstest]
-    #[case(in_gauges(vec![("foo", 1000, 1.0), ("bar", 1000, 2.0), ("baz", 1000, 3.0)]), "sesion_report_1")]
-    #[case(in_gauges(vec![("foo", 1000, 1.0), ("foo", 1000, 2.0), ("foo", 1000, 3.0)]), "sesion_report_2")]
-    #[case(in_gauges(vec![("foo", 1000, 1.0), ("foo", 1000, 1.0)]), "sesion_report_3")]
-    #[case(in_gauges(vec![("foo", 1000, 1.0), ("foo", 1000, 2.0)]), "sesion_report_4")]
-    #[case(in_gauges(vec![("foo", 1000, 1.0), ("foo", 1000, 2.0), ("baz", 1000, 2.0), ("bar", 1000, 3.0)]), "sesion_report_5")]
+    #[case(in_histograms(vec![("foo", 1.0), ("bar", 2.0), ("baz",  3.0)]), "session_report_1")]
+    #[case(in_histograms(vec![("foo", 1.0), ("foo", 2.0), ("foo",  3.0)]), "session_report_2")]
+    #[case(in_histograms(vec![("foo", 1.0), ("foo", 1.0)]), "session_report_3")]
+    #[case(in_histograms(vec![("foo", 1.0), ("foo", 2.0)]), "session_report_4")]
+    #[case(in_histograms(vec![("foo", 1.0), ("foo", 2.0), ("baz",  2.0), ("bar",  3.0)]), "session_report_5")]
     fn test_aggregate_metrics_session(
         #[case] metrics: impl Iterator<Item = KeyedMetricReading>,
         #[case] test_name: &str,
     ) {
         let mut metric_report = MetricReport::new(
             MetricReportType::Session(SessionName::from_str("foo_only").unwrap()),
-            CapturedMetrics::Metrics(vec![
-                MetricStringKey::from_str("foo").unwrap(),
-                MetricStringKey::from_str("baz").unwrap(),
-            ]),
+            CapturedMetrics::Metrics(
+                [
+                    MetricStringKey::from_str("foo").unwrap(),
+                    MetricStringKey::from_str("baz").unwrap(),
+                ]
+                .into_iter()
+                .collect(),
+            ),
         );
 
         for m in metrics {
@@ -232,36 +291,44 @@ mod tests {
         assert_json_snapshot!(test_name, sorted_metrics);
     }
 
+    /// Core metrics should always be captured by sessions even if they are not
+    /// configured to do so
+    #[rstest]
+    fn test_aggregate_core_metrics_session() {
+        let mut metric_report = MetricReport::new(
+            MetricReportType::Session(SessionName::from_str("foo_only").unwrap()),
+            CapturedMetrics::Metrics(
+                [
+                    MetricStringKey::from_str("foo").unwrap(),
+                    MetricStringKey::from_str("baz").unwrap(),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+        );
+
+        let metrics = in_histograms(
+            SESSION_CORE_METRICS
+                .map(|metric_name: &'static str| (metric_name, 100.0))
+                .to_vec(),
+        );
+
+        for m in metrics {
+            metric_report.add_metric(m).unwrap();
+        }
+        let sorted_metrics: BTreeMap<_, _> = metric_report.take_metrics().into_iter().collect();
+        assert_json_snapshot!(sorted_metrics);
+    }
+
     #[rstest]
     fn test_empty_after_write() {
         let mut metric_report = MetricReport::new_heartbeat();
-        for m in in_gauges(vec![
-            ("foo", 1000, 1.0),
-            ("bar", 1000, 2.0),
-            ("baz", 1000, 3.0),
-        ]) {
+        for m in in_histograms(vec![("foo", 1.0), ("bar", 2.0), ("baz", 3.0)]) {
             metric_report.add_metric(m).unwrap();
         }
 
         let tempdir = TempDir::new().unwrap();
         let _ = metric_report.prepare_metric_report(tempdir.path());
         assert_eq!(metric_report.take_metrics().len(), 0);
-    }
-
-    fn in_gauges(
-        metrics: Vec<(&'static str, i64, f64)>,
-    ) -> impl Iterator<Item = KeyedMetricReading> {
-        metrics
-            .into_iter()
-            .enumerate()
-            .map(|(i, (name, interval, value))| KeyedMetricReading {
-                name: MetricStringKey::from_str(name).unwrap(),
-                value: MetricReading::Gauge {
-                    value,
-                    interval: Duration::milliseconds(interval),
-                    timestamp: MetricTimestamp::from_str("2021-01-01T00:00:00Z").unwrap()
-                        + chrono::Duration::seconds(i as i64),
-                },
-            })
     }
 }

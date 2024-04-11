@@ -1,15 +1,22 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use crate::config::Config;
 use eyre::{eyre, Result};
 
-use crate::{cli::memfaultd_client::MemfaultdClient, metrics::SessionName};
+use crate::config::Config;
+use crate::{
+    cli::memfaultd_client::MemfaultdClient,
+    metrics::{KeyedMetricReading, SessionName},
+};
 
-pub fn start_session(config: &Config, session_name: SessionName) -> Result<()> {
+pub fn start_session(
+    config: &Config,
+    session_name: SessionName,
+    gauge_readings: Vec<KeyedMetricReading>,
+) -> Result<()> {
     let client = MemfaultdClient::from_config(config)?;
     if config.config_file.enable_data_collection {
-        match client.start_session(&session_name) {
+        match client.start_session(session_name.clone(), gauge_readings) {
             Ok(()) => {
                 eprintln!("Started new {} session", session_name);
                 Ok(())
@@ -24,10 +31,14 @@ pub fn start_session(config: &Config, session_name: SessionName) -> Result<()> {
     }
 }
 
-pub fn end_session(config: &Config, session_name: SessionName) -> Result<()> {
+pub fn end_session(
+    config: &Config,
+    session_name: SessionName,
+    gauge_readings: Vec<KeyedMetricReading>,
+) -> Result<()> {
     let client = MemfaultdClient::from_config(config)?;
     if config.config_file.enable_data_collection {
-        match client.end_session(&session_name) {
+        match client.end_session(session_name.clone(), gauge_readings) {
             Ok(()) => {
                 eprintln!("Ended ongoing {} session", session_name);
                 Ok(())

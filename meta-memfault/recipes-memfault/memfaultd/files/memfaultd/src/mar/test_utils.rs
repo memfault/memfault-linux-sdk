@@ -1,7 +1,10 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use std::time::SystemTime;
+use std::{
+    collections::HashMap,
+    time::{Duration, SystemTime},
+};
 use std::{
     fs::{create_dir, create_dir_all, set_permissions, File},
     io::{BufWriter, Write},
@@ -9,7 +12,11 @@ use std::{
     path::PathBuf,
 };
 
-use crate::mar::{CompressionAlgorithm, DeviceAttribute};
+use crate::{
+    mar::{CompressionAlgorithm, DeviceAttribute},
+    metrics::{MetricReportType, MetricStringKey, MetricValue},
+    reboot::RebootReason,
+};
 use tempfile::{tempdir, TempDir};
 use uuid::Uuid;
 
@@ -173,6 +180,41 @@ impl MarCollectorFixture {
         let mut permissions = manifest_path.metadata().unwrap().permissions();
         permissions.set_mode(0o0);
         set_permissions(manifest_path, permissions).unwrap();
+        path
+    }
+
+    pub fn create_metric_report_entry(
+        &mut self,
+        metrics: HashMap<MetricStringKey, MetricValue>,
+        duration: Duration,
+        report_type: MetricReportType,
+    ) -> PathBuf {
+        let path = self.create_empty_entry();
+        let manifest_path = path.join("manifest.json");
+
+        let manifest_file = File::create(manifest_path).unwrap();
+        let manifest = Manifest::new(
+            &self.config,
+            CollectionTime::test_fixture(),
+            Metadata::new_metric_report(metrics, duration, report_type),
+        );
+        serde_json::to_writer(BufWriter::new(manifest_file), &manifest).unwrap();
+
+        path
+    }
+
+    pub fn create_reboot_entry(&mut self, reason: RebootReason) -> PathBuf {
+        let path = self.create_empty_entry();
+        let manifest_path = path.join("manifest.json");
+
+        let manifest_file = File::create(manifest_path).unwrap();
+        let manifest = Manifest::new(
+            &self.config,
+            CollectionTime::test_fixture(),
+            Metadata::new_reboot(reason),
+        );
+        serde_json::to_writer(BufWriter::new(manifest_file), &manifest).unwrap();
+
         path
     }
 }

@@ -2,9 +2,9 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 use eyre::{eyre, Result};
-use log::debug;
+use log::{debug, error};
 use std::{
-    collections::HashMap,
+    collections::{hash_map::Entry, HashMap},
     path::Path,
     sync::{Arc, Mutex},
 };
@@ -12,12 +12,14 @@ use std::{
 use super::{metric_reading::KeyedMetricReading, metric_report::CapturedMetrics, SessionName};
 use crate::{
     config::SessionConfig,
+    mar::{MarEntryBuilder, Metadata},
     metrics::{MetricReport, MetricReportType, MetricStringKey, MetricValue},
     network::NetworkConfig,
 };
 
 pub struct MetricReportManager {
     heartbeat: MetricReport,
+    daily_heartbeat: MetricReport,
     sessions: HashMap<SessionName, MetricReport>,
     session_configs: Vec<SessionConfig>,
 }
@@ -28,6 +30,7 @@ impl MetricReportManager {
     pub fn new() -> Self {
         Self {
             heartbeat: MetricReport::new_heartbeat(),
+            daily_heartbeat: MetricReport::new_daily_heartbeat(),
             sessions: HashMap::new(),
             session_configs: vec![],
         }
@@ -36,6 +39,7 @@ impl MetricReportManager {
     pub fn new_with_session_configs(session_configs: &[SessionConfig]) -> Self {
         Self {
             heartbeat: MetricReport::new_heartbeat(),
+            daily_heartbeat: MetricReport::new_daily_heartbeat(),
             sessions: HashMap::new(),
             session_configs: session_configs.to_vec(),
         }
@@ -44,16 +48,14 @@ impl MetricReportManager {
     /// Starts a session of the specified session name.
     /// Fails if the session name provided is not configured.
     /// If there is already a session with that name ongoing,
-    /// the ongoing session will be dropped and a fresh one will be
-    /// created. The dropped session is *not* written to disk.
+    /// this is a no-op
     pub fn start_session(&mut self, session_name: SessionName) -> Result<()> {
         let report_type = MetricReportType::Session(session_name.clone());
         let captured_metric_keys = self.captured_metric_keys_for_report(&report_type)?;
 
-        self.sessions.insert(
-            session_name,
-            MetricReport::new(report_type, captured_metric_keys),
-        );
+        if let Entry::Vacant(e) = self.sessions.entry(session_name) {
+            e.insert(MetricReport::new(report_type, captured_metric_keys));
+        }
         Ok(())
     }
 
@@ -64,49 +66,69 @@ impl MetricReportManager {
     ) -> Result<CapturedMetrics> {
         match report_type {
             MetricReportType::Heartbeat => Ok(CapturedMetrics::All),
+            MetricReportType::DailyHeartbeat => Ok(CapturedMetrics::All),
             MetricReportType::Session(session_name) => self
                 .session_configs
                 .iter()
                 .find(|&session_config| session_config.name == *session_name)
-                .map(|config| CapturedMetrics::Metrics(config.captured_metrics.clone()))
+                .map(|config| {
+                    CapturedMetrics::Metrics(config.captured_metrics.clone().into_iter().collect())
+                })
                 .ok_or_else(|| eyre!("No configuration for session named {} found!", session_name)),
         }
+    }
+
+    /// Returns an iterator over all ongoing metric reports
+    fn report_iter(&mut self) -> impl Iterator<Item = &mut MetricReport> {
+        self.sessions
+            .values_mut()
+            .chain([&mut self.heartbeat, &mut self.daily_heartbeat])
     }
 
     /// Adds a metric reading to all ongoing metric reports
     /// that capture that metric
     pub fn add_metric(&mut self, m: KeyedMetricReading) -> Result<()> {
-        self.heartbeat.add_metric(m.clone())?;
-        for session_report in self.sessions.values_mut() {
-            session_report.add_metric(m.clone())?
-        }
-        Ok(())
+        self.report_iter()
+            .try_for_each(|report| report.add_metric(m.clone()))
     }
 
     /// Increment a counter metric by 1
     pub fn increment_counter(&mut self, name: &str) -> Result<()> {
-        self.heartbeat.increment_counter(name)?;
-        for session_report in self.sessions.values_mut() {
-            session_report.increment_counter(name)?
-        }
-        Ok(())
+        self.report_iter()
+            .try_for_each(|report| report.increment_counter(name))
     }
 
     /// Increment a counter by a specified amount
     pub fn add_to_counter(&mut self, name: &str, value: f64) -> Result<()> {
-        self.heartbeat.add_to_counter(name, value)?;
-        for session_report in self.sessions.values_mut() {
-            session_report.add_to_counter(name, value)?
-        }
-        Ok(())
+        self.report_iter()
+            .try_for_each(|report| report.add_to_counter(name, value))
     }
 
-    /// Return all the metrics in memory and resets the store.
+    /// Adds a metric reading to a specific metric report
+    pub fn add_metric_to_report(
+        &mut self,
+        report_type: &MetricReportType,
+        m: KeyedMetricReading,
+    ) -> Result<()> {
+        match report_type {
+            MetricReportType::Heartbeat => self.heartbeat.add_metric(m),
+            MetricReportType::DailyHeartbeat => self.daily_heartbeat.add_metric(m),
+            MetricReportType::Session(session_name) => self
+                .sessions
+                .get_mut(session_name)
+                .ok_or_else(|| eyre!("No ongoing session with name {}", session_name))
+                .and_then(|session_report| session_report.add_metric(m)),
+        }
+    }
+
+    /// Return all the metrics in memory and resets the
+    /// store for the periodic heartbeat report.
     pub fn take_heartbeat_metrics(&mut self) -> HashMap<MetricStringKey, MetricValue> {
         self.heartbeat.take_metrics()
     }
 
-    /// Return all the metrics in memory and resets the store.
+    /// Return all the metrics in memory and resets the store
+    /// for a specified session.
     pub fn take_session_metrics(
         &mut self,
         session_name: &SessionName,
@@ -117,8 +139,9 @@ impl MetricReportManager {
             .map(|session_report| session_report.take_metrics())
     }
 
-    /// Dump the metrics to a MAR entry. This takes a
-    /// &Arc<Mutex<MetricReportManager>> and will minimize lock time.
+    /// Dump the metrics to a MAR entry.
+    ///
+    /// This takes a &Arc<Mutex<MetricReportManager>> and will minimize lock time.
     /// This will empty the metrics store.
     /// When used with a heartbeat metric report type, the heartbeat
     /// will be reset.
@@ -128,13 +151,18 @@ impl MetricReportManager {
         metric_report_manager: &Arc<Mutex<Self>>,
         mar_staging_area: &Path,
         network_config: &NetworkConfig,
-        report_type: MetricReportType,
+        report_type: &MetricReportType,
     ) -> Result<()> {
-        let mar_builder = match &report_type {
+        let mar_builder = match report_type {
             MetricReportType::Heartbeat => metric_report_manager
                 .lock()
                 .expect("Mutex Poisoned!")
                 .heartbeat
+                .prepare_metric_report(mar_staging_area)?,
+            MetricReportType::DailyHeartbeat => metric_report_manager
+                .lock()
+                .expect("Mutex Poisoned!")
+                .daily_heartbeat
                 .prepare_metric_report(mar_staging_area)?,
             MetricReportType::Session(session_name) => {
                 match metric_report_manager
@@ -159,15 +187,64 @@ impl MetricReportManager {
                 mar_entry.path.display()
             );
         } else {
-            let report_name = match &report_type {
-                MetricReportType::Heartbeat => "heartbeat",
-                MetricReportType::Session(session_name) => session_name.as_str(),
-            };
             debug!(
                 "Skipping generating metrics entry. No metrics in store for: {}",
-                report_name
+                report_type.as_str()
             )
         }
+        Ok(())
+    }
+
+    fn prepare_all_metric_reports(
+        &mut self,
+        mar_staging_area: &Path,
+    ) -> Vec<MarEntryBuilder<Metadata>> {
+        self.report_iter()
+            .filter_map(|report| {
+                if let Ok(builder) = report.prepare_metric_report(mar_staging_area) {
+                    builder.or_else(|| {
+                        debug!(
+                            "Skipping generating metrics entry. No metrics in store for: {}",
+                            report.report_type().as_str()
+                        );
+                        None
+                    })
+                } else {
+                    debug!(
+                        "Failed to prepare metric report for: {}",
+                        report.report_type().as_str()
+                    );
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Ends all ongoing MetricReports and dumps them as MARs to disk.
+    ///    
+    /// MetricReports with the MetricReportType specified with
+    /// exclude_report_types are excluded from this operation
+    /// entirely  
+    pub fn dump_metric_reports(
+        metric_report_manager: &Arc<Mutex<Self>>,
+        mar_staging_area: &Path,
+        network_config: &NetworkConfig,
+    ) -> Result<()> {
+        let mar_builders = metric_report_manager
+            .lock()
+            .expect("Mutex poisoned")
+            .prepare_all_metric_reports(mar_staging_area);
+
+        for mar_builder in mar_builders {
+            match mar_builder.save(network_config) {
+                Ok(mar_entry) => debug!(
+                    "Generated MAR entry from metrics: {}",
+                    mar_entry.path.display()
+                ),
+                Err(e) => error!("Error building MAR entry: {}", e),
+            }
+        }
+
         Ok(())
     }
 }
@@ -183,17 +260,17 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::test_utils::in_gauges;
+    use crate::test_utils::in_histograms;
     use insta::assert_json_snapshot;
     use rstest::rstest;
     use std::str::FromStr;
 
     #[rstest]
-    #[case(in_gauges(vec![("foo", 1000, 1.0), ("bar", 1000, 2.0), ("baz", 1000, 3.0)]), "heartbeat_report_1")]
-    #[case(in_gauges(vec![("foo", 1000, 1.0), ("foo", 1000, 2.0), ("foo", 1000, 3.0)]), "heartbeat_report_2")]
-    #[case(in_gauges(vec![("foo", 1000, 1.0), ("foo", 1000, 1.0)]), "heartbeat_report_3")]
-    #[case(in_gauges(vec![("foo", 1000, 1.0), ("foo", 1000, 2.0)]), "heartbeat_report_4")]
-    #[case(in_gauges(vec![("foo", 1000, 1.0), ("foo", 1000, 2.0), ("foo", 1000, 2.0)]), "heartbeat_report_5")]
+    #[case(in_histograms(vec![("foo", 1.0), ("bar",  2.0), ("baz", 3.0)]), "heartbeat_report_1")]
+    #[case(in_histograms(vec![("foo",  1.0), ("foo",2.0), ("foo", 3.0)]), "heartbeat_report_2")]
+    #[case(in_histograms(vec![("foo",  1.0), ("foo",1.0)]), "heartbeat_report_3")]
+    #[case(in_histograms(vec![("foo",  1.0), ("foo",2.0)]), "heartbeat_report_4")]
+    #[case(in_histograms(vec![("foo",  1.0), ("foo",2.0), ("foo", 2.0)]), "heartbeat_report_5")]
     fn test_heartbeat_report(
         #[case] metrics: impl Iterator<Item = KeyedMetricReading>,
         #[case] test_name: &str,
@@ -210,7 +287,7 @@ mod tests {
             .heartbeat
             .prepare_metric_report(tempdir.path())
             .unwrap();
-        assert_json_snapshot!(test_name, builder.unwrap().get_metadata());
+        assert_json_snapshot!(test_name, builder.unwrap().get_metadata(), {".metadata.duration_ms" => 0});
     }
 
     #[rstest]
@@ -222,11 +299,11 @@ mod tests {
     }
 
     #[rstest]
-    #[case(in_gauges(vec![("foo", 1000, 1.0), ("bar", 1000, 2.0), ("baz", 1000, 3.0)]), "heartbeat_and_sessions_report_1")]
-    #[case(in_gauges(vec![("foo", 1000, 1.0), ("foo", 1000, 2.0), ("foo", 1000, 3.0)]), "heartbeat_and_sessions_report_2")]
-    #[case(in_gauges(vec![("foo", 1000, 1.0), ("foo", 1000, 1.0)]), "heartbeat_and_sessions_report_3")]
-    #[case(in_gauges(vec![("foo", 1000, 1.0), ("foo", 1000, 2.0), ("baz", 1000, 1.0), ("baz", 1000, 2.0)]), "heartbeat_and_sessions_report_4")]
-    #[case(in_gauges(vec![("foo", 1000, 1.0), ("bar", 1000, 2.0), ("foo", 1000, 2.0)]), "heartbeat_and_sessions_report_5")]
+    #[case(in_histograms(vec![("foo", 1.0), ("bar", 2.0), ("baz",  3.0)]), "heartbeat_and_sessions_report_1")]
+    #[case(in_histograms(vec![("foo", 1.0), ("foo", 2.0), ("foo",  3.0)]), "heartbeat_and_sessions_report_2")]
+    #[case(in_histograms(vec![("foo", 1.0), ("foo", 1.0)]), "heartbeat_and_sessions_report_3")]
+    #[case(in_histograms(vec![("foo", 1.0), ("foo", 2.0), ("baz", 1.0), ("baz",  2.0)]), "heartbeat_and_sessions_report_4")]
+    #[case(in_histograms(vec![("foo", 1.0), ("bar", 2.0), ("foo", 2.0)]), "heartbeat_and_sessions_report_5")]
     fn test_heartbeat_and_session_reports(
         #[case] metrics: impl Iterator<Item = KeyedMetricReading>,
         #[case] test_name: &str,
@@ -264,18 +341,119 @@ mod tests {
         }
 
         let tempdir = TempDir::new().unwrap();
+        // Verify heartbeat report
+        let snapshot_name = format!("{}.{}", test_name, "heartbeat");
+        assert_report_snapshot(
+            &mut metric_report_manager.heartbeat,
+            &snapshot_name,
+            &tempdir,
+        );
+
+        // Verify daily heartbeat report
+        let snapshot_name = format!("{}.{}", test_name, "daily_heartbeat");
+        assert_report_snapshot(
+            &mut metric_report_manager.daily_heartbeat,
+            &snapshot_name,
+            &tempdir,
+        );
+
+        for (session_name, mut metric_report) in metric_report_manager.sessions {
+            let snapshot_name = format!("{}.{}", test_name, session_name);
+            assert_report_snapshot(&mut metric_report, &snapshot_name, &tempdir);
+        }
+    }
+
+    #[rstest]
+    fn test_start_session_twice() {
+        let session_name = SessionName::from_str("test-session-start-twice").unwrap();
+        let session_configs = vec![SessionConfig {
+            name: session_name.clone(),
+            captured_metrics: vec![
+                MetricStringKey::from_str("foo").unwrap(),
+                MetricStringKey::from_str("bar").unwrap(),
+            ],
+        }];
+
+        let mut metric_report_manager =
+            MetricReportManager::new_with_session_configs(&session_configs);
+
+        let metrics_a = in_histograms(vec![("foo", 1.0), ("bar", 2.0)]);
+        assert!(metric_report_manager
+            .start_session(session_name.clone())
+            .is_ok());
+        for m in metrics_a {
+            metric_report_manager
+                .add_metric(m)
+                .expect("Failed to add metric reading");
+        }
+
+        // Final metric report should aggregate both metrics_a and
+        // metrics_b as the session should not be restarted
+        // by the second start_session
+        let metrics_b = in_histograms(vec![("foo", 9.0), ("bar", 5.0)]);
+        assert!(metric_report_manager
+            .start_session(session_name.clone())
+            .is_ok());
+        for m in metrics_b {
+            metric_report_manager
+                .add_metric(m)
+                .expect("Failed to add metric reading");
+        }
+
+        let tempdir = TempDir::new().unwrap();
         let builder = metric_report_manager
-            .heartbeat
+            .sessions
+            .get_mut(&session_name)
+            .unwrap()
             .prepare_metric_report(tempdir.path())
             .unwrap();
 
-        let snapshot_name = format!("{}.{}", test_name, "heartbeat");
-        assert_json_snapshot!(snapshot_name, builder.unwrap().get_metadata(), {".metadata.duration_ms" => 0});
+        assert_json_snapshot!(builder.unwrap().get_metadata(), {".metadata.duration_ms" => 0});
+    }
 
-        for (session_name, mut metric_report) in metric_report_manager.sessions {
-            let builder = metric_report.prepare_metric_report(tempdir.path()).unwrap();
-            let snapshot_name = format!("{}.{}", test_name, session_name);
-            assert_json_snapshot!(snapshot_name, builder.unwrap().get_metadata(), {".metadata.duration_ms" => 0});
+    #[rstest]
+    fn test_prepare_all_prepares_sessions() {
+        let session_name = SessionName::from_str("test-session").unwrap();
+        let session_configs = vec![SessionConfig {
+            name: session_name.clone(),
+            captured_metrics: vec![
+                MetricStringKey::from_str("foo").unwrap(),
+                MetricStringKey::from_str("bar").unwrap(),
+            ],
+        }];
+
+        let mut metric_report_manager =
+            MetricReportManager::new_with_session_configs(&session_configs);
+
+        let metrics = in_histograms(vec![("foo", 5.0), ("bar", 3.5)]);
+        assert!(metric_report_manager.start_session(session_name).is_ok());
+        for m in metrics {
+            metric_report_manager
+                .add_metric(m)
+                .expect("Failed to add metric reading");
         }
+
+        let tempdir = TempDir::new().unwrap();
+        let builders = metric_report_manager.prepare_all_metric_reports(tempdir.path());
+
+        // 3 MAR builders should be created for "heartbeat", "daily-heartbeat", and "test-session"
+        // Note this only works because report_iter() with only 1 session is deterministic
+        for builder in builders {
+            match builder.get_metadata() {
+                Metadata::LinuxMetricReport { report_type, .. } => {
+                    assert_json_snapshot!(report_type.as_str(), builder.get_metadata(), {".metadata.duration_ms" => 0})
+                }
+                _ => panic!("Invalid MAR builder"),
+            }
+        }
+    }
+
+    fn assert_report_snapshot(
+        metric_report: &mut MetricReport,
+        snapshot_name: &str,
+        tempdir: &TempDir,
+    ) {
+        let builder = metric_report.prepare_metric_report(tempdir.path()).unwrap();
+        assert_json_snapshot!(snapshot_name, builder.unwrap().get_metadata(), {".metadata.duration_ms" => 0});
     }
 }

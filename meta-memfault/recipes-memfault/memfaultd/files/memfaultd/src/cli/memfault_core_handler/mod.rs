@@ -18,12 +18,12 @@ mod r_debug;
 #[cfg(test)]
 mod test_utils;
 
-use self::core_reader::CoreReaderImpl;
 use self::core_writer::CoreWriterImpl;
 use self::log_wrapper::CoreHandlerLogWrapper;
 use self::procfs::{proc_mem_stream, read_proc_cmdline, ProcMapsImpl};
 use self::{arch::coredump_thread_filter_supported, log_wrapper::CAPTURE_LOG_CHANNEL_SIZE};
 use self::{core_elf_memfault_note::CoredumpMetadata, core_transformer::CoreTransformerOptions};
+use self::{core_reader::CoreReaderImpl, core_transformer::CoreTransformerLogFetcher};
 use crate::cli;
 use crate::config::{Config, CoredumpCompression};
 use crate::mar::manifest::{CompressionAlgorithm, Metadata};
@@ -38,6 +38,7 @@ use flate2::write::GzEncoder;
 use kernlog::KernelLog;
 use log::{debug, error, info, warn, LevelFilter, Log};
 use prctl::set_dumpable;
+use std::io::BufReader;
 use std::io::BufWriter;
 use std::path::Path;
 use std::thread::scope;
@@ -46,7 +47,6 @@ use std::{
     env::{set_var, var},
     sync::mpsc::SyncSender,
 };
-use std::{io::BufReader, sync::mpsc::Receiver};
 use std::{io::Write, sync::mpsc::sync_channel};
 use uuid::Uuid;
 
@@ -112,21 +112,46 @@ pub fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Asynchronously notify memfaultd that a crash occured
+    let (app_logs_tx, app_logs_rx) = sync_channel(1);
+    let log_fetcher = CoreTransformerLogFetcher::new(capture_logs_rx, app_logs_rx);
+
+    // Asynchronously notify memfaultd that a crash occurred and fetch any crash logs.
     scope(|s| {
         s.spawn(|| {
-            if let Err(e) =
-                MemfaultdClient::from_config(&config).and_then(|client| client.notify_crash())
-            {
-                debug!("Failed to notify memfaultd of crash: {:?}", e);
+            let client = MemfaultdClient::from_config(&config);
+            match client {
+                Ok(client) => {
+                    if let Err(e) = client.notify_crash() {
+                        debug!("Failed to notify memfaultd of crash: {:?}", e);
+                    }
+
+                    debug!("Getting crash logs");
+                    match client.get_crash_logs() {
+                        Ok(logs) => {
+                            if let Err(e) = app_logs_tx.send(logs) {
+                                debug!("Application logs channel rx already dropped: {:?}", e);
+                            }
+                        }
+                        Err(e) => {
+                            debug!("Failed to get crash logs: {:?}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    debug!("Failed to create memfaultd client: {:?}", e);
+                }
             }
         });
-        process_corefile(&config, args.pid, capture_logs_rx)
+        process_corefile(&config, args.pid, log_fetcher)
             .wrap_err(format!("Error processing coredump for PID {}", args.pid))
     })
 }
 
-pub fn process_corefile(config: &Config, pid: i32, error_rx: Receiver<String>) -> Result<()> {
+pub fn process_corefile(
+    config: &Config,
+    pid: i32,
+    log_fetcher: CoreTransformerLogFetcher,
+) -> Result<()> {
     let rate_limiter = if !config.config_file.enable_dev_mode {
         config.coredump_rate_limiter_file_path();
         let mut rate_limiter = PersistentRateLimiter::load(
@@ -197,7 +222,7 @@ pub fn process_corefile(config: &Config, pid: i32, error_rx: Receiver<String>) -
         transformer_options,
         metadata,
         proc_maps,
-        error_rx,
+        log_fetcher,
     )?;
 
     match core_transformer.run_transformer() {

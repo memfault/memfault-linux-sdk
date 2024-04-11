@@ -42,6 +42,7 @@ pub struct MemfaultdConfig {
     pub battery_monitor: Option<BatteryMonitorConfig>,
     pub connectivity_monitor: Option<ConnectivityMonitorConfig>,
     pub sessions: Option<Vec<SessionConfig>>,
+    pub metrics: MetricReportConfig,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -87,6 +88,7 @@ pub struct CoredumpConfig {
     #[serde(rename = "rate_limit_duration_seconds", with = "seconds_to_duration")]
     pub rate_limit_duration: Duration,
     pub capture_strategy: CoredumpCaptureStrategy,
+    pub log_lines: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -116,6 +118,16 @@ pub struct LogsConfig {
     pub max_lines_per_minute: NonZeroU32,
 
     pub log_to_metrics: Option<LogToMetricsConfig>,
+
+    pub storage: StorageConfig,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub enum StorageConfig {
+    #[serde(rename = "disabled")]
+    Disabled,
+    #[serde(rename = "persist")]
+    Persist,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -165,6 +177,11 @@ pub struct ConnectivityMonitorConfig {
 }
 fn default_connection_check_timeout() -> Duration {
     Duration::from_secs(10)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct MetricReportConfig {
+    pub enable_daily_heartbeats: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

@@ -33,4 +33,4 @@ def test_mar_staging_is_cleaned_upon_log_rotation(qemu: QEMU) -> None:
     qemu.child().expect(re.compile(rb"(\d+)"), timeout=1)
     match = qemu.child().match
     assert match
-    assert int(match.group(1)) <= storage_max_usage_kib * 1024, match
+    assert int(match.group(1)) <= storage_max_usage_kib * 1024, match  # pyright: ignore[reportAttributeAccessIssue]

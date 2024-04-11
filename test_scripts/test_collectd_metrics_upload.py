@@ -35,9 +35,7 @@ def test_metrics_sync(
         # Note: sometimes the first heartbeat is an empty dict:
         assert any(report["metrics"] for report in reports)
 
-    memfault_service_tester.poll_until_not_raising(
-        _check, timeout_seconds=60, poll_interval_seconds=1
-    )
+    memfault_service_tester.poll_until_not_raising(_check, poll_interval_seconds=1)
 
 
 def test_write_on_exit(qemu: QEMU) -> None:

@@ -13,8 +13,8 @@
 //!    issues with coredump capture.
 use std::time::SystemTime;
 
-use crate::build_info::VERSION;
 use crate::config::CoredumpCaptureStrategy;
+use crate::{build_info::VERSION, mar::LinuxLogsFormat};
 
 use ciborium::{cbor, into_writer};
 use eyre::Result;
@@ -41,6 +41,19 @@ enum MemfaultCoreElfMetadataKey {
     SoftwareVersion = 7,
     CmdLine = 8,
     CaptureStrategy = 9,
+    ApplicationLogs = 10,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MemfaultMetadataLogs {
+    logs: Vec<String>,
+    format: LinuxLogsFormat,
+}
+
+impl MemfaultMetadataLogs {
+    pub fn new(logs: Vec<String>, format: LinuxLogsFormat) -> Self {
+        Self { logs, format }
+    }
 }
 
 /// Metadata about a core dump.
@@ -54,6 +67,7 @@ pub struct CoredumpMetadata {
     pub captured_time_epoch_s: u64,
     pub cmd_line: String,
     pub capture_strategy: CoredumpCaptureStrategy,
+    pub app_logs: Option<MemfaultMetadataLogs>,
 }
 
 impl CoredumpMetadata {
@@ -70,6 +84,7 @@ impl CoredumpMetadata {
                 .as_secs(),
             cmd_line,
             capture_strategy: config.config_file.coredump.capture_strategy,
+            app_logs: None,
         }
     }
 }
@@ -88,6 +103,7 @@ pub fn serialize_metadata_as_map(metadata: &CoredumpMetadata) -> Result<Vec<u8>>
         MemfaultCoreElfMetadataKey::SoftwareVersion as u32 => metadata.software_version,
         MemfaultCoreElfMetadataKey::CmdLine as u32 => metadata.cmd_line,
         MemfaultCoreElfMetadataKey::CaptureStrategy as u32 => metadata.capture_strategy,
+        MemfaultCoreElfMetadataKey::ApplicationLogs as u32 => metadata.app_logs,
     })?;
 
     let mut buffer = Vec::new();
@@ -142,13 +158,28 @@ mod test {
     use super::*;
 
     #[rstest]
-    #[case("kernel_selection", CoredumpCaptureStrategy::KernelSelection, 89)]
-    #[case("threads", CoredumpCaptureStrategy::Threads{ max_thread_size: 32 * 1024}, 102)]
+    #[case(
+        "kernel_selection",
+        CoredumpCaptureStrategy::KernelSelection,
+        91,
+        false
+    )]
+    #[case("threads", CoredumpCaptureStrategy::Threads{ max_thread_size: 32 * 1024}, 104, false)]
+    #[case("app_logs", CoredumpCaptureStrategy::KernelSelection, 160, true)]
     fn test_serialize_metadata_as_map(
         #[case] test_name: &str,
         #[case] capture_strategy: CoredumpCaptureStrategy,
         #[case] expected_size: usize,
+        #[case] has_app_logs: bool,
     ) {
+        let app_logs = has_app_logs.then(|| MemfaultMetadataLogs {
+            logs: vec![
+                "Error 1".to_string(),
+                "Error 2".to_string(),
+                "Error 3".to_string(),
+            ],
+            format: LinuxLogsFormat::default(),
+        });
         let metadata = CoredumpMetadata {
             device_id: "12345678".to_string(),
             hardware_version: "evt".to_string(),
@@ -158,6 +189,7 @@ mod test {
             captured_time_epoch_s: 1234,
             cmd_line: "binary -a -b -c".to_string(),
             capture_strategy,
+            app_logs,
         };
 
         let map = serialize_metadata_as_map(&metadata).unwrap();

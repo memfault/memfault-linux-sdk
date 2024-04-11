@@ -19,9 +19,7 @@ def test_reboot_reason_user_reset(
     qemu.login()
     qemu.exec_cmd("memfaultctl sync")
 
-    events = memfault_service_tester.poll_reboot_events_until_count(
-        2, device_serial=qemu_device_id, timeout_secs=60
-    )
+    events = memfault_service_tester.poll_reboot_events_until_count(2, device_serial=qemu_device_id)
     assert events
     assert events[-1]["reason"] == 2  # User Reset
 
@@ -46,8 +44,6 @@ def test_reboot_reason_api(
     qemu.login()
     qemu.exec_cmd("memfaultctl sync")
 
-    events = memfault_service_tester.poll_reboot_events_until_count(
-        2, device_serial=qemu_device_id, timeout_secs=60
-    )
+    events = memfault_service_tester.poll_reboot_events_until_count(2, device_serial=qemu_device_id)
     assert events
     assert events[-1]["reason"] == 4

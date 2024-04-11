@@ -8,6 +8,7 @@ pub mod disk_size;
 pub mod patterns;
 pub use die::*;
 pub mod can_connect;
+pub mod circular_queue;
 pub mod fs;
 pub mod io;
 pub mod ipc;

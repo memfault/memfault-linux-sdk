@@ -22,6 +22,7 @@ class MemfaultServiceTester:
     organization_slug: str
     project_slug: str
     organization_token: str
+    test_timeout_seconds: float
 
     session: requests.Session = dataclasses.field(init=False)
 
@@ -43,9 +44,11 @@ class MemfaultServiceTester:
     def poll_until_not_raising(
         self,
         check_callback: Callable[[], _T],
-        timeout_seconds: float = 10,
+        timeout_seconds: float | None = None,
         poll_interval_seconds: float = 0.5,
     ) -> _T:
+        if timeout_seconds is None:
+            timeout_seconds = self.test_timeout_seconds
         timeout = time.time() + timeout_seconds
         while True:
             try:
@@ -80,7 +83,7 @@ class MemfaultServiceTester:
         count: int,
         device_serial: str,
         params: Json = None,
-        timeout_secs: int = 10,
+        timeout_secs: int | None = None,
     ) -> list[dict[str, Json]]:
         def _check() -> list[dict[str, Json]]:
             events = self.list_reboot_events(
@@ -151,7 +154,7 @@ class MemfaultServiceTester:
         count: int,
         device_serial: str | None = None,
         params: dict[str, Json] | None = None,
-        timeout_secs: int = 10,
+        timeout_secs: int | None = None,
     ) -> list[dict[str, Json]]:
         if not params:
             params = {}

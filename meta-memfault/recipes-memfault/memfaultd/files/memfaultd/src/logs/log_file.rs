@@ -5,14 +5,13 @@
 //!
 use crate::logs::completed_log::CompletedLog;
 use crate::mar::CompressionAlgorithm;
-use eyre::{Result, WrapErr};
+use eyre::{eyre, Result, WrapErr};
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use log::{trace, warn};
 use serde_json::{json, Value};
 use std::fs::{remove_file, File};
 use std::io::{BufWriter, Write};
-use std::mem::replace;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -32,7 +31,7 @@ pub trait LogFile {
 pub struct LogFileImpl {
     cid: Uuid,
     path: PathBuf,
-    writer: ZlibEncoder<BufWriter<File>>,
+    writer: BufWriter<ZlibEncoder<File>>,
     bytes_written: usize,
     since: Instant,
 }
@@ -42,7 +41,7 @@ impl LogFileImpl {
         let filename = cid.to_string() + ".log.zlib";
         let path = log_tmp_path.join(filename);
         let file = File::create(&path)?;
-        let writer = ZlibEncoder::new(BufWriter::new(file), compression_level);
+        let writer = BufWriter::new(ZlibEncoder::new(file, compression_level));
 
         trace!("Now writing logs to: {}", path.display());
         Ok(LogFileImpl {
@@ -52,6 +51,11 @@ impl LogFileImpl {
             bytes_written: 0,
             since: Instant::now(),
         })
+    }
+
+    #[cfg(test)]
+    pub fn bytes_written(&self) -> usize {
+        self.bytes_written
     }
 }
 
@@ -72,18 +76,19 @@ impl LogFile for LogFileImpl {
 pub trait LogFileControl<L: LogFile> {
     fn rotate_if_needed(&mut self) -> Result<bool>;
     fn rotate_unless_empty(&mut self) -> Result<()>;
-    fn current_log(&mut self) -> &mut L;
+    fn current_log(&mut self) -> Result<&mut L>;
     fn close(self) -> Result<()>;
 }
 
 /// Controls the creation and rotation of logfiles.
 pub struct LogFileControlImpl {
-    current_log: LogFileImpl,
+    current_log: Option<LogFileImpl>,
     tmp_path: PathBuf,
     max_size: usize,
     max_duration: Duration,
     compression_level: Compression,
     on_log_completion: Box<(dyn FnMut(CompletedLog) -> Result<()> + Send)>,
+    next_cid: Uuid,
 }
 
 impl LogFileControlImpl {
@@ -96,28 +101,29 @@ impl LogFileControlImpl {
         on_log_completion: R,
     ) -> Result<Self> {
         Ok(LogFileControlImpl {
-            current_log: LogFileImpl::open(&tmp_path, next_cid, compression_level)?,
+            current_log: None,
             tmp_path,
             max_size,
             max_duration,
             compression_level,
             on_log_completion: Box::new(on_log_completion),
+            next_cid,
         })
     }
 
     /// Close current logfile, create a MAR entry and starts a new one.
     fn rotate_log(&mut self) -> Result<()> {
-        // Start a new log and make it the current one. We are now writing there.
-        let closed_log = replace(
-            &mut self.current_log,
-            LogFileImpl::open(&self.tmp_path, Uuid::new_v4(), self.compression_level)?,
-        );
+        let current_log = self.current_log.take();
 
-        Self::dispatch_on_log_completion(
-            &mut self.on_log_completion,
-            closed_log,
-            self.current_log.cid,
-        );
+        if let Some(current_log) = current_log {
+            self.next_cid = Uuid::new_v4();
+
+            Self::dispatch_on_log_completion(
+                &mut self.on_log_completion,
+                current_log,
+                self.next_cid,
+            );
+        }
 
         Ok(())
     }
@@ -155,34 +161,53 @@ impl LogFileControlImpl {
 
 impl LogFileControl<LogFileImpl> for LogFileControlImpl {
     fn rotate_if_needed(&mut self) -> Result<bool> {
-        if self.current_log.bytes_written >= self.max_size
-            || self.current_log.since.elapsed() > self.max_duration
-        {
-            self.rotate_log()?;
-            Ok(true)
+        if let Some(current_log) = &mut self.current_log {
+            if current_log.bytes_written >= self.max_size
+                || current_log.since.elapsed() > self.max_duration
+            {
+                self.rotate_log()?;
+                Ok(true)
+            } else {
+                Ok(false)
+            }
         } else {
             Ok(false)
         }
     }
 
     fn rotate_unless_empty(&mut self) -> Result<()> {
-        if self.current_log.bytes_written > 0 {
-            self.rotate_log()?;
+        if let Some(current_log) = &self.current_log {
+            if current_log.bytes_written > 0 {
+                self.rotate_log()?;
+            }
         }
         Ok(())
     }
 
-    fn current_log(&mut self) -> &mut LogFileImpl {
-        &mut self.current_log
+    fn current_log(&mut self) -> Result<&mut LogFileImpl> {
+        if self.current_log.is_none() {
+            self.current_log = Some(
+                LogFileImpl::open(&self.tmp_path, self.next_cid, self.compression_level)
+                    .map_err(|e| eyre!("Failed to open log file: {e}"))?,
+            );
+        }
+
+        // NOTE: The error case should not be possible here as it is always set above.
+        // still this is better than panicking.
+        self.current_log
+            .as_mut()
+            .ok_or_else(|| eyre!("No current log"))
     }
 
     fn close(mut self) -> Result<()> {
-        if self.current_log.bytes_written > 0 {
-            Self::dispatch_on_log_completion(
-                &mut self.on_log_completion,
-                self.current_log,
-                Uuid::new_v4(),
-            );
+        if let Some(current_log) = self.current_log {
+            if current_log.bytes_written > 0 {
+                Self::dispatch_on_log_completion(
+                    &mut self.on_log_completion,
+                    current_log,
+                    Uuid::new_v4(),
+                );
+            }
         }
         Ok(())
     }

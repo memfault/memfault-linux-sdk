@@ -11,15 +11,17 @@ use tiny_http::{Method, Request, Response};
 
 use crate::{
     http_server::{HttpHandler, HttpHandlerResult},
-    metrics::MetricReading,
+    metrics::{
+        core_metrics::{
+            METRIC_OPERATIONAL_CRASHES, METRIC_OPERATIONAL_CRASHFREE_HOURS,
+            METRIC_OPERATIONAL_HOURS,
+        },
+        MetricReading,
+    },
     util::time_measure::TimeMeasure,
 };
 
 use super::{KeyedMetricReading, MetricStringKey};
-
-const METRIC_OPERATIONAL_HOURS: &str = "operational_hours";
-const METRIC_OPERATIONAL_CRASHFREE_HOURS: &str = "operational_crashfree_hours";
-const METRIC_OPERATIONAL_CRASHES: &str = "operational_crashes";
 
 pub struct CrashFreeIntervalTracker<T: TimeMeasure> {
     last_interval_mark: T,

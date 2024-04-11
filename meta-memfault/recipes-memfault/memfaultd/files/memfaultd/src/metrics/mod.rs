@@ -33,6 +33,9 @@ pub use metric_value::MetricValue;
 
 pub type MetricTimestamp = DateTime<Utc>;
 
+mod periodic_metric_report;
+pub use periodic_metric_report::PeriodicMetricReportDumper;
+
 mod crashfree_interval;
 pub use crashfree_interval::CrashFreeIntervalTracker;
 
@@ -41,3 +44,5 @@ pub use session_name::SessionName;
 
 mod session_event_handler;
 pub use session_event_handler::SessionEventHandler;
+
+pub mod core_metrics;

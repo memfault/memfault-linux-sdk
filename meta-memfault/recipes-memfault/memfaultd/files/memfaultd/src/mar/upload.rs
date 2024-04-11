@@ -1,6 +1,30 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
+//! Collect and upload MAR entries.
+//!
+//! This module provides the functionality to collect all valid MAR entries, upload them and delete them on success.
+//!
+//! Whether or not an entry is uploaded depends on the sampling configuration. Each type of entry can have a different
+//! level of configuration with device config and reboots always being uploaded. All other will be uploaded based on
+//! the below rules:
+//!
+//! +=================+=====+=====+========+======+
+//! |    MAR Type     | Off | Low | Medium | High |
+//! +=================+=====+=====+========+======+
+//! | heartbeat       |     |     | x      | x    |
+//! +-----------------+-----+-----+--------+------+
+//! | daily-heartbeat |     | x   | x      | x    |
+//! +-----------------+-----+-----+--------+------+
+//! | session         |     |     | x      | x    |
+//! +-----------------+-----+-----+--------+------+
+//! | attributes      |     |     | x      | x    |
+//! +-----------------+-----+-----+--------+------+
+//! | coredump        |     |     | x      | x    |
+//! +-----------------+-----+-----+--------+------+
+//! | logs            |     |     | x      | x    |
+//! +-----------------+-----+-----+--------+------+
+
 use std::fs::{remove_dir_all, File};
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
@@ -12,6 +36,7 @@ use log::{trace, warn};
 use crate::{
     config::{Resolution, Sampling},
     mar::{MarEntry, Metadata},
+    metrics::MetricReportType,
     network::NetworkClient,
     util::zip::{zip_stream_len_empty, zip_stream_len_for_file, ZipEncoder, ZipEntryInfo},
 };
@@ -30,9 +55,7 @@ pub fn collect_and_upload(
     let mut entries = MarEntry::iterate_from_container(mar_staging)?
         // Apply fleet sampling to the MAR entries
         .filter(|entry_result| match entry_result {
-            Ok(entry) => {
-                applicable_resolution(&entry.manifest.metadata, &sampling) == Resolution::On
-            }
+            Ok(entry) => should_upload(&entry.manifest.metadata, &sampling),
             _ => true,
         });
 
@@ -44,18 +67,20 @@ pub fn collect_and_upload(
     })
 }
 
-/// Given the Metadata of a MAR entry and the fleet sampling configuration, return the applicable
-/// resolution.
-fn applicable_resolution(metadata: &Metadata, sampling: &Sampling) -> Resolution {
-    // See https://docs.memfault.com/docs/platform/fleet-sampling/#fleet-sampling-aspects
+/// Given the current sampling configuration determine if the given MAR entry should be uploaded.
+fn should_upload(metadata: &Metadata, sampling: &Sampling) -> bool {
     match metadata {
-        Metadata::DeviceAttributes { .. } => sampling.monitoring_resolution,
-        Metadata::DeviceConfig { .. } => Resolution::On, // Always upload device config
-        Metadata::ElfCoredump { .. } => sampling.debugging_resolution,
-        Metadata::LinuxHeartbeat { .. } => sampling.monitoring_resolution,
-        Metadata::LinuxMetricReport { .. } => sampling.monitoring_resolution,
-        Metadata::LinuxLogs { .. } => sampling.logging_resolution,
-        Metadata::LinuxReboot { .. } => Resolution::On, // Always upload reboots
+        Metadata::DeviceAttributes { .. } => sampling.monitoring_resolution >= Resolution::Normal,
+        Metadata::DeviceConfig { .. } => true, // Always upload device config
+        Metadata::ElfCoredump { .. } => sampling.debugging_resolution >= Resolution::Normal,
+        Metadata::LinuxHeartbeat { .. } => sampling.monitoring_resolution >= Resolution::Normal,
+        Metadata::LinuxMetricReport { report_type, .. } => match report_type {
+            MetricReportType::Heartbeat => sampling.monitoring_resolution >= Resolution::Normal,
+            MetricReportType::Session(_) => sampling.monitoring_resolution >= Resolution::Normal,
+            MetricReportType::DailyHeartbeat => sampling.monitoring_resolution >= Resolution::Low,
+        },
+        Metadata::LinuxLogs { .. } => sampling.logging_resolution >= Resolution::Normal,
+        Metadata::LinuxReboot { .. } => true, // Always upload reboots
     }
 }
 
@@ -172,12 +197,21 @@ fn upload_mar_entries(
 #[cfg(test)]
 mod tests {
     use rstest::{fixture, rstest};
-    use std::time::SystemTime;
+    use std::str::FromStr;
+    use std::{
+        collections::HashMap,
+        time::{Duration, SystemTime},
+    };
 
-    use crate::test_utils::setup_logger;
+    use crate::reboot::{RebootReason, RebootReasonCode};
     use crate::{
         mar::test_utils::{assert_mar_content_matches, MarCollectorFixture},
+        metrics::SessionName,
         network::MockNetworkClient,
+    };
+    use crate::{
+        metrics::{MetricStringKey, MetricValue},
+        test_utils::setup_logger,
     };
 
     use super::*;
@@ -296,115 +330,165 @@ mod tests {
             &client,
             usize::MAX,
             Sampling {
-                debugging_resolution: Resolution::On,
-                logging_resolution: Resolution::On,
-                monitoring_resolution: Resolution::On,
+                debugging_resolution: Resolution::Normal,
+                logging_resolution: Resolution::Normal,
+                monitoring_resolution: Resolution::Normal,
             },
         )
         .unwrap();
     }
 
     #[rstest]
-    fn uploading_mar_list(
-        _setup_logger: (),
-        mut client: MockNetworkClient,
-        mut mar_fixture: MarCollectorFixture,
-    ) {
-        mar_fixture.create_logentry();
-        client
-            .expect_upload_mar_file::<BufReader<ZipEncoder>>()
-            .withf(|buf_reader| {
-                let zip_encoder = buf_reader.get_ref();
-                assert_mar_content_matches(
-                    zip_encoder,
-                    vec!["<entry>/manifest.json", "<entry>/system.log"],
-                )
-            })
-            .once()
-            .returning(|_| Ok(()));
-        collect_and_upload(
-            &mar_fixture.mar_staging,
-            &client,
-            usize::MAX,
-            Sampling {
-                debugging_resolution: Resolution::Off,
-                logging_resolution: Resolution::On,
-                monitoring_resolution: Resolution::Off,
-            },
-        )
-        .unwrap();
-    }
-
-    #[rstest]
-    fn applies_fleet_sampling_on_logs(
+    #[case::off(Resolution::Off, false)]
+    #[case::low(Resolution::Low, false)]
+    #[case::normal(Resolution::Normal, true)]
+    #[case::high(Resolution::High, true)]
+    fn uploading_logs(
+        #[case] resolution: Resolution,
+        #[case] should_upload: bool,
         _setup_logger: (),
         client: MockNetworkClient,
         mut mar_fixture: MarCollectorFixture,
     ) {
         mar_fixture.create_logentry();
 
-        // expect no upload
-
-        collect_and_upload(
-            &mar_fixture.mar_staging,
-            &client,
-            usize::MAX,
-            Sampling {
-                debugging_resolution: Resolution::Off,
-                logging_resolution: Resolution::Off,
-                monitoring_resolution: Resolution::Off,
-            },
-        )
-        .unwrap();
+        let expected_files =
+            should_upload.then(|| vec!["<entry>/manifest.json", "<entry>/system.log"]);
+        let sampling_config = Sampling {
+            debugging_resolution: Resolution::Off,
+            logging_resolution: resolution,
+            monitoring_resolution: Resolution::Off,
+        };
+        upload_and_verify(mar_fixture, client, sampling_config, expected_files);
     }
 
     #[rstest]
+    #[case::off(Resolution::Off, false)]
+    #[case::low(Resolution::Low, false)]
+    #[case::normal(Resolution::Normal, true)]
+    #[case::high(Resolution::High, true)]
     fn uploading_device_attributes(
-        _setup_logger: (),
-        mut client: MockNetworkClient,
-        mut mar_fixture: MarCollectorFixture,
-    ) {
-        mar_fixture.create_device_attributes_entry(vec![], SystemTime::now());
-        client
-            .expect_upload_mar_file::<BufReader<ZipEncoder>>()
-            .withf(|buf_reader| {
-                let zip_encoder = buf_reader.get_ref();
-                assert_mar_content_matches(zip_encoder, vec!["<entry>/manifest.json"])
-            })
-            .once()
-            .returning(|_| Ok(()));
-        collect_and_upload(
-            &mar_fixture.mar_staging,
-            &client,
-            usize::MAX,
-            Sampling {
-                debugging_resolution: Resolution::Off,
-                logging_resolution: Resolution::Off,
-                monitoring_resolution: Resolution::On,
-            },
-        )
-        .unwrap();
-    }
-
-    #[rstest]
-    fn applies_fleet_sampling_on_device_attributes(
+        #[case] resolution: Resolution,
+        #[case] should_upload: bool,
         _setup_logger: (),
         client: MockNetworkClient,
         mut mar_fixture: MarCollectorFixture,
     ) {
         mar_fixture.create_device_attributes_entry(vec![], SystemTime::now());
 
-        // expect no upload
+        let sampling_config = Sampling {
+            debugging_resolution: Resolution::Off,
+            logging_resolution: Resolution::Off,
+            monitoring_resolution: resolution,
+        };
+        let expected_files = should_upload.then(|| vec!["<entry>/manifest.json"]);
+        upload_and_verify(mar_fixture, client, sampling_config, expected_files);
+    }
 
+    #[rstest]
+    // Verify that reboots are always uploaded
+    #[case::off(Resolution::Off, true)]
+    #[case::low(Resolution::Low, true)]
+    #[case::normal(Resolution::Normal, true)]
+    #[case::high(Resolution::High, true)]
+    fn uploading_reboots(
+        #[case] resolution: Resolution,
+        #[case] should_upload: bool,
+        _setup_logger: (),
+        client: MockNetworkClient,
+        mut mar_fixture: MarCollectorFixture,
+    ) {
+        mar_fixture.create_reboot_entry(RebootReason::Code(RebootReasonCode::Unknown));
+
+        let sampling_config = Sampling {
+            debugging_resolution: resolution,
+            logging_resolution: Resolution::Off,
+            monitoring_resolution: Resolution::Off,
+        };
+        let expected_files = should_upload.then(|| vec!["<entry>/manifest.json"]);
+        upload_and_verify(mar_fixture, client, sampling_config, expected_files);
+    }
+
+    #[rstest]
+    // Heartbeat cases
+    #[case::heartbeat_off(MetricReportType::Heartbeat, Resolution::Off, false)]
+    #[case::heartbeat_low(MetricReportType::Heartbeat, Resolution::Low, false)]
+    #[case::heartbeat_normal(MetricReportType::Heartbeat, Resolution::Normal, true)]
+    #[case::heartbeat_high(MetricReportType::Heartbeat, Resolution::High, true)]
+    // Daily heartbeat cases
+    #[case::daily_heartbeat_off(MetricReportType::DailyHeartbeat, Resolution::Off, false)]
+    #[case::daily_heartbeat_low(MetricReportType::DailyHeartbeat, Resolution::Low, true)]
+    #[case::daily_heartbeat_normal(MetricReportType::DailyHeartbeat, Resolution::Normal, true)]
+    #[case::daily_heartbeat_high(MetricReportType::DailyHeartbeat, Resolution::High, true)]
+    // Session cases
+    #[case::session_off(
+        MetricReportType::Session(SessionName::from_str("test").unwrap()),
+        Resolution::Off,
+        false
+    )]
+    #[case::session_low(
+        MetricReportType::Session(SessionName::from_str("test").unwrap()),
+        Resolution::Low,
+        false
+    )]
+    #[case::session_normal(
+        MetricReportType::Session(SessionName::from_str("test").unwrap()),
+        Resolution::Normal,
+        true
+    )]
+    #[case::session_high(
+        MetricReportType::Session(SessionName::from_str("test").unwrap()),
+        Resolution::High,
+        true
+    )]
+    fn uploading_metric_reports(
+        #[case] report_type: MetricReportType,
+        #[case] resolution: Resolution,
+        #[case] should_upload: bool,
+        _setup_logger: (),
+        client: MockNetworkClient,
+        mut mar_fixture: MarCollectorFixture,
+    ) {
+        let duration = Duration::from_secs(1);
+        let metrics: HashMap<MetricStringKey, MetricValue> = vec![(
+            MetricStringKey::from_str("foo").unwrap(),
+            MetricValue::Number(1.0),
+        )]
+        .into_iter()
+        .collect();
+
+        mar_fixture.create_metric_report_entry(metrics, duration, report_type);
+
+        let sampling_config = Sampling {
+            debugging_resolution: Resolution::Off,
+            logging_resolution: Resolution::Off,
+            monitoring_resolution: resolution,
+        };
+        let expected_files = should_upload.then(|| vec!["<entry>/manifest.json"]);
+        upload_and_verify(mar_fixture, client, sampling_config, expected_files);
+    }
+
+    fn upload_and_verify(
+        mar_fixture: MarCollectorFixture,
+        mut client: MockNetworkClient,
+        sampling_config: Sampling,
+        expected_files: Option<Vec<&'static str>>,
+    ) {
+        if let Some(expected_files) = expected_files {
+            client
+                .expect_upload_mar_file::<BufReader<ZipEncoder>>()
+                .withf(move |buf_reader| {
+                    let zip_encoder = buf_reader.get_ref();
+                    assert_mar_content_matches(zip_encoder, expected_files.clone())
+                })
+                .once()
+                .returning(|_| Ok(()));
+        }
         collect_and_upload(
             &mar_fixture.mar_staging,
             &client,
             usize::MAX,
-            Sampling {
-                debugging_resolution: Resolution::Off,
-                logging_resolution: Resolution::Off,
-                monitoring_resolution: Resolution::Off,
-            },
+            sampling_config,
         )
         .unwrap();
     }

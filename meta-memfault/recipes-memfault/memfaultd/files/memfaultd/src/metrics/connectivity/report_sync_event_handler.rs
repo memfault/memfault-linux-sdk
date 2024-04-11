@@ -8,11 +8,11 @@ use tiny_http::{Method, Request, Response};
 
 use crate::{
     http_server::{HttpHandler, HttpHandlerResult},
-    metrics::MetricReportManager,
+    metrics::{
+        core_metrics::{METRIC_SYNC_FAILURE, METRIC_SYNC_SUCCESS},
+        MetricReportManager,
+    },
 };
-
-const METRIC_SYNC_SUCCESS: &str = "sync_successful";
-const METRIC_SYNC_FAILURE: &str = "sync_failure";
 
 /// A server that listens for collectd JSON pushes and stores them in memory.
 #[derive(Clone)]

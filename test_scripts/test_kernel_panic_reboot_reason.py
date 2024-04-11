@@ -23,9 +23,7 @@ def test_start(
     qemu.exec_cmd("echo c > /proc/sysrq-trigger")
     qemu.child().expect(" login:")
 
-    events = memfault_service_tester.poll_reboot_events_until_count(
-        2, device_serial=qemu_device_id, timeout_secs=60
-    )
+    events = memfault_service_tester.poll_reboot_events_until_count(2, device_serial=qemu_device_id)
     assert events
     assert events[-1]["reason"] == 0x8008
 
@@ -34,8 +32,6 @@ def test_start(
     qemu.child().expect("reboot: Restarting system")
     qemu.child().expect(" login:")
 
-    events = memfault_service_tester.poll_reboot_events_until_count(
-        3, device_serial=qemu_device_id, timeout_secs=60
-    )
+    events = memfault_service_tester.poll_reboot_events_until_count(3, device_serial=qemu_device_id)
     assert events
     assert events[-1]["reason"] == 2

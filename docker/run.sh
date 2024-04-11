@@ -65,6 +65,7 @@ e2e_test_env_vars="
 --env MEMFAULT_E2E_ORGANIZATION_SLUG
 --env MEMFAULT_E2E_PROJECT_SLUG
 --env MEMFAULT_E2E_ORG_TOKEN
+--env MEMFAULT_E2E_TIMEOUT_SECONDS
 --env-file env-test-scripts.list
 "
 

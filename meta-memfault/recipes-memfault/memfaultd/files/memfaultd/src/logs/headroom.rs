@@ -65,8 +65,8 @@ impl HeadroomCheck for HeadroomLimiter {
             // Enter insufficient headroom state:
             (false, Headroom::Ok) => {
                 // Best-effort warning log & flush. If this fails, just keep going.
-                let curent_log = log_file_control.current_log();
-                let _ = curent_log.write_log(
+                let current_log = log_file_control.current_log()?;
+                let _ = current_log.write_log(
                     log_timestamp.cloned(),
                     match (
                         available.bytes >= self.min_headroom.bytes,
@@ -78,7 +78,7 @@ impl HeadroomCheck for HeadroomLimiter {
                         _ => unreachable!(),
                     },
                 );
-                let _ = curent_log.flush();
+                let _ = current_log.flush();
                 Headroom::Shortage {
                     has_rotated: log_file_control.rotate_if_needed().unwrap_or(false),
                     num_dropped_logs: 1,
@@ -108,8 +108,8 @@ impl HeadroomCheck for HeadroomLimiter {
                     num_dropped_logs, ..
                 },
             ) => {
-                let curent_log = log_file_control.current_log();
-                curent_log.write_log(
+                let current_log = log_file_control.current_log()?;
+                current_log.write_log(
                     log_timestamp.cloned(),
                     format!(
                         "Recovered from low disk space. Dropped {} logs.",
@@ -406,8 +406,8 @@ mod tests {
             unimplemented!();
         }
 
-        fn current_log(&mut self) -> &mut FakeLogFileControl {
-            self
+        fn current_log(&mut self) -> Result<&mut FakeLogFileControl> {
+            Ok(self)
         }
 
         fn close(self) -> Result<()> {

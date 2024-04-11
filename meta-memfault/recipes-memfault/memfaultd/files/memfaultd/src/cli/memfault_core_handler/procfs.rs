@@ -61,7 +61,7 @@ impl ProcMapsImpl {
 
 impl ProcMaps for ProcMapsImpl {
     fn get_process_maps(&mut self) -> Result<Vec<MemoryMap>> {
-        let maps_file_name = format!("proc/{}/maps", self.pid);
+        let maps_file_name = format!("/proc/{}/maps", self.pid);
 
         Ok(MemoryMaps::from_path(maps_file_name)
             .map_err(|e| eyre!("Failed to read /proc/{}/maps: {}", self.pid, e))?
