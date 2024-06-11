@@ -7,7 +7,9 @@ expression: manifest.metadata
   "metadata": {
     "metrics": {
       "bar": 20.0,
-      "foo": 100.0
+      "baz": "test-tag",
+      "foo": 100.0,
+      "operational_crashes": 0.0
     },
     "duration_ms": 0,
     "report_type": {

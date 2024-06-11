@@ -33,11 +33,7 @@ def test(qemu: QEMU, memfault_service_tester: MemfaultServiceTester, qemu_device
 
         assert attributes
 
-        d = {
-            a["custom_metric"]["string_key"]: a["state"]["value"]
-            for a in attributes
-            if a["state"] is not None
-        }
+        d = {a["string_key"]: a["state"]["value"] for a in attributes if a["state"] is not None}
 
         assert d["a_string"] == "running"
         assert d["a_bool"] is False

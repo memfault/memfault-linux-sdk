@@ -1,7 +1,7 @@
 #
 # Copyright (c) Memfault, Inc.
 # See License.txt for details
-import os
+import pathlib
 import sys
 import time
 from typing import Literal, cast
@@ -22,7 +22,7 @@ SystemdState = Literal[
 
 
 class QEMU:
-    def __init__(self, image_wic_path: os.PathLike[str]) -> None:
+    def __init__(self, image_wic_path: pathlib.Path) -> None:
         command, *args = runqemu.qemu_build_command(image_wic_path)
         self.pid = pexpect.spawn(command, args, timeout=120, logfile=sys.stdout.buffer)
         self.login()
@@ -43,7 +43,7 @@ class QEMU:
         self.pid.sendline("root")
         self._set_env()
 
-    def child(self) -> pexpect.spawn:  # pyright: ignore[reportArgumentType]
+    def child(self) -> pexpect.spawn:
         return self.pid
 
     def exec_cmd(self, cmd: str) -> None:

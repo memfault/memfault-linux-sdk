@@ -2,6 +2,7 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 use eyre::eyre;
+use std::net::SocketAddr;
 use std::time::Duration;
 use std::{
     path::{Path, PathBuf},
@@ -21,14 +22,18 @@ pub use self::config_file::ConnectionCheckProtocol;
 #[cfg(target_os = "linux")]
 pub use self::config_file::{CoredumpCaptureStrategy, CoredumpCompression};
 
+use self::device_info::DeviceInfoValue;
+#[cfg(test)]
+pub use self::device_info::MockDeviceInfoDefaults;
 pub use self::{
     config_file::{
-        ConnectivityMonitorConfig, ConnectivityMonitorTarget, JsonConfigs, LogToMetricRule,
-        MemfaultdConfig, SessionConfig, StorageConfig,
+        ConnectivityMonitorConfig, ConnectivityMonitorTarget, JsonConfigs, LogSource,
+        LogToMetricRule, MemfaultdConfig, SessionConfig, StorageConfig,
     },
     device_config::{DeviceConfig, Resolution, Sampling},
-    device_info::{DeviceInfo, DeviceInfoWarning},
+    device_info::{DeviceInfo, DeviceInfoDefaultsImpl, DeviceInfoWarning},
 };
+
 use crate::mar::MarEntryBuilder;
 use crate::mar::Metadata;
 use eyre::{Context, Result};
@@ -37,6 +42,9 @@ mod config_file;
 mod device_config;
 mod device_info;
 mod utils;
+
+const FALLBACK_SOFTWARE_VERSION: &str = "0.0.0-memfault-unknown";
+const FALLBACK_SOFTWARE_TYPE: &str = "memfault-unknown";
 
 /// Container of the entire memfaultd configuration.
 /// Implement `From<Config>` trait to initialize module specific configuration (see `NetworkConfig` for example).
@@ -66,6 +74,7 @@ impl Config {
 
         let (device_info, warnings) =
             DeviceInfo::load().wrap_err(eyre!("Unable to load device info"))?;
+        #[allow(clippy::print_stderr)]
         warnings.iter().for_each(|w| eprintln!("{}", w));
 
         let device_config = DiskBacked::from_path(&Self::device_config_path_from_config(&config));
@@ -165,17 +174,43 @@ impl Config {
             .clone()
     }
 
+    /// Returns the software version for the device.
+    ///
+    /// The precedence is as follows:
+    /// 1. Configured software version in device_info
+    /// 2. Configured software version in config_file
+    /// 3. Default software version in device_info
+    /// 4. Fallback software version
     pub fn software_version(&self) -> &str {
-        match self.device_info.software_version.as_ref() {
-            Some(sw_version) => sw_version.as_ref(),
-            None => self.config_file.software_version.as_ref(),
+        match (
+            &self.device_info.software_version,
+            &self.config_file.software_version,
+        ) {
+            (Some(DeviceInfoValue::Configured(sw_version)), _) => sw_version.as_ref(),
+            (None, Some(sw_version)) => sw_version.as_ref(),
+            (Some(DeviceInfoValue::Default(_)), Some(sw_version)) => sw_version.as_ref(),
+            (Some(DeviceInfoValue::Default(sw_version)), None) => sw_version.as_ref(),
+            (None, None) => FALLBACK_SOFTWARE_VERSION,
         }
     }
 
+    /// Returns the software type for the device.
+    ///
+    /// The precedence is as follows:
+    /// 1. Configured software type in device_info
+    /// 2. Configured software type in config_file
+    /// 3. Default software type in device_info
+    /// 4. Fallback software type
     pub fn software_type(&self) -> &str {
-        match self.device_info.software_type.as_ref() {
-            Some(sw_type) => sw_type.as_ref(),
-            None => self.config_file.software_type.as_ref(),
+        match (
+            &self.device_info.software_type,
+            &self.config_file.software_type,
+        ) {
+            (Some(DeviceInfoValue::Configured(software_type)), _) => software_type.as_ref(),
+            (None, Some(software_type)) => software_type.as_ref(),
+            (Some(DeviceInfoValue::Default(_)), Some(software_type)) => software_type.as_ref(),
+            (Some(DeviceInfoValue::Default(software_type)), None) => software_type.as_ref(),
+            (None, None) => FALLBACK_SOFTWARE_TYPE,
         }
     }
 
@@ -208,6 +243,28 @@ impl Config {
     pub fn session_configs(&self) -> Option<&Vec<SessionConfig>> {
         self.config_file.sessions.as_ref()
     }
+
+    pub fn statsd_server_enabled(&self) -> bool {
+        self.config_file.metrics.statsd_server.is_some()
+    }
+
+    pub fn statsd_server_address(&self) -> Result<SocketAddr> {
+        match &self.config_file.metrics.statsd_server {
+            Some(statsd_server_config) => Ok(statsd_server_config.bind_address),
+            None => Err(eyre!("No StatsD server bind_address configured!")),
+        }
+    }
+
+    pub fn builtin_system_metric_collection_enabled(&self) -> bool {
+        self.config_file.metrics.system_metric_collection.enable
+    }
+
+    pub fn system_metric_poll_interval(&self) -> Duration {
+        self.config_file
+            .metrics
+            .system_metric_collection
+            .poll_interval_seconds
+    }
 }
 
 #[cfg(test)]
@@ -237,12 +294,14 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     use std::{fs::create_dir_all, path::PathBuf};
 
     use rstest::{fixture, rstest};
 
     use crate::{
-        config::Config,
+        config::{device_info::DeviceInfoValue, Config},
         mar::MarEntry,
         network::{
             DeviceConfigResponse, DeviceConfigResponseConfig, DeviceConfigResponseData,
@@ -305,6 +364,44 @@ mod tests {
             .unwrap();
 
         assert_eq!(fixture.count_mar_entries(), 0);
+    }
+
+    #[rstest]
+    #[case(Some(DeviceInfoValue::Configured("1.0.0".into())), None, "1.0.0")]
+    #[case(Some(DeviceInfoValue::Default("1.0.0".into())), None, "1.0.0")]
+    #[case(Some(DeviceInfoValue::Configured("1.0.0".into())), Some("2.0.0"), "1.0.0")]
+    #[case(Some(DeviceInfoValue::Default("1.0.0".into())), Some("2.0.0"), "2.0.0")]
+    #[case(None, Some("2.0.0"), "2.0.0")]
+    #[case(None, None, FALLBACK_SOFTWARE_VERSION)]
+    fn software_version_precedence(
+        #[case] device_info_swv: Option<DeviceInfoValue>,
+        #[case] config_swv: Option<&str>,
+        #[case] expected: &str,
+    ) {
+        let mut config = Config::test_fixture();
+        config.device_info.software_version = device_info_swv;
+        config.config_file.software_version = config_swv.map(String::from);
+
+        assert_eq!(config.software_version(), expected);
+    }
+
+    #[rstest]
+    #[case(Some(DeviceInfoValue::Configured("test".into())), None, "test")]
+    #[case(Some(DeviceInfoValue::Default("test".into())), None, "test")]
+    #[case(Some(DeviceInfoValue::Configured("test".into())), Some("prod"), "test")]
+    #[case(Some(DeviceInfoValue::Default("test".into())), Some("prod"), "prod")]
+    #[case(None, Some("prod"), "prod")]
+    #[case(None, None, FALLBACK_SOFTWARE_TYPE)]
+    fn software_type_precedence(
+        #[case] device_info_swv: Option<DeviceInfoValue>,
+        #[case] config_swv: Option<&str>,
+        #[case] expected: &str,
+    ) {
+        let mut config = Config::test_fixture();
+        config.device_info.software_type = device_info_swv;
+        config.config_file.software_type = config_swv.map(String::from);
+
+        assert_eq!(config.software_type(), expected);
     }
 
     struct Fixture {

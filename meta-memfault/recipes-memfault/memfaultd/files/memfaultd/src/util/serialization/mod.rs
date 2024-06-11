@@ -1,6 +1,7 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
+pub mod datetime_to_rfc3339;
 pub mod float_to_datetime;
 pub mod float_to_duration;
 pub mod kib_to_usize;

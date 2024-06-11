@@ -1,0 +1,7 @@
+---
+source: memfaultd/src/metrics/statsd_server/mod.rs
+expression: metrics
+---
+{
+  "test_counter": 2.0
+}

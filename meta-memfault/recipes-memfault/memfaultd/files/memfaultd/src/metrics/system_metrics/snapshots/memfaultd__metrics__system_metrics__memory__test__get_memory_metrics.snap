@@ -1,0 +1,24 @@
+---
+source: memfaultd/src/metrics/system_metrics/memory.rs
+expression: "MemoryMetricsCollector::parse_meminfo_memory_stats(meminfo).unwrap()"
+---
+[
+  {
+    "name": "memory/memory/free",
+    "value": {
+      "Histogram": {
+        "value": 248090624.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/memory/used",
+    "value": {
+      "Histogram": {
+        "value": 75599872.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  }
+]

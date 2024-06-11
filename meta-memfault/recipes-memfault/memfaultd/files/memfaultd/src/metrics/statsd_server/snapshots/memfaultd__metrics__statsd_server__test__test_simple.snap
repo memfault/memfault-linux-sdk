@@ -1,0 +1,8 @@
+---
+source: memfaultd/src/metrics/statsd_server/mod.rs
+expression: metrics
+---
+{
+  "test_counter": 1.0,
+  "test_gauge": 2.0
+}

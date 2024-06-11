@@ -92,7 +92,7 @@ impl HttpHandler for SessionEventHandler {
             match Self::parse_request(request.as_reader()) {
                 Ok(SessionRequest {
                     session_name,
-                    gauge_readings,
+                    readings,
                 }) => {
                     if request.url() == "/v1/session/start" {
                         if let Err(e) = self
@@ -110,11 +110,11 @@ impl HttpHandler for SessionEventHandler {
 
                     // Add additional metric readings after the session has started
                     // (if starting) but before it has ended (if ending)
-                    if !gauge_readings.is_empty() {
+                    if !readings.is_empty() {
                         if let Err(e) = Self::add_metric_readings_to_session(
                             &session_name,
                             self.metrics_store.clone(),
-                            gauge_readings,
+                            readings,
                         ) {
                             warn!("Failed to add metrics to session report: {}", e);
                         }
@@ -185,7 +185,7 @@ mod tests {
         ));
 
         let mut metric_report_manager = handler.metrics_store.lock().unwrap();
-        let readings = in_histograms(vec![("foo", 1.0), ("bar", 2.0), ("baz", 3.0)]);
+        let readings = in_histograms(vec![("foo", 1.0), ("bar", 2.0), ("not-captured", 3.0)]);
 
         for reading in readings {
             metric_report_manager
@@ -208,10 +208,11 @@ mod tests {
             .with_method(Method::Post)
             .with_path("/v1/session/start")
             .with_body("{\"session_name\": \"test-session\", 
-                         \"gauge_readings\": 
+                         \"readings\": 
                                 [ 
                                   {\"name\": \"foo\", \"value\": {\"Gauge\": {\"value\": 1.0, \"timestamp\": \"2024-01-01 00:00:00 UTC\"}}},
-                                  {\"name\": \"bar\", \"value\": {\"Gauge\": {\"value\": 4.0, \"timestamp\": \"2024-01-01 00:00:00 UTC\"}}}
+                                  {\"name\": \"bar\", \"value\": {\"Gauge\": {\"value\": 4.0, \"timestamp\": \"2024-01-01 00:00:00 UTC\"}}},
+                                  {\"name\": \"baz\", \"value\": {\"ReportTag\": {\"value\": \"test-tag\", \"timestamp\": \"2024-01-01 00:00:00 UTC\"}}}
                                 ]
                          }");
         let response = handler.handle_request(&mut r.into());
@@ -259,7 +260,7 @@ mod tests {
             .with_method(Method::Post)
             .with_path("/v1/session/end")
             .with_body("{\"session_name\": \"test-session\", 
-                         \"gauge_readings\": 
+                         \"readings\": 
                                 [ 
                                   {\"name\": \"foo\", \"value\": {\"Gauge\": {\"value\": 1.0, \"timestamp\": \"2024-01-01 00:00:00 UTC\"}}},
                                   {\"name\": \"bar\", \"value\": {\"Gauge\": {\"value\": 3.0, \"timestamp\": \"2024-01-01 00:00:00 UTC\"}}}
@@ -287,7 +288,8 @@ mod tests {
 
         {
             let mut metric_report_manager = handler.metrics_store.lock().unwrap();
-            let readings = in_histograms(vec![("foo", 10.0), ("bar", 20.0), ("baz", 30.0)]);
+            let readings =
+                in_histograms(vec![("foo", 10.0), ("bar", 20.0), ("not-captured", 30.0)]);
 
             for reading in readings {
                 metric_report_manager
@@ -306,7 +308,7 @@ mod tests {
         ));
 
         let mut metric_report_manager = handler.metrics_store.lock().unwrap();
-        let readings = in_histograms(vec![("foo", 1.0), ("bar", 2.0), ("baz", 3.0)]);
+        let readings = in_histograms(vec![("foo", 1.0), ("bar", 2.0), ("not-captured", 3.0)]);
 
         for reading in readings {
             metric_report_manager
@@ -330,6 +332,7 @@ mod tests {
             captured_metrics: vec![
                 MetricStringKey::from_str("foo").unwrap(),
                 MetricStringKey::from_str("bar").unwrap(),
+                MetricStringKey::from_str("baz").unwrap(),
             ],
         };
 
@@ -346,14 +349,14 @@ mod tests {
         let r = TestRequest::new()
             .with_method(Method::Post)
             .with_path("/v1/session/start")
-            .with_body("{\"session_name\": \"test-session\", \"gauge_readings\": []}");
+            .with_body("{\"session_name\": \"test-session\", \"readings\": []}");
         assert!(matches!(
             handler.handle_request(&mut r.into()),
             HttpHandlerResult::Response(_)
         ));
         {
             let mut metric_report_manager = handler.metrics_store.lock().unwrap();
-            let readings = in_histograms(vec![("bar", 20.0), ("baz", 30.0)]);
+            let readings = in_histograms(vec![("bar", 20.0), ("not-captured", 30.0)]);
 
             for reading in readings {
                 metric_report_manager
@@ -366,9 +369,10 @@ mod tests {
             .with_method(Method::Post)
             .with_path("/v1/session/end")
             .with_body("{\"session_name\": \"test-session\", 
-                         \"gauge_readings\": 
+                         \"readings\": 
                                 [ 
-                                  {\"name\": \"foo\", \"value\": {\"Gauge\": {\"value\": 100, \"timestamp\": \"2024-01-01 00:00:00 UTC\"}}}
+                                  {\"name\": \"foo\", \"value\": {\"Gauge\": {\"value\": 100, \"timestamp\": \"2024-01-01 00:00:00 UTC\"}}},
+                                  {\"name\": \"baz\", \"value\": {\"ReportTag\": {\"value\": \"test-tag\", \"timestamp\": \"2024-01-01 00:00:00 UTC\"}}}
                                 ]
                          }");
         assert!(matches!(
@@ -407,6 +411,7 @@ mod tests {
             captured_metrics: vec![
                 MetricStringKey::from_str("foo").unwrap(),
                 MetricStringKey::from_str("bar").unwrap(),
+                MetricStringKey::from_str("baz").unwrap(),
             ],
         };
 

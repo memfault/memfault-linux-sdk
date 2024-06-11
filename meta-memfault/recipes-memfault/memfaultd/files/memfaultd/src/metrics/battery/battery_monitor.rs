@@ -343,6 +343,7 @@ mod tests {
                     assert!(e.is_nan());
                 }
             }
+            _ => panic!("This test only expects number metric values!"),
         }
 
         let soc_pct_discharge_key = METRIC_BATTERY_SOC_PCT_DROP
@@ -350,6 +351,7 @@ mod tests {
             .unwrap();
         match metrics.get(&soc_pct_discharge_key).unwrap() {
             MetricValue::Number(e) => assert_eq!(*e, expected_soc_pct_discharge),
+            _ => panic!("This test only expects number metric values!"),
         }
 
         let soc_discharge_duration_key = METRIC_BATTERY_DISCHARGE_DURATION_MS
@@ -357,6 +359,7 @@ mod tests {
             .unwrap();
         match metrics.get(&soc_discharge_duration_key).unwrap() {
             MetricValue::Number(e) => assert_eq!(*e, expected_discharge_duration),
+            _ => panic!("This test only expects number metric values!"),
         }
     }
 }

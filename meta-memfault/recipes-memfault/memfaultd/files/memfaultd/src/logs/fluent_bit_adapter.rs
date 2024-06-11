@@ -3,15 +3,12 @@
 // See License.txt for details
 //! An adapter to connect FluentBit to our LogCollector.
 //!
-use std::collections::HashMap;
 use std::sync::mpsc::Receiver;
 
 use log::warn;
-use serde_json::{json, Value};
 
-use crate::fluent_bit::{FluentdMessage, FluentdValue};
-
-const ALWAYS_INCLUDE_KEYS: &[&str] = &["MESSAGE", "_PID", "_SYSTEMD_UNIT", "PRIORITY"];
+use crate::fluent_bit::FluentdMessage;
+use crate::logs::log_entry::LogEntry;
 
 /// An iterator that can be used as a source of logs for LogCollector.
 /// Will filter fluent-bit messages to keep only log messages and convert them
@@ -31,33 +28,22 @@ impl FluentBitAdapter {
 
     /// Convert a FluentdMessage into a serde_json::Value that we can log.
     /// Returns None when this message should be filtered out.
-    fn convert_message(msg: &FluentdMessage, extra_fields: &[String]) -> Option<Value> {
+    fn convert_message(msg: FluentdMessage, extra_fields: &[String]) -> Option<LogEntry> {
         if !msg.1.contains_key("MESSAGE") {
             // We are only interested in log messages. They will have a 'MESSAGE' key.
             // Metrics do not have the MESSAGE key.
             return None;
         }
 
-        let data: HashMap<String, FluentdValue> = msg
-            .1
-            .iter()
-            // Only keep some of the key/value pairs of the original message
-            .filter_map(|(k, v)| match k {
-                k if ALWAYS_INCLUDE_KEYS.contains(&k.as_str()) => Some((k.clone(), v.clone())),
-                k if extra_fields.contains(k) => Some((k.clone(), v.clone())),
-                _ => None,
-            })
-            .collect();
+        let mut log_entry = LogEntry::from(msg);
+        log_entry.filter_fields(extra_fields);
 
-        Some(json!({
-          "ts": msg.0.to_rfc3339(),
-          "data": data
-        }))
+        Some(log_entry)
     }
 }
 
 impl Iterator for FluentBitAdapter {
-    type Item = Value;
+    type Item = LogEntry;
     /// Convert a FluentdMessage to a LogRecord for LogCollector.
     /// Messages can be filtered out by returning None here.
     fn next(&mut self) -> Option<Self::Item> {
@@ -65,7 +51,7 @@ impl Iterator for FluentBitAdapter {
             let msg_r = self.receiver.recv();
             match msg_r {
                 Ok(msg) => {
-                    let value = FluentBitAdapter::convert_message(&msg, &self.extra_fields);
+                    let value = FluentBitAdapter::convert_message(msg, &self.extra_fields);
                     match value {
                         v @ Some(_) => return v,
                         None => continue,
@@ -82,54 +68,38 @@ impl Iterator for FluentBitAdapter {
 
 #[cfg(test)]
 mod tests {
-    use chrono::{DateTime, TimeZone, Utc};
-    use rstest::{fixture, rstest};
+    use std::collections::HashMap;
+    use std::sync::mpsc::channel;
+
+    use chrono::{DateTime, NaiveDateTime, Utc};
+    use insta::{assert_json_snapshot, with_settings};
 
     use super::*;
-    use crate::fluent_bit::FluentdMessage;
+    use crate::fluent_bit::{FluentdMessage, FluentdValue};
 
-    #[rstest]
-    #[case("{}", "", "")]
-    #[case(r#"{"MESSAGE":"TEST" }"#, r#"{"MESSAGE":"TEST"}"#, "")]
-    #[case(
-        r#"{"MESSAGE":"TEST", "SOME_EXTRA_KEY":"XX" }"#,
-        r#"{"MESSAGE":"TEST"}"#,
-        ""
-    )]
-    #[case(
-        r#"{"MESSAGE":"TEST", "SOME_EXTRA_KEY":"XX", "_PID": "44", "_SYSTEMD_UNIT": "some.service", "PRIORITY": "6" }"#,
-        r#"{"MESSAGE":"TEST","PRIORITY":"6","_PID":"44","_SYSTEMD_UNIT":"some.service"}"#,
-         ""
-    )]
-    #[case(
-        r#"{"MESSAGE":"TEST", "SOME_EXTRA_KEY":"XX" }"#,
-        r#"{"MESSAGE":"TEST","SOME_EXTRA_KEY":"XX"}"#,
-        "SOME_EXTRA_KEY"
-    )]
-    fn test_filtering(
-        time: DateTime<Utc>,
-        #[case] input: String,
-        #[case] output: String,
-        #[case] extras: String,
-    ) {
-        let m = FluentdMessage(time, serde_json::from_str(&input).unwrap());
+    #[test]
+    fn test_fluent_bit_adapter() {
+        let (tx, rx) = channel();
+        let adapter = FluentBitAdapter::new(rx, &[]);
 
-        let extra_fluent_bit_attributes = extras.split(',').map(String::from).collect::<Vec<_>>();
-        let r = FluentBitAdapter::convert_message(&m, &extra_fluent_bit_attributes);
+        let mut map = HashMap::new();
+        map.insert(
+            "MESSAGE".to_string(),
+            FluentdValue::String("test".to_string()),
+        );
+        let msg = FluentdMessage(time(), map);
+        tx.send(msg).unwrap();
 
-        match r {
-            Some(filtered) => {
-                assert_eq!(
-                    serde_json::to_string(&filtered.get("data")).unwrap(),
-                    output
-                );
-            }
-            None => assert!(output.is_empty()),
-        }
+        let mut adapter_iter = adapter.into_iter();
+        let log_entry = adapter_iter.next().unwrap();
+
+        with_settings!({sort_maps => true}, {
+            assert_json_snapshot!(log_entry);
+        });
     }
 
-    #[fixture]
     fn time() -> DateTime<Utc> {
-        Utc.timestamp_millis_opt(1334250000000).unwrap()
+        let naive = NaiveDateTime::from_timestamp_millis(1334250000000).unwrap();
+        DateTime::<Utc>::from_utc(naive, Utc)
     }
 }

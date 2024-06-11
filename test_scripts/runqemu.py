@@ -48,7 +48,7 @@ class QemuInfo:
 
 
 def qemu_build_command(
-    image_wic_path: os.PathLike[str] = _DEFAULT_IMAGE_WIC_PATH,
+    image_wic_path: pathlib.Path = _DEFAULT_IMAGE_WIC_PATH,
 ) -> list[str]:
     machine_to_qemu_info: dict[str, QemuInfo] = {
         "qemuarm": QemuInfo(executable_name="qemu-system-arm", cpu_name="cortex-a15"),

@@ -236,6 +236,47 @@ impl TimeSeries for Gauge {
     }
 }
 
+/// An aggregation stores the most recently received String
+/// associated with a key as a tag on the report
+pub struct ReportTag {
+    value: String,
+    end: DateTime<Utc>,
+}
+
+impl ReportTag {
+    pub fn new(reading: &MetricReading) -> Result<Self> {
+        match reading {
+            MetricReading::ReportTag { value, timestamp } => Ok(Self {
+                value: value.clone(),
+                end: *timestamp,
+            }),
+            _ => Err(eyre!(
+                "Cannot create a report tag from a non-report tag reading"
+            )),
+        }
+    }
+}
+
+impl TimeSeries for ReportTag {
+    fn aggregate(&mut self, newer: &MetricReading) -> Result<()> {
+        match newer {
+            MetricReading::ReportTag { value, timestamp } => {
+                if *timestamp > self.end {
+                    self.value = value.clone();
+                    self.end = *timestamp;
+                }
+                Ok(())
+            }
+            _ => Err(eyre!(
+                "Cannot aggregate a report tag with a non-report-tag reading"
+            )),
+        }
+    }
+
+    fn value(&self) -> MetricValue {
+        MetricValue::String(self.value.clone())
+    }
+}
 #[cfg(test)]
 mod tests {
     use chrono::Duration;

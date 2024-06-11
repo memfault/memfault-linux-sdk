@@ -27,8 +27,8 @@ pub struct MemfaultdConfig {
     pub heartbeat_interval: Duration,
     pub enable_data_collection: bool,
     pub enable_dev_mode: bool,
-    pub software_version: String,
-    pub software_type: String,
+    pub software_version: Option<String>,
+    pub software_type: Option<String>,
     pub project_key: String,
     pub base_url: String,
     pub swupdate: SwUpdateConfig,
@@ -104,6 +104,15 @@ pub struct HttpServerConfig {
     pub bind_address: SocketAddr,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub enum LogSource {
+    #[serde(rename = "fluent-bit")]
+    FluentBit,
+    #[cfg(feature = "systemd")]
+    #[serde(rename = "journald")]
+    Journald,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct LogsConfig {
     #[serde(rename = "rotate_size_kib", with = "kib_to_usize")]
@@ -120,6 +129,8 @@ pub struct LogsConfig {
     pub log_to_metrics: Option<LogToMetricsConfig>,
 
     pub storage: StorageConfig,
+
+    pub source: LogSource,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -182,6 +193,8 @@ fn default_connection_check_timeout() -> Duration {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct MetricReportConfig {
     pub enable_daily_heartbeats: bool,
+    pub system_metric_collection: SystemMetricConfig,
+    pub statsd_server: Option<StatsDServerConfig>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -206,6 +219,18 @@ fn default_connection_check_protocol() -> ConnectionCheckProtocol {
 pub struct SessionConfig {
     pub name: SessionName,
     pub captured_metrics: Vec<MetricStringKey>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct StatsDServerConfig {
+    pub bind_address: SocketAddr,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SystemMetricConfig {
+    pub enable: bool,
+    #[serde(with = "seconds_to_duration")]
+    pub poll_interval_seconds: Duration,
 }
 
 use flate2::Compression;
@@ -233,22 +258,17 @@ impl MemfaultdConfig {
         // Transform the JSON object into a typed structure.
         let config: MemfaultdConfig = serde_json::from_value(config_json)?;
 
-        let validation_errors: Vec<String> = [
-            (
-                "\"software_version\"",
-                software_version_is_valid(&config.software_version),
-            ),
-            (
-                "\"software_type\"",
-                software_type_is_valid(&config.software_type),
-            ),
-        ]
-        .iter()
-        .filter_map(|(key, result)| match result {
-            Err(e) => Some(format!("  Invalid value for {}: {}", key, e)),
-            _ => None,
-        })
-        .collect();
+        let mut validation_errors = vec![];
+        if let Some(software_version) = &config.software_version {
+            if let Err(e) = software_version_is_valid(software_version) {
+                validation_errors.push(format!("  Invalid value for \"software_version\": {}", e));
+            }
+        }
+        if let Some(software_type) = &config.software_type {
+            if let Err(e) = software_type_is_valid(software_type) {
+                validation_errors.push(format!("  Invalid value for \"software_type\": {}", e));
+            }
+        }
 
         match validation_errors.is_empty() {
             true => Ok(config),

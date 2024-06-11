@@ -4,5 +4,7 @@ expression: metrics
 ---
 {
   "bar": 4.0,
-  "foo": 1.0
+  "baz": "test-tag",
+  "foo": 1.0,
+  "operational_crashes": 0.0
 }

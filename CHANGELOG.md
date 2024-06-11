@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] - 2024-05-28
+
+### Added
+
+- `memfaultd` will now try to detect automatically Software Version
+  (`/etc/os-release`), Software Type (`xxx`), Hardware Version (`xxx`), and
+  Device ID (`xxx`). These new defaults continue to be overridden by
+  `memfaultd.conf` and `memfaultd-device-info`.
+- String metric values can now be passed to `memfaultctl start-session` and
+  `memfault end-session`.
+- `memfaultd` now has a built-in StatsD server that can be enabled via the
+  `metrics.statsd_server` configuration. This allows StatsD clients to write
+  custom metrics directly to `memfaultd` without needing to send them to
+  `collectd` to eventually be flushed. This system is turned off by default in
+  this release.
+- `memfaultd` can now capture some system metrics itself without `collectd`
+  running on the system. This can be turned on via
+  `metrics.system_metric_collection.enable`. Currently `cpu` and `memory`
+  metrics can be collected and further system metrics will be added in the next
+  release. This system is turned off by default in this release.
+- Logs can now be directly collectd by `memfaultd` without `fluent-bit` running.
+  This can be configured via the `logs.source` option. This release adds the
+  `journald` log source option which will pull logs from the systemd's journal
+  logging system (on systems that are not using systemd, this will not collect
+  any logs).
+- Added a `Cross.toml` to `meta-memfault/recipes-memfault/memfaultd/files/` so
+  that `memfaultd` can be cross-compiled with `cross` with the necessary system
+  dependencies automatically pulled into the build.
+
+### Changed
+
+- The `default` set of features in the top-level `Cargo.toml`. `swupdate` is
+  removed. The goal with this set of features is to provide a target set of
+  features that will compile a standalone `memfaultd` application for most
+  systemd-based systems.
+
+### Fixed
+
+- A bug in which metric reports with a duration shorter than 60 seconds had the
+  possibility of reporting 0 crashes when one or more did in fact occur during
+  the duration of the report.
+
 ## [1.11.0] - 2024-04-10
 
 This release builds upon the session-based metric reporting first shipped in
@@ -877,3 +919,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.10.0-kirkstone
 [1.11.0]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.11.0-kirkstone
+[1.12.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.12.0-kirkstone

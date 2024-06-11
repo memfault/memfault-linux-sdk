@@ -1,0 +1,11 @@
+---
+source: memfaultd/src/logs/journald_parser.rs
+expression: entry
+---
+{
+  "ts": "1970-01-20T19:57:42.571Z",
+  "fields": {
+    "MESSAGE": "audit: type=1400 audit(1713462571.968:7508): apparmor=\"DENIED\" operation=\"open\" class=\"file\" profile=\"snap.firefox.firefox\" name=\"/etc/fstab\" pid=10122 comm=\"firefox\" requested_mask=\"r\" denied_mask=\"r\" fsuid=1000 ouid=0",
+    "_SYSTEMD_UNIT": "user@1000.service"
+  }
+}

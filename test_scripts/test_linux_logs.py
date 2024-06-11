@@ -5,8 +5,18 @@ import re
 import time
 import uuid
 
+import pytest
+
 from .memfault_service_tester import MemfaultServiceTester
 from .qemu import QEMU
+
+
+@pytest.fixture()
+def memfault_extra_config(log_source: str) -> object:
+    return {
+        "enable_data_collection": True,
+        "logs": {"source": log_source, "max_lines_per_minute": 2000},
+    }
 
 
 # Assumptions:
@@ -14,10 +24,9 @@ from .qemu import QEMU
 #   or whatever the underlying QEMU instance points at.
 # - The MEMFAULT_E2E_* environment variables are set to match whatever the underlying
 #   QEMU instance points at.
+@pytest.mark.parametrize("log_source", ["journald", "fluent-bit"])
 def test_logs(
-    qemu: QEMU,
-    memfault_service_tester: MemfaultServiceTester,
-    qemu_device_id: str,
+    qemu: QEMU, memfault_service_tester: MemfaultServiceTester, qemu_device_id: str, log_source: str
 ) -> None:
     # Push a custom message to the systemd journal
     test_msg = f"test-{uuid.uuid4()}"
