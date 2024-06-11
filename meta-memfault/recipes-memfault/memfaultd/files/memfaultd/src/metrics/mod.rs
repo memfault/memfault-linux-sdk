@@ -46,3 +46,10 @@ mod session_event_handler;
 pub use session_event_handler::SessionEventHandler;
 
 pub mod core_metrics;
+
+pub mod statsd_server;
+pub use statsd_server::StatsDServer;
+
+mod system_metrics;
+pub use system_metrics::SystemMetricsCollector;
+pub use system_metrics::BUILTIN_SYSTEM_METRIC_NAMESPACES;

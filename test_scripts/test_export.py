@@ -48,11 +48,7 @@ def test_export_chunk(
 
         assert attributes
 
-        d = {
-            a["custom_metric"]["string_key"]: a["state"]["value"]
-            for a in attributes
-            if a["state"] is not None
-        }
+        d = {a["string_key"]: a["state"]["value"] for a in attributes if a["state"] is not None}
 
         assert d["export_works"] is True
 

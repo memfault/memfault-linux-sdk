@@ -1,0 +1,8 @@
+---
+source: memfaultd/src/collectd/collectd_handler.rs
+expression: metrics
+---
+{
+  "cpufreq/0/cpu/idle": 0.0,
+  "mockplugin/0/mock/test": 0.0
+}

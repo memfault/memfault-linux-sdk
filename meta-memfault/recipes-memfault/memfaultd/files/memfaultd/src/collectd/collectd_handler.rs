@@ -13,24 +13,32 @@ use tiny_http::{Method, Request, Response};
 use crate::{
     collectd::payload::Payload,
     http_server::{HttpHandler, HttpHandlerResult},
-    metrics::{KeyedMetricReading, MetricReportManager},
+    metrics::{KeyedMetricReading, MetricReportManager, BUILTIN_SYSTEM_METRIC_NAMESPACES},
 };
 
 /// A server that listens for collectd JSON pushes and stores them in memory.
 #[derive(Clone)]
 pub struct CollectdHandler {
     data_collection_enabled: bool,
+    builtin_system_metric_collection_enabled: bool,
     metrics_store: Arc<Mutex<MetricReportManager>>,
+    builtin_namespaces: Vec<String>,
 }
 
 impl CollectdHandler {
     pub fn new(
         data_collection_enabled: bool,
+        builtin_system_metric_collection_enabled: bool,
         metrics_store: Arc<Mutex<MetricReportManager>>,
     ) -> Self {
         CollectdHandler {
             data_collection_enabled,
+            builtin_system_metric_collection_enabled,
             metrics_store,
+            builtin_namespaces: BUILTIN_SYSTEM_METRIC_NAMESPACES
+                .iter()
+                .map(|namespace| namespace.to_string() + "/")
+                .collect(),
         }
     }
 
@@ -68,8 +76,25 @@ impl HttpHandler for CollectdHandler {
                 Ok(readings) => {
                     let mut metrics_store = self.metrics_store.lock().unwrap();
                     for reading in readings {
-                        if let Err(e) = metrics_store.add_metric(reading) {
-                            warn!("Invalid metric: {e}");
+                        // If built-in metric collection IS enabled, we need to drop
+                        // collectd metric readings who may have overlapping keys with
+                        // memfaultd's built-in readings. To be safe, any reading whose
+                        // metric key has the same top-level namespace as a built-in system
+                        // metric will be dropped
+                        //
+                        // For example, since CPU metrics can be captured by memfaultd
+                        // this conditional will cause us to drop all collectd
+                        // metric readings whose keys start with "cpu/" when
+                        // built-in system metric collection is enabled
+                        if !self.builtin_system_metric_collection_enabled
+                            || !self
+                                .builtin_namespaces
+                                .iter()
+                                .any(|namespace| reading.name.as_str().starts_with(namespace))
+                        {
+                            if let Err(e) = metrics_store.add_metric(reading) {
+                                warn!("Invalid metric: {e}");
+                            }
                         }
                     }
                 }
@@ -86,7 +111,7 @@ impl HttpHandler for CollectdHandler {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use insta::assert_snapshot;
+    use insta::{assert_json_snapshot, assert_snapshot, with_settings};
     use rstest::{fixture, rstest};
     use tiny_http::{Method, TestRequest};
 
@@ -118,7 +143,11 @@ mod tests {
 
     #[rstest]
     fn ignores_data_when_data_collection_is_off() {
-        let handler = CollectdHandler::new(false, Arc::new(Mutex::new(MetricReportManager::new())));
+        let handler = CollectdHandler::new(
+            false,
+            false,
+            Arc::new(Mutex::new(MetricReportManager::new())),
+        );
         let r = TestRequest::new().with_method(Method::Post).with_path("/v1/collectd").with_body(
             r#"[{"values":[0],"dstypes":["derive"],"dsnames":["value"],"time":1619712000.000,"interval":10.000,"host":"localhost","plugin":"cpu","plugin_instance":"0","type":"cpu","type_instance":"idle"}]"#,
         );
@@ -136,8 +165,52 @@ mod tests {
             .expect("heartbeat_manager should be serializable"));
     }
 
+    #[rstest]
+    fn drops_cpu_metrics_when_builtin_system_metrics_are_enabled() {
+        let handler =
+            CollectdHandler::new(true, true, Arc::new(Mutex::new(MetricReportManager::new())));
+        let r = TestRequest::new().with_method(Method::Post).with_path("/v1/collectd").with_body(
+            r#"[{"values":[0],"dstypes":["derive"],"dsnames":["value"],"time":1619712000.000,"interval":10.000,"host":"localhost","plugin":"cpu","plugin_instance":"0","type":"cpu","type_instance":"idle"}]"#,
+        );
+        assert!(matches!(
+            handler.handle_request(&mut r.into()),
+            HttpHandlerResult::Response(_)
+        ));
+
+        // cpufreq should NOT be dropped as it's a different top-level namespace from "cpu"
+        let r = TestRequest::new().with_method(Method::Post).with_path("/v1/collectd").with_body(
+            r#"[{"values":[0],"dstypes":["derive"],"dsnames":["value"],"time":1619712000.000,"interval":10.000,"host":"localhost","plugin":"cpufreq","plugin_instance":"0","type":"cpu","type_instance":"idle"}]"#,
+        );
+        assert!(matches!(
+            handler.handle_request(&mut r.into()),
+            HttpHandlerResult::Response(_)
+        ));
+
+        let r = TestRequest::new().with_method(Method::Post).with_path("/v1/collectd").with_body(
+            r#"[{"values":[0],"dstypes":["derive"],"dsnames":["value"],"time":1619712000.000,"interval":10.000,"host":"localhost","plugin":"mockplugin","plugin_instance":"0","type":"mock","type_instance":"test"}]"#,
+        );
+        assert!(matches!(
+            handler.handle_request(&mut r.into()),
+            HttpHandlerResult::Response(_)
+        ));
+
+        let metrics = handler
+            .metrics_store
+            .lock()
+            .unwrap()
+            .take_heartbeat_metrics();
+
+        with_settings!({sort_maps => true}, {
+            assert_json_snapshot!(metrics);
+        });
+    }
+
     #[fixture]
     fn handler() -> CollectdHandler {
-        CollectdHandler::new(true, Arc::new(Mutex::new(MetricReportManager::new())))
+        CollectdHandler::new(
+            true,
+            false,
+            Arc::new(Mutex::new(MetricReportManager::new())),
+        )
     }
 }

@@ -259,8 +259,6 @@ pub fn write_reboot_reason_and_reboot(
     last_reboot_reason_file: &Path,
     reason: RebootReason,
 ) -> Result<()> {
-    println!("Rebooting with reason {:?}", reason);
-
     write(last_reboot_reason_file, format!("{}", reason)).wrap_err_with(|| {
         format!(
             "Unable to write reboot reason (path: {}).",

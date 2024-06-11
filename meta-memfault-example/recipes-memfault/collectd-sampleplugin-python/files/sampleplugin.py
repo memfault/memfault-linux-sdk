@@ -24,7 +24,7 @@ def config_fn(config) -> None:  # pyright: ignore[reportArgumentType]
             global path
             path = node.values[0]
         else:
-            collectd.info('sampleplugin: unrecognised option "%s"' % (key))
+            collectd.info(f'sampleplugin: unrecognised option "{key}"')
 
 
 def read_fn() -> None:

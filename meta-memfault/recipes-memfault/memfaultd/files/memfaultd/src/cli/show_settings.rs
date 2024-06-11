@@ -141,6 +141,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::config::MockDeviceInfoDefaults;
 
     #[test]
     fn test() {
@@ -150,9 +151,20 @@ mod tests {
         };
         let config_path = PathBuf::from("/etc/memfaultd.conf");
 
-        let device =
-            DeviceInfo::parse(b"MEMFAULT_DEVICE_ID=X\nMEMFAULT_HARDWARE_VERSION=Y\nblahblahblah\n")
-                .unwrap();
+        let mut di_defaults = MockDeviceInfoDefaults::new();
+        di_defaults.expect_software_type().returning(|| Ok(None));
+        di_defaults.expect_software_version().returning(|| Ok(None));
+        di_defaults
+            .expect_hardware_version()
+            .returning(|| Ok("Hardware".into()));
+        di_defaults
+            .expect_device_id()
+            .returning(|| Ok("123ABC".into()));
+        let device = DeviceInfo::parse(
+            Some(b"MEMFAULT_DEVICE_ID=X\nMEMFAULT_HARDWARE_VERSION=Y\nblahblahblah\n"),
+            di_defaults,
+        )
+        .unwrap();
 
         let versions = Versions {
             version: "1.2.3",

@@ -1,6 +1,8 @@
+#![allow(clippy::print_stdout, clippy::print_stderr)]
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
+
 use eyre::eyre;
 use log::LevelFilter;
 use std::path::Path;

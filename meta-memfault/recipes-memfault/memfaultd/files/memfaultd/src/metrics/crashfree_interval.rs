@@ -2,6 +2,8 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 use std::{
+    cmp::max,
+    iter::once,
     sync::mpsc::{channel, Receiver, Sender},
     time::Duration,
 };
@@ -75,9 +77,28 @@ where
         )
     }
 
-    pub fn update(&mut self) -> Vec<KeyedMetricReading> {
-        self.collect_crashes();
+    /// Wait for the next crash or update the metrics if the wait duration has passed.
+    ///
+    /// This allows us to have instant updates on crashes and hourly updates on the metrics, but
+    /// also allows us to periodically update the metrics so that we don't have to wait for a crash.
+    pub fn wait_and_update(&mut self, wait_duration: Duration) -> Vec<KeyedMetricReading> {
+        if let Ok(crash_ts) = self.receiver.recv_timeout(wait_duration) {
+            // Drain the receiver to get all crashes that happened since the last update
+            self.receiver
+                .try_iter()
+                .chain(once(crash_ts))
+                .for_each(|ts| {
+                    self.crash_count += 1;
+                    self.last_crashfree_interval_mark = max(self.last_crashfree_interval_mark, ts);
+                });
+        }
 
+        // Since timing out just means no crashes occurred in the `wait_duration`,
+        // update even when the receiver times out.
+        self.update()
+    }
+
+    fn update(&mut self) -> Vec<KeyedMetricReading> {
         let TimeMod {
             count: count_op_interval,
             mark: last_counted_op_interval,
@@ -151,14 +172,6 @@ where
         TimeMod {
             count: count_interval_elapsed,
             mark: since.add(interval * count_interval_elapsed),
-        }
-    }
-
-    fn collect_crashes(&mut self) {
-        while let Ok(ts) = self.receiver.try_recv() {
-            self.crash_count += 1;
-            self.last_crashfree_interval_mark =
-                std::cmp::max(self.last_crashfree_interval_mark, ts);
         }
     }
 }
@@ -245,7 +258,11 @@ mod tests {
 
         TestInstant::sleep(Duration::from_secs(7200));
 
-        assert_operational_metrics(crashfree_tracker.update(), 2, 2);
+        assert_operational_metrics(
+            crashfree_tracker.wait_and_update(Duration::from_secs(0)),
+            2,
+            2,
+        );
     }
 
     #[rstest]
@@ -261,7 +278,11 @@ mod tests {
         crashfree_tracker.capture_crash();
         TestInstant::sleep(Duration::from_secs(3600));
 
-        assert_operational_metrics(crashfree_tracker.update(), 120, 60);
+        assert_operational_metrics(
+            crashfree_tracker.wait_and_update(Duration::from_secs(0)),
+            120,
+            60,
+        );
     }
 
     #[rstest]
@@ -269,10 +290,18 @@ mod tests {
         let mut crashfree_tracker = CrashFreeIntervalTracker::<TestInstant>::new_hourly();
 
         TestInstant::sleep(Duration::from_secs(1800));
-        assert_operational_metrics(crashfree_tracker.update(), 0, 0);
+        assert_operational_metrics(
+            crashfree_tracker.wait_and_update(Duration::from_secs(0)),
+            0,
+            0,
+        );
 
         TestInstant::sleep(Duration::from_secs(1800));
-        assert_operational_metrics(crashfree_tracker.update(), 1, 1);
+        assert_operational_metrics(
+            crashfree_tracker.wait_and_update(Duration::from_secs(0)),
+            1,
+            1,
+        );
     }
 
     #[rstest]
@@ -280,22 +309,38 @@ mod tests {
         let mut crashfree_tracker = CrashFreeIntervalTracker::<TestInstant>::new_hourly();
 
         TestInstant::sleep(Duration::from_secs(1800));
-        assert_operational_metrics(crashfree_tracker.update(), 0, 0);
+        assert_operational_metrics(
+            crashfree_tracker.wait_and_update(Duration::from_secs(0)),
+            0,
+            0,
+        );
 
         // Crash at t0 + 30min
         crashfree_tracker.capture_crash();
 
         // After 30' we should be ready to mark an operational hour
         TestInstant::sleep(Duration::from_secs(1800));
-        assert_operational_metrics(crashfree_tracker.update(), 1, 0);
+        assert_operational_metrics(
+            crashfree_tracker.wait_and_update(Duration::from_secs(0)),
+            1,
+            0,
+        );
 
         // After another 30' we should be ready to mark another crashfree hour
         TestInstant::sleep(Duration::from_secs(1800));
-        assert_operational_metrics(crashfree_tracker.update(), 0, 1);
+        assert_operational_metrics(
+            crashfree_tracker.wait_and_update(Duration::from_secs(0)),
+            0,
+            1,
+        );
 
         // After another 30' we should be ready to mark another operational hour
         TestInstant::sleep(Duration::from_secs(1800));
-        assert_operational_metrics(crashfree_tracker.update(), 1, 0);
+        assert_operational_metrics(
+            crashfree_tracker.wait_and_update(Duration::from_secs(0)),
+            1,
+            0,
+        );
     }
 
     #[rstest]
@@ -304,7 +349,11 @@ mod tests {
 
         // Basic test
         TestInstant::sleep(Duration::from_secs(3600 * 3));
-        assert_operational_metrics(crashfree_tracker.update(), 3, 3);
+        assert_operational_metrics(
+            crashfree_tracker.wait_and_update(Duration::from_secs(0)),
+            3,
+            3,
+        );
 
         // Crash at interval + 170'
         TestInstant::sleep(Duration::from_secs(170 * 60));
@@ -314,13 +363,21 @@ mod tests {
         // We will count 0 operational hour here. That is a consequence of the heartbeat being larger than the hour
         // To avoid this bug, we need to make sure we call the `update` at least once per hour!
         TestInstant::sleep(Duration::from_secs(10 * 60));
-        assert_operational_metrics(crashfree_tracker.update(), 3, 0);
+        assert_operational_metrics(
+            crashfree_tracker.wait_and_update(Duration::from_secs(0)),
+            3,
+            0,
+        );
 
         // However, doing the crash at interval +10' then waiting for 170' will record 2 crashfree hours
         TestInstant::sleep(Duration::from_secs(10 * 60));
         crashfree_tracker.capture_crash();
         TestInstant::sleep(Duration::from_secs(170 * 60));
-        assert_operational_metrics(crashfree_tracker.update(), 3, 2);
+        assert_operational_metrics(
+            crashfree_tracker.wait_and_update(Duration::from_secs(0)),
+            3,
+            2,
+        );
     }
 
     fn assert_operational_metrics(

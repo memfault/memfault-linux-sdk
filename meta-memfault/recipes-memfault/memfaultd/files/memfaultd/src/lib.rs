@@ -1,6 +1,8 @@
+#![deny(clippy::print_stdout, clippy::print_stderr)]
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
+
 pub mod cli;
 #[cfg(feature = "collectd")]
 mod collectd;

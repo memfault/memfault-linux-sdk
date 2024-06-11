@@ -1,0 +1,10 @@
+---
+source: memfaultd/src/logs/fluent_bit_adapter.rs
+expression: log_entry
+---
+{
+  "ts": "2012-04-12T17:00:00+00:00",
+  "data": {
+    "MESSAGE": "test"
+  }
+}

@@ -30,6 +30,7 @@ use crate::{logs::headroom::HeadroomCheck, util::circular_queue::CircularQueue};
 
 pub const CRASH_LOGS_URL: &str = "/api/v1/crash-logs";
 
+use super::log_entry::LogEntry;
 #[cfg(feature = "log-to-metrics")]
 use super::log_to_metrics::LogToMetrics;
 
@@ -99,7 +100,7 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
     }
 
     /// Spawn a thread to read log records from receiver.
-    pub fn spawn_collect_from<T: Iterator<Item = Value> + Send + 'static>(&self, source: T) {
+    pub fn spawn_collect_from<T: Iterator<Item = LogEntry> + Send + 'static>(&self, source: T) {
         // Clone the atomic reference counting "pointer" (not the inner struct itself)
         let c = self.inner.clone();
 
@@ -109,7 +110,14 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
                     Ok(mut inner_opt) => {
                         match &mut *inner_opt {
                             Some(inner) => {
-                                if let Err(e) = inner.process_log_record(line) {
+                                let log_val = match serde_json::to_value(line) {
+                                    Ok(val) => val,
+                                    Err(e) => {
+                                        warn!("Error converting log to json: {}", e);
+                                        continue;
+                                    }
+                                };
+                                if let Err(e) = inner.process_log_record(log_val) {
                                     warn!("Error writing log: {:?}", e);
                                 }
                             }

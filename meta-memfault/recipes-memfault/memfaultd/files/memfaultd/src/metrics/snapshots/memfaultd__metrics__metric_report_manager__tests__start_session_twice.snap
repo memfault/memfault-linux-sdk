@@ -7,7 +7,8 @@ expression: builder.unwrap().get_metadata()
   "metadata": {
     "metrics": {
       "bar": 3.5,
-      "foo": 5.0
+      "foo": 5.0,
+      "operational_crashes": 0.0
     },
     "duration_ms": 0,
     "report_type": {

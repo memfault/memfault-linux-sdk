@@ -18,6 +18,7 @@ use log::{error, info, trace, warn};
 use crate::metrics::{
     BatteryMonitor, BatteryReadingHandler, ConnectivityMonitor, MetricReportType,
     PeriodicMetricReportDumper, ReportSyncEventHandler, SessionEventHandler,
+    SystemMetricsCollector,
 };
 
 use crate::{
@@ -25,7 +26,7 @@ use crate::{
     mar::upload::collect_and_upload,
     metrics::{
         core_metrics::{METRIC_MF_SYNC_FAILURE, METRIC_MF_SYNC_SUCCESS},
-        CrashFreeIntervalTracker, MetricReportManager,
+        CrashFreeIntervalTracker, MetricReportManager, StatsDServer,
     },
 };
 use crate::{http_server::HttpHandler, util::UpdateStatus};
@@ -149,6 +150,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     {
         let collectd_handler = CollectdHandler::new(
             config.config_file.enable_data_collection,
+            config.builtin_system_metric_collection_enabled(),
             metric_report_manager.clone(),
         );
         http_handlers.push(Box::new(collectd_handler));
@@ -171,6 +173,25 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
 
             periodic_metric_report_dumper.start();
         });
+    }
+
+    // Start statsd server
+    if config.statsd_server_enabled() {
+        let statsd_server = StatsDServer::new();
+        if let Ok(bind_address) = config.statsd_server_address() {
+            if let Err(e) = statsd_server.start(bind_address, metric_report_manager.clone()) {
+                warn!("Couldn't start StatsD server: {}", e);
+            };
+        }
+    }
+
+    // Start system metric collector thread
+    if config.builtin_system_metric_collection_enabled() {
+        let sys_metric_collector = SystemMetricsCollector::new();
+        sys_metric_collector.start(
+            config.system_metric_poll_interval(),
+            metric_report_manager.clone(),
+        )?;
     }
 
     // Start a thread to dump metrics every 24 hours
@@ -288,14 +309,8 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         http_handlers.push(crashfree_tracker.http_handler());
         spawn(move || {
             let interval = Duration::from_secs(60);
-            let mut next_compute = Instant::now() + interval;
             loop {
-                while Instant::now() < next_compute {
-                    sleep(next_compute - Instant::now());
-                }
-                next_compute += interval;
-
-                let metrics = crashfree_tracker.update();
+                let metrics = crashfree_tracker.wait_and_update(interval);
                 let mut store = metric_report_manager.lock().unwrap();
                 trace!("Crashfree hours metrics: {:?}", metrics);
                 for m in metrics {
@@ -309,11 +324,28 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
 
     #[cfg(feature = "logging")]
     {
+        use crate::config::LogSource;
+        #[cfg(feature = "systemd")]
+        use crate::logs::journald_provider::start_journald_provider;
+        use crate::logs::log_entry::LogEntry;
         use log::debug;
 
         let fluent_bit_config = FluentBitConfig::from(&config);
         if config.config_file.enable_data_collection {
-            let (_, fluent_bit_receiver) = FluentBitConnectionHandler::start(fluent_bit_config)?;
+            let log_source = config.config_file.logs.source;
+            let log_receiver: Box<dyn Iterator<Item = LogEntry> + Send> = match log_source {
+                LogSource::FluentBit => {
+                    let (_, fluent_bit_receiver) =
+                        FluentBitConnectionHandler::start(fluent_bit_config)?;
+                    Box::new(FluentBitAdapter::new(
+                        fluent_bit_receiver,
+                        &config.config_file.fluent_bit.extra_fluentd_attributes,
+                    ))
+                }
+                #[cfg(feature = "systemd")]
+                LogSource::Journald => Box::new(start_journald_provider(config.tmp_dir())),
+            };
+
             let mar_cleaner = mar_cleaner.clone();
 
             let network_config = NetworkConfig::from(&config);
@@ -361,10 +393,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                 headroom_limiter,
                 metric_report_manager.clone(),
             )?;
-            log_collector.spawn_collect_from(FluentBitAdapter::new(
-                fluent_bit_receiver,
-                &config.config_file.fluent_bit.extra_fluentd_attributes,
-            ));
+            log_collector.spawn_collect_from(log_receiver);
 
             let crash_log_handler = log_collector.crash_log_handler();
             http_handlers.push(Box::new(crash_log_handler));

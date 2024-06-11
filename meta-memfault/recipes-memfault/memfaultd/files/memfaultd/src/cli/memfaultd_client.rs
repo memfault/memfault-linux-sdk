@@ -137,12 +137,12 @@ impl MemfaultdClient {
     pub fn start_session(
         &self,
         session_name: SessionName,
-        gauge_readings: Vec<KeyedMetricReading>,
+        readings: Vec<KeyedMetricReading>,
     ) -> Result<()> {
-        let body = if gauge_readings.is_empty() {
+        let body = if readings.is_empty() {
             session_name.to_string()
         } else {
-            serde_json::to_string(&SessionRequest::new(session_name, gauge_readings))?
+            serde_json::to_string(&SessionRequest::new(session_name, readings))?
         };
         let r = self
             .client
@@ -162,12 +162,12 @@ impl MemfaultdClient {
     pub fn end_session(
         &self,
         session_name: SessionName,
-        gauge_readings: Vec<KeyedMetricReading>,
+        readings: Vec<KeyedMetricReading>,
     ) -> Result<()> {
-        let body = if gauge_readings.is_empty() {
+        let body = if readings.is_empty() {
             session_name.to_string()
         } else {
-            serde_json::to_string(&SessionRequest::new(session_name, gauge_readings))?
+            serde_json::to_string(&SessionRequest::new(session_name, readings))?
         };
         let r = self
             .client

@@ -1,0 +1,11 @@
+---
+source: memfaultd/src/logs/log_entry.rs
+expression: entry
+---
+{
+  "ts": "2012-04-12T17:00:00+00:00",
+  "data": {
+    "MESSAGE": "TEST",
+    "SOME_EXTRA_KEY": "XX"
+  }
+}

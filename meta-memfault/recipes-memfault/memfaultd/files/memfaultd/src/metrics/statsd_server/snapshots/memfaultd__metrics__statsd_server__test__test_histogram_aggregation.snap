@@ -1,0 +1,9 @@
+---
+source: memfaultd/src/metrics/statsd_server/mod.rs
+expression: metrics
+---
+{
+  "test_another_histo": 510.0,
+  "test_histo": 100.0,
+  "test_one_more_histo": 35.0
+}

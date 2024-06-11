@@ -259,7 +259,6 @@ mod tests {
         let mut count_invalid_lines = 0;
         for line in loglines.lines() {
             if serde_json::from_str::<Value>(line).is_err() {
-                eprintln!("invalid line: {line}");
                 count_invalid_lines += 1;
             }
         }

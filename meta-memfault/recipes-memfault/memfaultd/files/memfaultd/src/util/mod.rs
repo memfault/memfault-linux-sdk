@@ -9,6 +9,7 @@ pub mod patterns;
 pub use die::*;
 pub mod can_connect;
 pub mod circular_queue;
+pub mod etc_os_release;
 pub mod fs;
 pub mod io;
 pub mod ipc;

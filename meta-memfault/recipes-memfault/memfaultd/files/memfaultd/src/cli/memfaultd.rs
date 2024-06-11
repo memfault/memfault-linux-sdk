@@ -1,6 +1,8 @@
+#![allow(clippy::print_stdout, clippy::print_stderr)]
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
+
 use std::{
     env::args_os, fs::create_dir_all, os::unix::process::CommandExt, path::Path, process::Command,
 };

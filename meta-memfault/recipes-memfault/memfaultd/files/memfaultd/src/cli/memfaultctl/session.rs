@@ -12,11 +12,11 @@ use crate::{
 pub fn start_session(
     config: &Config,
     session_name: SessionName,
-    gauge_readings: Vec<KeyedMetricReading>,
+    metric_readings: Vec<KeyedMetricReading>,
 ) -> Result<()> {
     let client = MemfaultdClient::from_config(config)?;
     if config.config_file.enable_data_collection {
-        match client.start_session(session_name.clone(), gauge_readings) {
+        match client.start_session(session_name.clone(), metric_readings) {
             Ok(()) => {
                 eprintln!("Started new {} session", session_name);
                 Ok(())
@@ -34,11 +34,11 @@ pub fn start_session(
 pub fn end_session(
     config: &Config,
     session_name: SessionName,
-    gauge_readings: Vec<KeyedMetricReading>,
+    readings: Vec<KeyedMetricReading>,
 ) -> Result<()> {
     let client = MemfaultdClient::from_config(config)?;
     if config.config_file.enable_data_collection {
-        match client.end_session(session_name.clone(), gauge_readings) {
+        match client.end_session(session_name.clone(), readings) {
             Ok(()) => {
                 eprintln!("Ended ongoing {} session", session_name);
                 Ok(())

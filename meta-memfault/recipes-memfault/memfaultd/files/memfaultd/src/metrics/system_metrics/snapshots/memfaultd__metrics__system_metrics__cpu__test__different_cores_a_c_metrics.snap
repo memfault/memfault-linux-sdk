@@ -1,0 +1,69 @@
+---
+source: memfaultd/src/metrics/system_metrics/cpu.rs
+expression: result_c.unwrap()
+---
+[
+  {
+    "name": "cpu/cpu1/percent/user",
+    "value": {
+      "Histogram": {
+        "value": 70.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "cpu/cpu1/percent/nice",
+    "value": {
+      "Histogram": {
+        "value": 10.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "cpu/cpu1/percent/system",
+    "value": {
+      "Histogram": {
+        "value": 10.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "cpu/cpu1/percent/idle",
+    "value": {
+      "Histogram": {
+        "value": 2.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "cpu/cpu1/percent/iowait",
+    "value": {
+      "Histogram": {
+        "value": 5.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "cpu/cpu1/percent/irq",
+    "value": {
+      "Histogram": {
+        "value": 3.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "cpu/cpu1/percent/softirq",
+    "value": {
+      "Histogram": {
+        "value": 0.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  }
+]

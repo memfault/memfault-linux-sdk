@@ -197,6 +197,7 @@ mod tests {
 
             match m.1 {
                 MetricValue::Number(v) => assert_eq!(*v, expected_value),
+                _ => panic!("This test only expects number metric values!"),
             }
         }
     }

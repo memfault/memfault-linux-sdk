@@ -12,8 +12,8 @@ expression: content
   "heartbeat_interval_seconds": 3600,
   "enable_data_collection": false,
   "enable_dev_mode": false,
-  "software_version": "0.0.0-memfault-unknown",
-  "software_type": "memfault-unknown",
+  "software_version": null,
+  "software_type": null,
   "project_key": "",
   "base_url": "https://device.memfault.com",
   "swupdate": {
@@ -46,7 +46,8 @@ expression: content
     "compression_level": 1,
     "max_lines_per_minute": 500,
     "log_to_metrics": null,
-    "storage": "persist"
+    "storage": "persist",
+    "source": "fluent-bit"
   },
   "mar": {
     "mar_file_max_size_kib": 10240,
@@ -69,6 +70,11 @@ expression: content
   },
   "sessions": null,
   "metrics": {
-    "enable_daily_heartbeats": true
+    "enable_daily_heartbeats": true,
+    "system_metric_collection": {
+      "enable": false,
+      "poll_interval_seconds": 10
+    },
+    "statsd_server": null
   }
 }

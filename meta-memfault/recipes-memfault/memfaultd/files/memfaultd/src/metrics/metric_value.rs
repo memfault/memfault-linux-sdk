@@ -4,10 +4,11 @@
 use eyre::Result;
 use serde::{Deserialize, Serialize, Serializer};
 
-#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(untagged)]
 pub enum MetricValue {
     Number(f64),
+    String(String),
 }
 
 impl Serialize for MetricValue {
@@ -17,6 +18,7 @@ impl Serialize for MetricValue {
     {
         match self {
             MetricValue::Number(v) => serializer.serialize_f64(*v),
+            MetricValue::String(v) => serializer.serialize_str(v.as_str()),
         }
     }
 }

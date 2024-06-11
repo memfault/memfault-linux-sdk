@@ -9,7 +9,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use super::{metric_reading::KeyedMetricReading, metric_report::CapturedMetrics, SessionName};
+use super::{
+    core_metrics::METRIC_OPERATIONAL_CRASHES, metric_reading::KeyedMetricReading,
+    metric_report::CapturedMetrics, SessionName,
+};
 use crate::{
     config::SessionConfig,
     mar::{MarEntryBuilder, Metadata},
@@ -54,7 +57,9 @@ impl MetricReportManager {
         let captured_metric_keys = self.captured_metric_keys_for_report(&report_type)?;
 
         if let Entry::Vacant(e) = self.sessions.entry(session_name) {
-            e.insert(MetricReport::new(report_type, captured_metric_keys));
+            let session = e.insert(MetricReport::new(report_type, captured_metric_keys));
+            // Make sure we always include the operational_crashes counter in every session report.
+            session.add_to_counter(METRIC_OPERATIONAL_CRASHES, 0.0)?;
         }
         Ok(())
     }
@@ -221,10 +226,10 @@ impl MetricReportManager {
     }
 
     /// Ends all ongoing MetricReports and dumps them as MARs to disk.
-    ///    
+    ///
     /// MetricReports with the MetricReportType specified with
     /// exclude_report_types are excluded from this operation
-    /// entirely  
+    /// entirely
     pub fn dump_metric_reports(
         metric_report_manager: &Arc<Mutex<Self>>,
         mar_staging_area: &Path,

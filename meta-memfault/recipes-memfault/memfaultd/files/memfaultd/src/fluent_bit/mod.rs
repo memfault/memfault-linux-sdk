@@ -26,8 +26,11 @@ use log::warn;
 use rmp_serde::Deserializer;
 use serde::{Deserialize, Serialize};
 
-use crate::config::Config;
-use crate::util::tcp_server::{TcpConnectionHandler, TcpNullConnectionHandler, ThreadedTcpServer};
+use crate::{config::Config, logs::log_entry::LogEntry};
+use crate::{
+    logs::log_entry::LogValue,
+    util::tcp_server::{TcpConnectionHandler, TcpNullConnectionHandler, ThreadedTcpServer},
+};
 
 mod decode_time;
 
@@ -38,11 +41,27 @@ pub enum FluentdValue {
     Float(f64),
 }
 
+impl From<FluentdValue> for LogValue {
+    fn from(value: FluentdValue) -> Self {
+        match value {
+            FluentdValue::String(s) => LogValue::String(s),
+            FluentdValue::Float(f) => LogValue::Float(f),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FluentdMessage(
     #[serde(with = "decode_time")] pub DateTime<Utc>,
     pub HashMap<String, FluentdValue>,
 );
+
+impl From<FluentdMessage> for LogEntry {
+    fn from(value: FluentdMessage) -> Self {
+        let data = value.1.into_iter().map(|(k, v)| (k, v.into())).collect();
+        LogEntry { ts: value.0, data }
+    }
+}
 
 #[derive(Clone)]
 pub struct FluentBitConnectionHandler {

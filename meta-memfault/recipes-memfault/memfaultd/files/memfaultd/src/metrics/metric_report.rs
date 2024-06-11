@@ -26,6 +26,8 @@ use crate::{
     },
 };
 
+use super::timeseries::ReportTag;
+
 pub enum CapturedMetrics {
     All,
     Metrics(HashSet<MetricStringKey>),
@@ -222,6 +224,7 @@ impl MetricReport {
             MetricReading::TimeWeightedAverage { .. } => {
                 Ok(Box::new(TimeWeightedAverage::new(event)?))
             }
+            MetricReading::ReportTag { .. } => Ok(Box::new(ReportTag::new(event)?)),
         }
     }
 
