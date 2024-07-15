@@ -4,5 +4,7 @@ expression: errors
 ---
 [
   "ERROR test:71 - Test message",
-  "WARN test:71 - Test message"
+  "WARN test:71 - Test message",
+  "INFO test:71 - Test message",
+  "DEBUG test:71 - Test message"
 ]

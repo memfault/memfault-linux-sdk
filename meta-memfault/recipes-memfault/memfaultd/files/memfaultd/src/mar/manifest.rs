@@ -130,6 +130,14 @@ pub enum Metadata {
         duration: Duration,
         report_type: MetricReportType,
     },
+    #[serde(rename = "linux-memfault-watch-logs")]
+    LinuxMemfaultWatch {
+        cmdline: Vec<String>,
+        exit_code: i32,
+        duration: Duration,
+        stdio_log_file_name: String,
+        compression: CompressionAlgorithm,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -290,6 +298,10 @@ impl Manifest {
             Metadata::LinuxHeartbeat { .. } => vec![],
             Metadata::LinuxMetricReport { .. } => vec![],
             Metadata::LinuxReboot { .. } => vec![],
+            Metadata::LinuxMemfaultWatch {
+                stdio_log_file_name,
+                ..
+            } => vec![stdio_log_file_name.clone()],
         }
     }
 }

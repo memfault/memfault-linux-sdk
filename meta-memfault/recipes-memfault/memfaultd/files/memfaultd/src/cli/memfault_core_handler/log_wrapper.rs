@@ -8,21 +8,24 @@
 
 use std::sync::mpsc::SyncSender;
 
-use log::{Level, Log, Metadata, Record};
+use log::{LevelFilter, Log, Metadata, Record};
 
 pub const CAPTURE_LOG_CHANNEL_SIZE: usize = 128;
+pub const CAPTURE_LOG_MAX_LEVEL: LevelFilter = LevelFilter::Debug;
 
 /// Logger wrapper to capture all error and warning logs that happen during coredump capture.
 pub struct CoreHandlerLogWrapper {
     log: Box<dyn Log>,
     capture_logs_tx: SyncSender<String>,
+    level: LevelFilter,
 }
 
 impl CoreHandlerLogWrapper {
-    pub fn new(log: Box<dyn Log>, capture_logs_tx: SyncSender<String>) -> Self {
+    pub fn new(log: Box<dyn Log>, capture_logs_tx: SyncSender<String>, level: LevelFilter) -> Self {
         Self {
             log,
             capture_logs_tx,
+            level,
         }
     }
 }
@@ -33,7 +36,7 @@ impl Log for CoreHandlerLogWrapper {
     }
 
     fn log(&self, record: &Record) {
-        if record.level() <= Level::Info {
+        if record.level() <= CAPTURE_LOG_MAX_LEVEL {
             let entry = build_log_string(record);
 
             // Errors are ignored here because the only options are to panic or log the error.
@@ -43,7 +46,9 @@ impl Log for CoreHandlerLogWrapper {
             let _ = self.capture_logs_tx.try_send(entry);
         }
 
-        self.log.log(record)
+        if record.level() <= self.level {
+            self.log.log(record)
+        }
     }
 
     fn flush(&self) {
@@ -78,22 +83,28 @@ mod test {
     use std::sync::mpsc::sync_channel;
 
     use insta::assert_json_snapshot;
+    use log::Level;
 
     #[test]
     fn test_log_saving() {
         let mut logger = stderrlog::new();
         logger.module("memfaultd").verbosity(10);
 
-        let (capture_logs_tx, capture_logs_rx) = sync_channel(2);
-        let wrapper = CoreHandlerLogWrapper::new(Box::new(logger), capture_logs_tx);
+        let (capture_logs_tx, capture_logs_rx) = sync_channel(5);
+        let wrapper =
+            CoreHandlerLogWrapper::new(Box::new(logger), capture_logs_tx, CAPTURE_LOG_MAX_LEVEL);
 
         let error_record = build_log_record(Level::Error);
         let warn_record = build_log_record(Level::Warn);
         let info_record = build_log_record(Level::Info);
+        let debug_record = build_log_record(Level::Debug);
+        let trace_record = build_log_record(Level::Trace);
 
         wrapper.log(&error_record);
         wrapper.log(&warn_record);
         wrapper.log(&info_record);
+        wrapper.log(&debug_record);
+        wrapper.log(&trace_record);
 
         let errors: Vec<String> = capture_logs_rx.try_iter().collect();
         assert_json_snapshot!(errors);

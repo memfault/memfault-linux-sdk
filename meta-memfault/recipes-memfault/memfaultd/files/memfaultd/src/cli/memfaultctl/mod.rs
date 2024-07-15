@@ -61,7 +61,7 @@ struct MemfaultctlArgs {
 
 /// Wrapper around argh to support flags acting as subcommands, like --version.
 /// Inspired by https://gist.github.com/suluke/e0c672492126be0a4f3b4f0e1115d77c
-struct WrappedArgs<T: FromArgs>(T);
+pub struct WrappedArgs<T: FromArgs>(pub T);
 impl<T: FromArgs> TopLevelCommand for WrappedArgs<T> {}
 impl<T: FromArgs> FromArgs for WrappedArgs<T> {
     fn from_args(command_name: &[&str], args: &[&str]) -> Result<Self, argh::EarlyExit> {

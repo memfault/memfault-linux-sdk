@@ -210,7 +210,7 @@ where
                     |mmap| match self.elf_metadata_ranges_for_mapped_file(mmap.address.0) {
                         Ok(ranges) => ranges,
                         Err(e) => {
-                            warn!(
+                            debug!(
                                 "Failed to collect metadata for {:?} @ {:#x}: {}",
                                 mmap.pathname, mmap.address.0, e
                             );

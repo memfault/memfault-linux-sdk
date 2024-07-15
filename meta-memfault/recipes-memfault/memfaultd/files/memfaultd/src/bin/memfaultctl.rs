@@ -3,9 +3,9 @@
 // See License.txt for details
 use memfaultd::cli;
 
-// memfaultctl is an alias to the main function in cli.rs
-//
-// For further details, see comments on memfaultd.rs
+/// memfaultctl is an alias to the main function in cli.rs
+///
+/// For further details, see comments on memfaultd.rs
 fn main() {
     cli::main()
 }

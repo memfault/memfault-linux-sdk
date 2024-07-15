@@ -1,0 +1,5 @@
+---
+source: memfaultd/src/metrics/system_metrics/disk_space.rs
+expression: disk_space_collector.mounts
+---
+[]

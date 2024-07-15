@@ -81,6 +81,15 @@ fn should_upload(metadata: &Metadata, sampling: &Sampling) -> bool {
         },
         Metadata::LinuxLogs { .. } => sampling.logging_resolution >= Resolution::Normal,
         Metadata::LinuxReboot { .. } => true, // Always upload reboots
+        Metadata::LinuxMemfaultWatch { exit_code, .. } => {
+            let is_crash = exit_code != &0;
+            if is_crash {
+                sampling.debugging_resolution >= Resolution::Normal
+                    || sampling.logging_resolution >= Resolution::Normal
+            } else {
+                sampling.logging_resolution >= Resolution::Normal
+            }
+        }
     }
 }
 

@@ -18,12 +18,12 @@ mod r_debug;
 #[cfg(test)]
 mod test_utils;
 
-use self::core_writer::CoreWriterImpl;
 use self::log_wrapper::CoreHandlerLogWrapper;
 use self::procfs::{proc_mem_stream, read_proc_cmdline, ProcMapsImpl};
 use self::{arch::coredump_thread_filter_supported, log_wrapper::CAPTURE_LOG_CHANNEL_SIZE};
 use self::{core_elf_memfault_note::CoredumpMetadata, core_transformer::CoreTransformerOptions};
 use self::{core_reader::CoreReaderImpl, core_transformer::CoreTransformerLogFetcher};
+use self::{core_writer::CoreWriterImpl, log_wrapper::CAPTURE_LOG_MAX_LEVEL};
 use crate::cli;
 use crate::config::{Config, CoredumpCompression};
 use crate::mar::manifest::{CompressionAlgorithm, Metadata};
@@ -38,10 +38,10 @@ use flate2::write::GzEncoder;
 use kernlog::KernelLog;
 use log::{debug, error, info, warn, LevelFilter, Log};
 use prctl::set_dumpable;
-use std::io::BufReader;
 use std::io::BufWriter;
 use std::path::Path;
 use std::thread::scope;
+use std::{cmp::max, io::BufReader};
 use std::{cmp::min, fs::File};
 use std::{
     env::{set_var, var},
@@ -291,7 +291,16 @@ fn init_kernel_logger(level: LevelFilter, capture_logs_tx: SyncSender<String>) {
         Err(_) => Box::new(cli::build_logger(level)),
     };
 
-    let logger = Box::new(CoreHandlerLogWrapper::new(logger, capture_logs_tx));
+    let logger = Box::new(CoreHandlerLogWrapper::new(
+        logger,
+        capture_logs_tx,
+        CAPTURE_LOG_MAX_LEVEL,
+    ));
     log::set_boxed_logger(logger).unwrap();
-    log::set_max_level(level);
+
+    // Set the max log level to the max of the log level and the capture log level.
+    // This is necessary because the log macros will completely disable calls if the level
+    // is below the max level.
+    let max_level = max(level, CAPTURE_LOG_MAX_LEVEL);
+    log::set_max_level(max_level);
 }

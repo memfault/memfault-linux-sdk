@@ -1,0 +1,42 @@
+---
+source: memfaultd/src/metrics/system_metrics/disk_space.rs
+expression: metrics
+---
+[
+  {
+    "name": "disk_space/sda1/free_bytes",
+    "value": {
+      "Histogram": {
+        "value": 1171456.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "disk_space/sda1/used_bytes",
+    "value": {
+      "Histogram": {
+        "value": 3022848.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "disk_space/sda2/free_bytes",
+    "value": {
+      "Histogram": {
+        "value": 1171456.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "disk_space/sda2/used_bytes",
+    "value": {
+      "Histogram": {
+        "value": 3022848.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  }
+]
