@@ -28,7 +28,7 @@ pub use self::device_info::MockDeviceInfoDefaults;
 pub use self::{
     config_file::{
         ConnectivityMonitorConfig, ConnectivityMonitorTarget, JsonConfigs, LogSource,
-        LogToMetricRule, MemfaultdConfig, SessionConfig, StorageConfig,
+        LogToMetricRule, MemfaultdConfig, SessionConfig, StorageConfig, SystemMetricConfig,
     },
     device_config::{DeviceConfig, Resolution, Sampling},
     device_info::{DeviceInfo, DeviceInfoDefaultsImpl, DeviceInfoWarning},
@@ -264,6 +264,10 @@ impl Config {
             .metrics
             .system_metric_collection
             .poll_interval_seconds
+    }
+
+    pub fn system_metric_config(&self) -> SystemMetricConfig {
+        self.config_file.metrics.system_metric_collection.clone()
     }
 }
 

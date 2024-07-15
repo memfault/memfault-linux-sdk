@@ -1,0 +1,12 @@
+{
+    "metrics": {
+        "enable_daily_heartbeats": false,
+        "system_metric_collection": {
+            "enable": false,
+            "poll_interval_seconds": 10,
+            "processes": ["wefaultd"],
+            "disk_space": ["/dev/sda1"],
+            "network_interfaces": ["eth1"]
+        }
+    }
+}

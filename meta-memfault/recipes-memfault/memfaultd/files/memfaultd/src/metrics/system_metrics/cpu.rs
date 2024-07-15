@@ -47,7 +47,9 @@ use nom::{
     IResult,
 };
 
-use crate::metrics::{KeyedMetricReading, MetricReading, MetricStringKey};
+use crate::metrics::{
+    system_metrics::SystemMetricFamilyCollector, KeyedMetricReading, MetricReading, MetricStringKey,
+};
 use eyre::{eyre, ErrReport, Result};
 
 const PROC_STAT_PATH: &str = "/proc/stat";
@@ -184,6 +186,16 @@ impl CpuMetricCollector {
         } else {
             Ok(None)
         }
+    }
+}
+
+impl SystemMetricFamilyCollector for CpuMetricCollector {
+    fn family_name(&self) -> &'static str {
+        CPU_METRIC_NAMESPACE
+    }
+
+    fn collect_metrics(&mut self) -> Result<Vec<KeyedMetricReading>> {
+        self.get_cpu_metrics()
     }
 }
 

@@ -10,6 +10,8 @@ use stderrlog::{LogLevelNum, StdErrLog};
 
 #[cfg(all(target_os = "linux", feature = "coredump"))]
 mod memfault_core_handler;
+#[cfg(feature = "mfw")]
+mod memfault_watch;
 mod memfaultctl;
 mod memfaultd;
 mod memfaultd_client;
@@ -48,6 +50,10 @@ pub fn main() {
         )),
         "memfaultctl" => memfaultctl::main(),
         "memfaultd" => memfaultd::main(),
+        #[cfg(feature = "mfw")]
+        "mfw" => memfault_watch::main(),
+        #[cfg(not(feature = "mfw"))]
+        "mfw" => Err(eyre!("Memfault-watch is currently experimental. You must compile with the experimental flag enabled.")),
         _ => Err(eyre!(
             "Unknown command: {}. Should be memfaultd/memfaultctl/memfault-core-handler.",
             cmd_name

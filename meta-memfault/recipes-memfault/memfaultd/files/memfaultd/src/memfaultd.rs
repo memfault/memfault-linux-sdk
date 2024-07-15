@@ -187,11 +187,13 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
 
     // Start system metric collector thread
     if config.builtin_system_metric_collection_enabled() {
-        let sys_metric_collector = SystemMetricsCollector::new();
-        sys_metric_collector.start(
-            config.system_metric_poll_interval(),
-            metric_report_manager.clone(),
-        )?;
+        let metric_report_manager = metric_report_manager.clone();
+        let poll_interval = config.system_metric_poll_interval();
+        let system_metric_config = config.system_metric_config();
+        spawn(move || {
+            let mut sys_metric_collector = SystemMetricsCollector::new(system_metric_config);
+            sys_metric_collector.run(poll_interval, metric_report_manager)
+        });
     }
 
     // Start a thread to dump metrics every 24 hours

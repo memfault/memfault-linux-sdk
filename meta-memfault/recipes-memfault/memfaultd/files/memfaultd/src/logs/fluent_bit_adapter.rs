@@ -80,7 +80,7 @@ mod tests {
     #[test]
     fn test_fluent_bit_adapter() {
         let (tx, rx) = channel();
-        let adapter = FluentBitAdapter::new(rx, &[]);
+        let mut adapter = FluentBitAdapter::new(rx, &[]);
 
         let mut map = HashMap::new();
         map.insert(
@@ -90,8 +90,7 @@ mod tests {
         let msg = FluentdMessage(time(), map);
         tx.send(msg).unwrap();
 
-        let mut adapter_iter = adapter.into_iter();
-        let log_entry = adapter_iter.next().unwrap();
+        let log_entry = adapter.next().unwrap();
 
         with_settings!({sort_maps => true}, {
             assert_json_snapshot!(log_entry);

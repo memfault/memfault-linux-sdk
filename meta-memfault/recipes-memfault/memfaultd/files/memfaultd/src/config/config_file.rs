@@ -5,7 +5,10 @@ use eyre::{eyre, Context};
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::time::Duration;
-use std::{collections::HashMap, num::NonZeroU32};
+use std::{
+    collections::{HashMap, HashSet},
+    num::NonZeroU32,
+};
 use std::{net::SocketAddr, path::PathBuf};
 
 use crate::metrics::{MetricStringKey, SessionName};
@@ -226,11 +229,14 @@ pub struct StatsDServerConfig {
     pub bind_address: SocketAddr,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct SystemMetricConfig {
     pub enable: bool,
     #[serde(with = "seconds_to_duration")]
     pub poll_interval_seconds: Duration,
+    pub processes: Option<HashSet<String>>,
+    pub disk_space: Option<HashSet<String>>,
+    pub network_interfaces: Option<HashSet<String>>,
 }
 
 use flate2::Compression;
@@ -399,6 +405,7 @@ impl MemfaultdConfig {
 
 #[cfg(test)]
 mod test {
+    use insta::{assert_json_snapshot, with_settings};
     use rstest::rstest;
 
     use super::*;
@@ -457,6 +464,7 @@ mod test {
     #[case("with_log_to_metrics_rules")]
     #[case("with_connectivity_monitor")]
     #[case("with_sessions")]
+    #[case("metrics_config")]
     fn can_parse_test_files(#[case] name: &str) {
         let input_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("src/config/test-config")
@@ -466,7 +474,9 @@ mod test {
         let content = MemfaultdConfig::load(&input_path).unwrap();
         // And that the configuration generated is what we expect.
         // Use `cargo insta review` to quickly approve changes.
-        insta::assert_json_snapshot!(name, content)
+        with_settings!({sort_maps => true}, {
+            assert_json_snapshot!(name, content);
+        });
     }
 
     #[rstest]

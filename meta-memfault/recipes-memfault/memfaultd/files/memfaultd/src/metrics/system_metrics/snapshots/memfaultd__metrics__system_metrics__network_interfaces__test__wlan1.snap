@@ -1,0 +1,25 @@
+---
+source: memfaultd/src/metrics/system_metrics/network_interfaces.rs
+expression: "NetworkInterfaceMetricCollector::<TestInstant>::parse_proc_net_dev_line(proc_net_dev_line).unwrap()"
+---
+[
+  "wlan1",
+  [
+    2707,
+    25,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2707,
+    25,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ]
+]

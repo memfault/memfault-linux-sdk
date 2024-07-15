@@ -6,6 +6,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0] - 2024-07-15
+
+This is a minor release with a few bug fixes and couple of new metrics related
+features. Notably, we are continuing to add support for more metrics collection
+within `memfaultd` itself. This will remove the dependency on collectd in a
+future release. We encourage users to start switching to
+[built-in metrics collection](https://docs.memfault.com/docs/linux/reference-memfaultd-configuration#metrics)
+if all their metrics need are met with CPU, Memory, Disk, Network, Process
+Monitoring and StatsD. Expect built-in metrics collection to become the default
+later this year.
+
+### Added
+
+- `memfaultd` will now automatically collect thermal zone metrics when [system
+  metric collection is enabled](https://docs.memfault.com/docs/linux/reference-memfaultd-configuration#metrics).
+- `memfaultd` will now automatically collect network interface metrics when
+  [system metric collection is enabled](https://docs.memfault.com/docs/linux/reference-memfaultd-configuration#metrics). The
+  `metrics.system_metric_collection.network_interfaces` configuration option can
+  be used to specify which interfaces should be monitored. If it is unset, all
+  non-loopback interfaces will be monitored.
+- `memfaultd` will now automatically collect disk usage metrics when system
+  metric collection is enabled. The
+  `metrics.system_metric_collection.disk_space` configuration option can be used
+  to specify which disk should be monitored. If it is unset, all disks whose ID
+  starts with `/dev/` will be monitored.
+- `memfaultd` can now collect metrics that track the resource utilization of
+  individual processes on the system. By default, it will track itself. The
+  `metrics.system_metric_collection.processes` configuration option can be used
+  to specify which process names `memfaultd` should monitor.
+- `memfaultd`'s built-in StatsD server can now ingest
+  [Timer readings](https://github.com/statsd/statsd/blob/master/docs/metric_types.md#timing).
+
+### Changed
+
+- Daily heartbeat metric reports are now disabled by default.
+- The local version of `meta-rust-bin` is updated with the Rust versions up to
+  1.79.0.
+- `memfaultd` now has a separate repo to host its source code! This is a part of 
+  an ongoing effort to move the `memfaultd` source code outside of `meta-memfault`.
+  The end goal is to simply have a pointer to the `memfaultd` repository in the
+  `memfaultd` bitbake recipe, but for now the structure of this repository is unchanged.
+  Check it out at for yourself [here](https://github.com/memfault/memfaultd]!
+
+### Fixed
+
+- A set of logs that were often emitted when `memfault-core-handler` captured a
+  coredump have had their log level lowered from `warn` to `debug`.
+
+### Experimental
+
+- Some work-in-progress files for a new program called `memfault-watch` have
+  been added. Keep an eye out for it to be released soon!
+
 ## [1.12.0] - 2024-05-28
 
 ### Added
@@ -921,3 +974,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.11.0-kirkstone
 [1.12.0]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.12.0-kirkstone
+[1.13.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.13.0-kirkstone

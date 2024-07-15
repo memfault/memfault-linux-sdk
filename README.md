@@ -36,9 +36,12 @@ implements Memfault-specific features and also acts as a configuration agent.
 To get started in minutes using the QEMU emulator, read our [Quick Start with
 QEMU guide][quickstart-qemu].
 
-If you have a Raspberry Pi available, the [Quick Start with Raspberry Pi guide]
-[quickstart-rpi] will walk you through building a complete system image,
+If you have a Raspberry Pi available, the [Quick Start with Raspberry Pi
+guide][quickstart-rpi] will walk you through building a complete system image,
 flashing it to an SDCard and updating your device remotely with Memfault OTA.
+
+[quickstart-qemu]: https://docs.memfault.com/docs/linux/quickstart
+[quickstart-rpi]: https://docs.memfault.com/docs/linux/quickstart-raspberrypi
 
 ## Prerequisites
 
@@ -101,9 +104,10 @@ Read more about [Linux OTA management using Memfault][docs-linux-ota].
 
 ### Metrics
 
-The Memfault Linux SDK relies on [collectd][collectd-homepage] for the
-collection and transmission of metrics. Application metrics can be sent to
-collectd by means of [`statsd`][statsd-homepage].
+`memfaultd` can collect system metrics internally or use
+[collectd][collectd-homepage] for the collection and transmission of metrics.
+Application metrics can be sent to to `memfaultd` directly or through `collectd`
+by means of [`statsd`][statsd-homepage].
 
 Read more about [Linux metrics using Memfault][docs-linux-metrics].
 
@@ -113,10 +117,10 @@ Read more about [Linux metrics using Memfault][docs-linux-metrics].
 
 ### Crash Reports
 
-To collect and upload user-land coredumps, the Memfault Linux SDK relies the
-standard kernel [coredump][man-core] feature, and so does not need to make use
-of any additional dependencies. Read more about [coredumps using the Memfault
-Linux SDK][docs-linux-coredumps].
+To collect and upload user-land coredumps, the `memfaultd` relies the standard
+kernel [coredump][man-core] feature, and so does not need to make use of any
+additional dependencies. Read more about [coredumps using the Memfault Linux
+SDK][docs-linux-coredumps].
 
 [docs-linux-coredumps]: https://mflt.io/linux-coredumps
 [man-core]: https://man7.org/linux/man-pages/man5/core.5.html
@@ -125,14 +129,15 @@ Linux SDK][docs-linux-coredumps].
 
 Memfault will detect various reboot reasons from the system and report them to
 the Memfault Dashboard. Users can also provide a specific reboot reason before
-restarting the device. Read more about [reboot reason tracking using the
-Memfault Linux SDK][docs-reboots].
+restarting the device. Read more about [reboot reason tracking using
+`memfaultd`][docs-reboots].
 
 [docs-reboots]: https://mflt.io/linux-reboots
 
 ### Log files
 
-System logs are captured by `fluent-bit` and forwarded to Memfault Linux SDK.
+System logs can be captured directly from `journald` or from `fluent-bit` and
+forwarded to `memfaultd`.
 
 Logs are compressed, stored locally and uploaded when the device connects to the
 Internet.

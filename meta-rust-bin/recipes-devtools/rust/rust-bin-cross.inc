@@ -6,8 +6,10 @@ SECTION = "devel"
 inherit cross
 inherit rust_bin-common
 
+PN:class-native = "rust-bin-native-${BUILD_ARCH}"
+
 # Required to link binaries
-DEPENDS += "gcc-cross-${TARGET_ARCH}"
+DEPENDS += "${@ "gcc-cross-${TARGET_ARCH}" if d.getVar('TARGET_ARCH') == "X86_64" else "" }" 
 
 PN = "rust-bin-cross-${TARGET_ARCH}"
 
@@ -28,7 +30,7 @@ def get_s(d):
         return "${WORKDIR}/rustc-nightly-${RUST_BUILD_TARGET}"
     else:
         return "${WORKDIR}/rustc-${PV}-${RUST_BUILD_TARGET}"
-
+  
 S = "${@get_s(d)}"
 
 # Relocating WORKDIR doesn't matter to installer

@@ -1,0 +1,132 @@
+---
+source: memfaultd/src/metrics/system_metrics/processes.rs
+expression: process_metric_readings_2
+---
+[
+  {
+    "name": "processes/memfaultd/cpu/percent/system",
+    "value": {
+      "Histogram": {
+        "value": 0.05,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "processes/memfaultd/cpu/percent/user",
+    "value": {
+      "Histogram": {
+        "value": 0.1,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "processes/memfaultd/num_threads",
+    "value": {
+      "Histogram": {
+        "value": 19.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "processes/memfaultd/pagefaults/major",
+    "value": {
+      "Histogram": {
+        "value": 16.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "processes/memfaultd/pagefaults/minor",
+    "value": {
+      "Histogram": {
+        "value": 20.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "processes/memfaultd/rss_bytes",
+    "value": {
+      "Histogram": {
+        "value": 18010112.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "processes/memfaultd/vm_bytes",
+    "value": {
+      "Histogram": {
+        "value": 1411293184.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "processes/systemd/cpu/percent/system",
+    "value": {
+      "Histogram": {
+        "value": 0.0028,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "processes/systemd/cpu/percent/user",
+    "value": {
+      "Histogram": {
+        "value": 0.0088,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "processes/systemd/num_threads",
+    "value": {
+      "Histogram": {
+        "value": 1.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "processes/systemd/pagefaults/major",
+    "value": {
+      "Histogram": {
+        "value": 0.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "processes/systemd/pagefaults/minor",
+    "value": {
+      "Histogram": {
+        "value": 0.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "processes/systemd/rss_bytes",
+    "value": {
+      "Histogram": {
+        "value": 11403264.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "processes/systemd/vm_bytes",
+    "value": {
+      "Histogram": {
+        "value": 19828736.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  }
+]

@@ -70,10 +70,13 @@ expression: content
   },
   "sessions": null,
   "metrics": {
-    "enable_daily_heartbeats": true,
+    "enable_daily_heartbeats": false,
     "system_metric_collection": {
       "enable": false,
-      "poll_interval_seconds": 10
+      "poll_interval_seconds": 10,
+      "processes": null,
+      "disk_space": null,
+      "network_interfaces": null
     },
     "statsd_server": null
   }

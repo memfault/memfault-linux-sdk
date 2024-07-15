@@ -55,7 +55,9 @@ use nom::{
     IResult,
 };
 
-use crate::metrics::{KeyedMetricReading, MetricStringKey};
+use crate::metrics::{
+    system_metrics::SystemMetricFamilyCollector, KeyedMetricReading, MetricStringKey,
+};
 
 const PROC_MEMINFO_PATH: &str = "/proc/meminfo";
 pub const MEMORY_METRIC_NAMESPACE: &str = "memory";
@@ -63,7 +65,11 @@ pub const MEMORY_METRIC_NAMESPACE: &str = "memory";
 pub struct MemoryMetricsCollector;
 
 impl MemoryMetricsCollector {
-    pub fn get_memory_metrics() -> Result<Vec<KeyedMetricReading>> {
+    pub fn new() -> Self {
+        MemoryMetricsCollector {}
+    }
+
+    pub fn get_memory_metrics(&self) -> Result<Vec<KeyedMetricReading>> {
         let path = Path::new(PROC_MEMINFO_PATH);
         // Need to read all of /proc/meminfo at once
         // as we derive used memory based on a calculation
@@ -136,6 +142,16 @@ impl MemoryMetricsCollector {
             KeyedMetricReading::new_histogram(free_key, free),
             KeyedMetricReading::new_histogram(used_key, used),
         ])
+    }
+}
+
+impl SystemMetricFamilyCollector for MemoryMetricsCollector {
+    fn collect_metrics(&mut self) -> Result<Vec<KeyedMetricReading>> {
+        self.get_memory_metrics()
+    }
+
+    fn family_name(&self) -> &'static str {
+        MEMORY_METRIC_NAMESPACE
     }
 }
 

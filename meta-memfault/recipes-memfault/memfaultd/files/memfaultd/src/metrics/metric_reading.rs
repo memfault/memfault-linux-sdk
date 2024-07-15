@@ -86,6 +86,7 @@ impl MetricReading {
             StatsDMetricType::Counter => {
                 Ok((remaining, MetricReading::Counter { value, timestamp }))
             }
+            StatsDMetricType::Timer => Ok((remaining, MetricReading::Counter { value, timestamp })),
             StatsDMetricType::Gauge => Ok((remaining, MetricReading::Gauge { value, timestamp })),
         }
     }
@@ -196,6 +197,7 @@ enum StatsDMetricType {
     Counter,
     Histogram,
     Gauge,
+    Timer,
 }
 
 impl StatsDMetricType {
@@ -209,6 +211,7 @@ impl StatsDMetricType {
             value(StatsDMetricType::Counter, char('c')),
             value(StatsDMetricType::Histogram, char('h')),
             value(StatsDMetricType::Gauge, char('g')),
+            value(StatsDMetricType::Timer, tag("ms")),
         ))(input)
     }
 }
@@ -235,6 +238,7 @@ mod tests {
     #[case("test_gauge:1.7|g")]
     #[case("cpu3_idle:100.9898|g")]
     #[case("some_negative_gauge:-87.55|g")]
+    #[case("test_timer:3600000|ms")]
     fn parse_valid_statsd_reading(#[case] reading_str: &str, _setup_logger: ()) {
         assert!(KeyedMetricReading::from_str(reading_str).is_ok())
     }

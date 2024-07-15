@@ -1,0 +1,69 @@
+---
+source: memfaultd/src/metrics/system_metrics/processes.rs
+expression: process_metric_readings.unwrap()
+---
+[
+  {
+    "name": "processes/memfaultd/rss_bytes",
+    "value": {
+      "Histogram": {
+        "value": 18010112.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "processes/memfaultd/vm_bytes",
+    "value": {
+      "Histogram": {
+        "value": 1411293184.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "processes/memfaultd/num_threads",
+    "value": {
+      "Histogram": {
+        "value": 19.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "processes/memfaultd/cpu/percent/system",
+    "value": {
+      "Histogram": {
+        "value": 0.05,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "processes/memfaultd/cpu/percent/user",
+    "value": {
+      "Histogram": {
+        "value": 0.1,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "processes/memfaultd/pagefaults/minor",
+    "value": {
+      "Histogram": {
+        "value": 50.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "processes/memfaultd/pagefaults/major",
+    "value": {
+      "Histogram": {
+        "value": 10.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  }
+]

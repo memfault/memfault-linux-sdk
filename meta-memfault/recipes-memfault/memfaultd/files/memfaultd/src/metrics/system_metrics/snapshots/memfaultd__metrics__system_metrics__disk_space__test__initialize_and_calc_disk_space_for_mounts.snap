@@ -1,0 +1,14 @@
+---
+source: memfaultd/src/metrics/system_metrics/disk_space.rs
+expression: disk_space_collector.mounts
+---
+[
+  {
+    "device": "/dev/sda1",
+    "mount_point": "/"
+  },
+  {
+    "device": "/dev/sda2",
+    "mount_point": "/media"
+  }
+]

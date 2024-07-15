@@ -3,6 +3,10 @@
 // See License.txt for details
 use eyre::{eyre, Result};
 use libc::{clockid_t, timespec, CLOCK_MONOTONIC};
+
+#[cfg(target_os = "linux")]
+use libc::{sysconf, _SC_CLK_TCK, _SC_PAGE_SIZE};
+
 use uuid::Uuid;
 
 #[cfg(target_os = "linux")]
@@ -17,6 +21,16 @@ pub fn read_system_boot_id() -> Result<Uuid> {
         Ok(boot_id_str) => Uuid::from_str(boot_id_str.trim()).wrap_err("Invalid boot id"),
         Err(_) => Err(eyre!("Unable to read boot id from system.")),
     }
+}
+
+#[cfg(target_os = "linux")]
+pub fn clock_ticks_per_second() -> u64 {
+    unsafe { sysconf(_SC_CLK_TCK) as u64 }
+}
+
+#[cfg(target_os = "linux")]
+pub fn bytes_per_page() -> u64 {
+    unsafe { sysconf(_SC_PAGE_SIZE) as u64 }
 }
 
 /// Calls clock_gettime
@@ -67,4 +81,14 @@ pub fn read_system_boot_id() -> Result<Uuid> {
     use once_cell::sync::Lazy;
     static MOCK_BOOT_ID: Lazy<Uuid> = Lazy::new(Uuid::new_v4);
     Ok(*MOCK_BOOT_ID)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn clock_ticks_per_second() -> u64 {
+    10_000
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn bytes_per_page() -> u64 {
+    4096
 }
