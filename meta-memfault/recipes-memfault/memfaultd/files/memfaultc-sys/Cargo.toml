@@ -3,6 +3,12 @@ name = "memfaultc-sys"
 version = "0.1.0"
 edition = "2021"
 autobins = false
+description = "Supporting crate for the Memfault memfaultd embedded Linux agent"
+homepage = "https://github.com/memfault/memfaultd"
+documentation = "https://docs.memfault.com/"
+license-file = "License.txt"
+readme = "README.md"
+repository = "https://github.com/memfault/memfaultd"
 
 [dependencies]
 libc = "0.2.138"

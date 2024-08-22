@@ -6,7 +6,6 @@ use chrono::{DateTime, Utc};
 use std::ops::Sub;
 use std::process::Command;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use eyre::{eyre, ErrReport, Result};
@@ -15,7 +14,7 @@ use crate::metrics::{
     core_metrics::{
         METRIC_BATTERY_DISCHARGE_DURATION_MS, METRIC_BATTERY_SOC_PCT, METRIC_BATTERY_SOC_PCT_DROP,
     },
-    KeyedMetricReading, MetricReading, MetricReportManager, MetricStringKey,
+    KeyedMetricReading, MetricReading, MetricsMBox,
 };
 use crate::util::time_measure::TimeMeasure;
 
@@ -92,18 +91,18 @@ impl FromStr for BatteryMonitorReading {
 pub struct BatteryMonitor<T: TimeMeasure> {
     previous_reading: Option<BatteryMonitorReading>,
     last_reading_time: T,
-    heartbeat_manager: Arc<Mutex<MetricReportManager>>,
+    metrics_mbox: MetricsMBox,
 }
 
 impl<T> BatteryMonitor<T>
 where
     T: TimeMeasure + Copy + Ord + Sub<T, Output = Duration>,
 {
-    pub fn new(heartbeat_manager: Arc<Mutex<MetricReportManager>>) -> Self {
+    pub fn new(metrics_mbox: MetricsMBox) -> Self {
         Self {
             previous_reading: None,
             last_reading_time: T::now(),
-            heartbeat_manager,
+            metrics_mbox,
         }
     }
 
@@ -116,7 +115,7 @@ where
         wall_time: DateTime<Utc>,
     ) -> Result<()> {
         let reading_duration = reading_time.since(&self.last_reading_time);
-        match (
+        let metrics = match (
             &battery_monitor_reading.battery_charging_state,
             &self.previous_reading,
         ) {
@@ -134,51 +133,51 @@ where
                 let soc_pct_discharged =
                     (previous_soc_pct - battery_monitor_reading.battery_soc_pct).max(0.0);
 
-                let mut heartbeat_manager = self.heartbeat_manager.lock().expect("Mutex Poisoned");
-                heartbeat_manager.add_to_counter(
-                    METRIC_BATTERY_DISCHARGE_DURATION_MS,
-                    reading_duration.as_millis() as f64,
-                )?;
-
-                heartbeat_manager
-                    .add_to_counter(METRIC_BATTERY_SOC_PCT_DROP, soc_pct_discharged)?;
-
-                let battery_soc_pct_key = MetricStringKey::from_str(METRIC_BATTERY_SOC_PCT)
-                    .unwrap_or_else(|_| panic!("Invalid metric name: {}", METRIC_BATTERY_SOC_PCT));
-                heartbeat_manager.add_metric(KeyedMetricReading::new(
-                    battery_soc_pct_key,
-                    MetricReading::TimeWeightedAverage {
-                        value: soc_pct,
-                        timestamp: wall_time,
-                        interval: chrono::Duration::from_std(reading_duration)?,
-                    },
-                ))?;
+                vec![
+                    KeyedMetricReading::add_to_counter(
+                        METRIC_BATTERY_DISCHARGE_DURATION_MS.into(),
+                        reading_duration.as_millis() as f64,
+                    ),
+                    KeyedMetricReading::add_to_counter(
+                        METRIC_BATTERY_SOC_PCT_DROP.into(),
+                        soc_pct_discharged,
+                    ),
+                    KeyedMetricReading::new(
+                        METRIC_BATTERY_SOC_PCT.into(),
+                        MetricReading::TimeWeightedAverage {
+                            value: soc_pct,
+                            timestamp: wall_time,
+                            interval: chrono::Duration::from_std(reading_duration)?,
+                        },
+                    ),
+                ]
             }
             // In all other cases only update the SoC percent
             _ => {
                 let soc_pct = battery_monitor_reading.battery_soc_pct;
 
-                let mut heartbeat_manager = self.heartbeat_manager.lock().expect("Mutex Poisoned");
-
-                // Add 0.0 to these counters so if the device is charging
-                // for the full heartbeat duration these metrics are still
-                // populated
-                heartbeat_manager.add_to_counter(METRIC_BATTERY_DISCHARGE_DURATION_MS, 0.0)?;
-                heartbeat_manager.add_to_counter(METRIC_BATTERY_SOC_PCT_DROP, 0.0)?;
-
-                let battery_soc_pct_key = MetricStringKey::from_str(METRIC_BATTERY_SOC_PCT)
-                    .unwrap_or_else(|_| panic!("Invalid metric name: {}", METRIC_BATTERY_SOC_PCT));
-                heartbeat_manager.add_metric(KeyedMetricReading::new(
-                    battery_soc_pct_key,
-                    MetricReading::TimeWeightedAverage {
-                        value: soc_pct,
-                        timestamp: wall_time,
-                        interval: chrono::Duration::from_std(reading_duration)?,
-                    },
-                ))?;
+                vec![
+                    // Add 0.0 to these counters so if the device is charging
+                    // for the full heartbeat duration these metrics are still
+                    // populated
+                    KeyedMetricReading::add_to_counter(
+                        METRIC_BATTERY_DISCHARGE_DURATION_MS.into(),
+                        0.0,
+                    ),
+                    KeyedMetricReading::add_to_counter(METRIC_BATTERY_SOC_PCT_DROP.into(), 0.0),
+                    KeyedMetricReading::new(
+                        METRIC_BATTERY_SOC_PCT.into(),
+                        MetricReading::TimeWeightedAverage {
+                            value: soc_pct,
+                            timestamp: wall_time,
+                            interval: chrono::Duration::from_std(reading_duration)?,
+                        },
+                    ),
+                ]
             }
-        }
+        };
 
+        self.metrics_mbox.send_and_forget(metrics)?;
         self.previous_reading = Some(battery_monitor_reading);
         self.last_reading_time = reading_time;
 
@@ -213,9 +212,10 @@ where
 mod tests {
 
     use super::*;
-    use crate::metrics::MetricValue;
+    use crate::metrics::{MetricValue, TakeMetrics};
     use crate::test_utils::TestInstant;
     use rstest::rstest;
+    use ssf::ServiceMock;
 
     #[rstest]
     #[case("Charging:80", true)]
@@ -313,9 +313,9 @@ mod tests {
         #[case] expected_discharge_duration: f64,
     ) {
         let now = TestInstant::now();
-        let heartbeat_manager = Arc::new(Mutex::new(MetricReportManager::new()));
+        let mut metrics_mock = ServiceMock::new();
         let mut battery_monitor = BatteryMonitor {
-            heartbeat_manager,
+            metrics_mbox: metrics_mock.mbox.clone(),
             last_reading_time: now,
             previous_reading: None,
         };
@@ -328,12 +328,8 @@ mod tests {
                 .update_metrics(reading, TestInstant::now(), ts)
                 .unwrap();
         }
-        let metrics = battery_monitor
-            .heartbeat_manager
-            .lock()
-            .unwrap()
-            .take_heartbeat_metrics();
-        let soc_pct_key = METRIC_BATTERY_SOC_PCT.parse::<MetricStringKey>().unwrap();
+        let metrics = metrics_mock.take_metrics().unwrap();
+        let soc_pct_key = METRIC_BATTERY_SOC_PCT.into();
 
         match metrics.get(&soc_pct_key).unwrap() {
             MetricValue::Number(e) => {
@@ -346,17 +342,13 @@ mod tests {
             _ => panic!("This test only expects number metric values!"),
         }
 
-        let soc_pct_discharge_key = METRIC_BATTERY_SOC_PCT_DROP
-            .parse::<MetricStringKey>()
-            .unwrap();
+        let soc_pct_discharge_key = METRIC_BATTERY_SOC_PCT_DROP.into();
         match metrics.get(&soc_pct_discharge_key).unwrap() {
             MetricValue::Number(e) => assert_eq!(*e, expected_soc_pct_discharge),
             _ => panic!("This test only expects number metric values!"),
         }
 
-        let soc_discharge_duration_key = METRIC_BATTERY_DISCHARGE_DURATION_MS
-            .parse::<MetricStringKey>()
-            .unwrap();
+        let soc_discharge_duration_key = METRIC_BATTERY_DISCHARGE_DURATION_MS.into();
         match metrics.get(&soc_discharge_duration_key).unwrap() {
             MetricValue::Number(e) => assert_eq!(*e, expected_discharge_duration),
             _ => panic!("This test only expects number metric values!"),

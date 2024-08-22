@@ -5,26 +5,26 @@ use std::{
     io::Read,
     path::PathBuf,
     str::{from_utf8, FromStr},
-    sync::{Arc, Mutex},
 };
 
 use eyre::{eyre, Result};
 use log::warn;
+use ssf::MsgMailbox;
 use tiny_http::{Method, Request, Response};
 
 use crate::{
     http_server::{HttpHandler, HttpHandlerResult, SessionRequest},
-    metrics::{MetricReportManager, MetricReportType, SessionName},
+    metrics::SessionName,
     network::NetworkConfig,
 };
 
-use super::KeyedMetricReading;
+use super::SessionEventMessage;
 
 /// A server that listens for session management requests
 #[derive(Clone)]
 pub struct SessionEventHandler {
     data_collection_enabled: bool,
-    metrics_store: Arc<Mutex<MetricReportManager>>,
+    session_events_mbox: MsgMailbox<SessionEventMessage>,
     mar_staging_path: PathBuf,
     network_config: NetworkConfig,
 }
@@ -32,13 +32,13 @@ pub struct SessionEventHandler {
 impl SessionEventHandler {
     pub fn new(
         data_collection_enabled: bool,
-        metrics_store: Arc<Mutex<MetricReportManager>>,
+        session_events_mbox: MsgMailbox<SessionEventMessage>,
         mar_staging_path: PathBuf,
         network_config: NetworkConfig,
     ) -> Self {
         Self {
             data_collection_enabled,
-            metrics_store,
+            session_events_mbox,
             mar_staging_path,
             network_config,
         }
@@ -63,20 +63,27 @@ impl SessionEventHandler {
         }
     }
 
-    fn add_metric_readings_to_session(
-        session_name: &SessionName,
-        metric_reports: Arc<Mutex<MetricReportManager>>,
-        metric_readings: Vec<KeyedMetricReading>,
+    fn start_session(
+        &self,
+        name: SessionName,
+        readings: Vec<super::KeyedMetricReading>,
     ) -> Result<()> {
-        let mut metric_reports = metric_reports.lock().expect("Mutex poisoned!");
-        for metric_reading in metric_readings {
-            metric_reports.add_metric_to_report(
-                &MetricReportType::Session(session_name.clone()),
-                metric_reading,
-            )?
-        }
+        self.session_events_mbox
+            .send_and_wait_for_reply(SessionEventMessage::StartSession { name, readings })?
+    }
 
-        Ok(())
+    fn stop_session(
+        &self,
+        name: SessionName,
+        readings: Vec<super::KeyedMetricReading>,
+    ) -> Result<()> {
+        self.session_events_mbox
+            .send_and_wait_for_reply(SessionEventMessage::StopSession {
+                name,
+                readings,
+                network_config: self.network_config.clone(),
+                mar_staging_area: self.mar_staging_path.clone(),
+            })?
     }
 }
 
@@ -95,38 +102,14 @@ impl HttpHandler for SessionEventHandler {
                     readings,
                 }) => {
                     if request.url() == "/v1/session/start" {
-                        if let Err(e) = self
-                            .metrics_store
-                            .lock()
-                            .expect("Mutex poisoned")
-                            .start_session(session_name.clone())
-                        {
+                        if let Err(e) = self.start_session(session_name, readings) {
                             return HttpHandlerResult::Error(format!(
                                 "Failed to start session: {:?}",
                                 e
                             ));
                         }
-                    }
-
-                    // Add additional metric readings after the session has started
-                    // (if starting) but before it has ended (if ending)
-                    if !readings.is_empty() {
-                        if let Err(e) = Self::add_metric_readings_to_session(
-                            &session_name,
-                            self.metrics_store.clone(),
-                            readings,
-                        ) {
-                            warn!("Failed to add metrics to session report: {}", e);
-                        }
-                    }
-
-                    if request.url() == "/v1/session/end" {
-                        if let Err(e) = MetricReportManager::dump_report_to_mar_entry(
-                            &self.metrics_store,
-                            &self.mar_staging_path,
-                            &self.network_config,
-                            &MetricReportType::Session(session_name),
-                        ) {
+                    } else if request.url() == "/v1/session/end" {
+                        if let Err(e) = self.stop_session(session_name, readings) {
                             return HttpHandlerResult::Error(format!(
                                 "Failed to end session: {:?}",
                                 e
@@ -149,15 +132,11 @@ impl HttpHandler for SessionEventHandler {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::BTreeMap,
-        path::Path,
-        str::FromStr,
-        sync::{Arc, Mutex},
-    };
+    use std::{collections::BTreeMap, path::Path, str::FromStr};
 
     use insta::assert_json_snapshot;
     use rstest::{fixture, rstest};
+    use ssf::{PingMessage, SharedServiceThread};
     use tempfile::TempDir;
     use tiny_http::{Method, TestRequest};
 
@@ -165,8 +144,9 @@ mod tests {
         config::SessionConfig,
         http_server::{HttpHandler, HttpHandlerResult},
         mar::manifest::{Manifest, Metadata},
-        metrics::{MetricReportManager, MetricStringKey, SessionName},
-        network::NetworkConfig,
+        metrics::{
+            KeyedMetricReading, MetricReportManager, MetricStringKey, MetricValue, SessionName,
+        },
         test_utils::in_histograms,
     };
 
@@ -174,238 +154,204 @@ mod tests {
     use crate::test_utils::setup_logger;
 
     #[rstest]
-    fn test_start_without_stop_session(handler: SessionEventHandler) {
+    fn test_start_without_stop_session(mut fixture: Fixture) {
         let r = TestRequest::new()
             .with_method(Method::Post)
             .with_path("/v1/session/start")
             .with_body("test-session");
         assert!(matches!(
-            handler.handle_request(&mut r.into()),
+            fixture.handler.handle_request(&mut r.into()),
             HttpHandlerResult::Response(_)
         ));
 
-        let mut metric_report_manager = handler.metrics_store.lock().unwrap();
-        let readings = in_histograms(vec![("foo", 1.0), ("bar", 2.0), ("not-captured", 3.0)]);
+        fixture.send_metrics(&mut in_histograms(vec![
+            ("foo", 1.0),
+            ("bar", 2.0),
+            ("not-captured", 3.0),
+        ]));
 
-        for reading in readings {
-            metric_report_manager
-                .add_metric(reading)
-                .expect("Failed to add metric reading");
-        }
-
-        let metrics: BTreeMap<_, _> = metric_report_manager
-            .take_session_metrics(&SessionName::from_str("test-session").unwrap())
-            .unwrap()
-            .into_iter()
-            .collect();
-
-        assert_json_snapshot!(metrics);
+        assert_json_snapshot!(fixture.take_session_metrics());
     }
 
     #[rstest]
-    fn test_start_with_metrics(_setup_logger: (), handler: SessionEventHandler) {
+    fn test_start_with_metrics(_setup_logger: (), mut fixture: Fixture) {
         let r = TestRequest::new()
             .with_method(Method::Post)
             .with_path("/v1/session/start")
-            .with_body("{\"session_name\": \"test-session\", 
-                         \"readings\": 
-                                [ 
+            .with_body("{\"session_name\": \"test-session\",
+                         \"readings\":
+                                [
                                   {\"name\": \"foo\", \"value\": {\"Gauge\": {\"value\": 1.0, \"timestamp\": \"2024-01-01 00:00:00 UTC\"}}},
                                   {\"name\": \"bar\", \"value\": {\"Gauge\": {\"value\": 4.0, \"timestamp\": \"2024-01-01 00:00:00 UTC\"}}},
                                   {\"name\": \"baz\", \"value\": {\"ReportTag\": {\"value\": \"test-tag\", \"timestamp\": \"2024-01-01 00:00:00 UTC\"}}}
                                 ]
                          }");
-        let response = handler.handle_request(&mut r.into());
+        let response = fixture.handler.handle_request(&mut r.into());
         assert!(matches!(response, HttpHandlerResult::Response(_)));
 
-        let mut metric_report_manager = handler.metrics_store.lock().unwrap();
-        let metrics: BTreeMap<_, _> = metric_report_manager
-            .take_session_metrics(&SessionName::from_str("test-session").unwrap())
-            .unwrap()
-            .into_iter()
-            .collect();
-
-        assert_json_snapshot!(metrics);
+        assert_json_snapshot!(fixture.take_session_metrics());
     }
 
     #[rstest]
-    fn test_end_with_metrics(_setup_logger: ()) {
-        let session_config = SessionConfig {
-            name: SessionName::from_str("test-session").unwrap(),
-            captured_metrics: vec![
-                MetricStringKey::from_str("foo").unwrap(),
-                MetricStringKey::from_str("bar").unwrap(),
-            ],
-        };
-
-        let tempdir = TempDir::new().unwrap();
-        let handler = SessionEventHandler::new(
-            true,
-            Arc::new(Mutex::new(MetricReportManager::new_with_session_configs(
-                &[session_config],
-            ))),
-            tempdir.path().to_path_buf(),
-            NetworkConfig::test_fixture(),
-        );
+    fn test_end_with_metrics(_setup_logger: (), fixture: Fixture) {
         let r = TestRequest::new()
             .with_method(Method::Post)
             .with_path("/v1/session/start")
             .with_body("test-session");
         assert!(matches!(
-            handler.handle_request(&mut r.into()),
+            fixture.handler.handle_request(&mut r.into()),
             HttpHandlerResult::Response(_)
         ));
 
         let r = TestRequest::new()
             .with_method(Method::Post)
             .with_path("/v1/session/end")
-            .with_body("{\"session_name\": \"test-session\", 
-                         \"readings\": 
-                                [ 
+            .with_body("{\"session_name\": \"test-session\",
+                         \"readings\":
+                                [
                                   {\"name\": \"foo\", \"value\": {\"Gauge\": {\"value\": 1.0, \"timestamp\": \"2024-01-01 00:00:00 UTC\"}}},
                                   {\"name\": \"bar\", \"value\": {\"Gauge\": {\"value\": 3.0, \"timestamp\": \"2024-01-01 00:00:00 UTC\"}}}
                                 ]
                          }");
         assert!(matches!(
-            handler.handle_request(&mut r.into()),
+            fixture.handler.handle_request(&mut r.into()),
             HttpHandlerResult::Response(_)
         ));
+        fixture.process_all();
 
-        verify_dumped_metric_report(&handler.mar_staging_path, "end_with_metrics")
+        verify_dumped_metric_report(fixture.tempdir.path(), "end_with_metrics")
     }
 
     #[rstest]
-    fn test_start_twice_without_stop_session(_setup_logger: (), handler: SessionEventHandler) {
+    fn test_start_twice_without_stop_session(_setup_logger: (), mut fixture: Fixture) {
         let r = TestRequest::new()
             .with_method(Method::Post)
             .with_path("/v1/session/start")
             .with_body("test-session");
 
         assert!(matches!(
-            handler.handle_request(&mut r.into()),
+            fixture.handler.handle_request(&mut r.into()),
             HttpHandlerResult::Response(_)
         ));
 
-        {
-            let mut metric_report_manager = handler.metrics_store.lock().unwrap();
-            let readings =
-                in_histograms(vec![("foo", 10.0), ("bar", 20.0), ("not-captured", 30.0)]);
-
-            for reading in readings {
-                metric_report_manager
-                    .add_metric(reading)
-                    .expect("Failed to add metric reading");
-            }
-        }
+        fixture.send_metrics(&mut in_histograms(vec![
+            ("foo", 10.0),
+            ("bar", 20.0),
+            ("not-captured", 30.0),
+        ]));
 
         let r = TestRequest::new()
             .with_method(Method::Post)
             .with_path("/v1/session/start")
             .with_body("test-session");
         assert!(matches!(
-            handler.handle_request(&mut r.into()),
+            fixture.handler.handle_request(&mut r.into()),
             HttpHandlerResult::Response(_)
         ));
 
-        let mut metric_report_manager = handler.metrics_store.lock().unwrap();
-        let readings = in_histograms(vec![("foo", 1.0), ("bar", 2.0), ("not-captured", 3.0)]);
+        fixture.send_metrics(&mut in_histograms(vec![
+            ("foo", 1.0),
+            ("bar", 2.0),
+            ("not-captured", 3.0),
+        ]));
 
-        for reading in readings {
-            metric_report_manager
-                .add_metric(reading)
-                .expect("Failed to add metric reading");
-        }
-
-        let metrics: BTreeMap<_, _> = metric_report_manager
-            .take_session_metrics(&SessionName::from_str("test-session").unwrap())
-            .unwrap()
-            .into_iter()
-            .collect();
-
-        assert_json_snapshot!(metrics);
+        assert_json_snapshot!(fixture.take_session_metrics());
     }
 
     #[rstest]
-    fn test_start_then_stop_session(_setup_logger: ()) {
-        let session_config = SessionConfig {
-            name: SessionName::from_str("test-session").unwrap(),
-            captured_metrics: vec![
-                MetricStringKey::from_str("foo").unwrap(),
-                MetricStringKey::from_str("bar").unwrap(),
-                MetricStringKey::from_str("baz").unwrap(),
-            ],
-        };
-
-        let tempdir = TempDir::new().unwrap();
-        let handler = SessionEventHandler::new(
-            true,
-            Arc::new(Mutex::new(MetricReportManager::new_with_session_configs(
-                &[session_config],
-            ))),
-            tempdir.path().to_path_buf(),
-            NetworkConfig::test_fixture(),
-        );
-
+    fn test_start_then_stop_session(_setup_logger: (), mut fixture: Fixture) {
         let r = TestRequest::new()
             .with_method(Method::Post)
             .with_path("/v1/session/start")
             .with_body("{\"session_name\": \"test-session\", \"readings\": []}");
         assert!(matches!(
-            handler.handle_request(&mut r.into()),
+            fixture.handler.handle_request(&mut r.into()),
             HttpHandlerResult::Response(_)
         ));
-        {
-            let mut metric_report_manager = handler.metrics_store.lock().unwrap();
-            let readings = in_histograms(vec![("bar", 20.0), ("not-captured", 30.0)]);
-
-            for reading in readings {
-                metric_report_manager
-                    .add_metric(reading)
-                    .expect("Failed to add metric reading");
-            }
-        }
+        fixture.send_metrics(&mut in_histograms(vec![
+            ("bar", 20.0),
+            ("not-captured", 30.0),
+        ]));
 
         let r = TestRequest::new()
             .with_method(Method::Post)
             .with_path("/v1/session/end")
-            .with_body("{\"session_name\": \"test-session\", 
-                         \"readings\": 
-                                [ 
+            .with_body("{\"session_name\": \"test-session\",
+                         \"readings\":
+                                [
                                   {\"name\": \"foo\", \"value\": {\"Gauge\": {\"value\": 100, \"timestamp\": \"2024-01-01 00:00:00 UTC\"}}},
                                   {\"name\": \"baz\", \"value\": {\"ReportTag\": {\"value\": \"test-tag\", \"timestamp\": \"2024-01-01 00:00:00 UTC\"}}}
                                 ]
                          }");
         assert!(matches!(
-            handler.handle_request(&mut r.into()),
+            fixture.handler.handle_request(&mut r.into()),
             HttpHandlerResult::Response(_)
         ));
+        fixture.process_all();
 
-        verify_dumped_metric_report(&handler.mar_staging_path, "start_then_stop");
-        let mut metric_report_manager = handler.metrics_store.lock().unwrap();
+        verify_dumped_metric_report(fixture.tempdir.path(), "start_then_stop");
 
         // Should error as session should have been removed from MetricReportManager
         // after it was ended
-        assert!(metric_report_manager
+        assert!(fixture
+            .jig
+            .shared()
+            .lock()
+            .unwrap()
             .take_session_metrics(&SessionName::from_str("test-session").unwrap())
             .is_err());
     }
 
     #[rstest]
-    fn test_stop_without_start_session(handler: SessionEventHandler) {
+    fn test_stop_without_start_session(_setup_logger: (), fixture: Fixture) {
         let r = TestRequest::new()
             .with_method(Method::Post)
             .with_path("/v1/session/end")
             .with_body("test-session");
         assert!(matches!(
-            handler.handle_request(&mut r.into()),
+            fixture.handler.handle_request(&mut r.into()),
             HttpHandlerResult::Error(_)
         ));
+    }
+
+    struct Fixture {
+        handler: SessionEventHandler,
+        jig: SharedServiceThread<MetricReportManager>,
+        tempdir: TempDir,
+    }
+
+    impl Fixture {
+        fn take_session_metrics(&mut self) -> BTreeMap<MetricStringKey, MetricValue> {
+            self.process_all();
+            self.jig
+                .shared()
+                .lock()
+                .unwrap()
+                .take_session_metrics(&SessionName::from_str("test-session").unwrap())
+                .unwrap()
+                .into_iter()
+                .collect()
+        }
+
+        fn send_metrics(&mut self, metrics: &mut dyn Iterator<Item = KeyedMetricReading>) {
+            self.jig
+                .mbox()
+                .send_and_wait_for_reply(metrics.collect::<Vec<_>>())
+                .expect("error delivering metrics");
+        }
+
+        fn process_all(&self) {
+            self.jig
+                .mbox()
+                .send_and_wait_for_reply(PingMessage {})
+                .expect("unable to ping thread")
+        }
     }
 
     /// Creates a SessionEventHandler whose metric store is configured with
     /// a "test-session" session that captures the "foo" and "bar" metrics
     #[fixture]
-    fn handler() -> SessionEventHandler {
+    fn fixture() -> Fixture {
         let session_config = SessionConfig {
             name: SessionName::from_str("test-session").unwrap(),
             captured_metrics: vec![
@@ -415,14 +361,23 @@ mod tests {
             ],
         };
 
-        SessionEventHandler::new(
+        let jig =
+            SharedServiceThread::spawn_with(MetricReportManager::new_with_session_configs(&[
+                session_config,
+            ]));
+
+        let tempdir = TempDir::new().unwrap();
+        let handler = SessionEventHandler::new(
             true,
-            Arc::new(Mutex::new(MetricReportManager::new_with_session_configs(
-                &[session_config],
-            ))),
-            TempDir::new().unwrap().path().to_path_buf(),
+            jig.mbox().into(),
+            tempdir.path().to_owned(),
             NetworkConfig::test_fixture(),
-        )
+        );
+        Fixture {
+            handler,
+            jig,
+            tempdir,
+        }
     }
 
     fn verify_dumped_metric_report(mar_staging_path: &Path, test_name: &str) {

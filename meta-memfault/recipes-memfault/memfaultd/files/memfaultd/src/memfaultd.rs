@@ -15,10 +15,12 @@ use eyre::Result;
 use eyre::{eyre, Context};
 use log::{error, info, trace, warn};
 
+use ssf::SharedServiceThread;
+
 use crate::metrics::{
-    BatteryMonitor, BatteryReadingHandler, ConnectivityMonitor, MetricReportType,
-    PeriodicMetricReportDumper, ReportSyncEventHandler, SessionEventHandler,
-    SystemMetricsCollector,
+    BatteryMonitor, BatteryReadingHandler, ConnectivityMonitor, KeyedMetricReading,
+    MetricReportType, MetricsMBox, PeriodicMetricReportDumper, ReportSyncEventHandler,
+    SessionEventHandler, SystemMetricsCollector,
 };
 
 use crate::{
@@ -116,15 +118,14 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         vec![Box::new(MarExportHandler::new(config.mar_staging_path()))];
 
     // Metric store
-    let metric_report_manager = match config.session_configs() {
-        Some(session_configs) => Arc::new(Mutex::new(
-            MetricReportManager::new_with_session_configs(session_configs),
-        )),
-        None => Arc::new(Mutex::new(MetricReportManager::new())),
-    };
+    let metric_report_manager = SharedServiceThread::spawn_with(match config.session_configs() {
+        Some(session_configs) => MetricReportManager::new_with_session_configs(session_configs),
+        None => MetricReportManager::new(),
+    });
+    let metrics_mbox: MetricsMBox = metric_report_manager.mbox().into();
 
     let battery_monitor = Arc::new(Mutex::new(BatteryMonitor::<Instant>::new(
-        metric_report_manager.clone(),
+        metrics_mbox.clone(),
     )));
     let battery_reading_handler = BatteryReadingHandler::new(
         config.config_file.enable_data_collection,
@@ -134,15 +135,15 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
 
     let report_sync_event_handler = ReportSyncEventHandler::new(
         config.config_file.enable_data_collection,
-        metric_report_manager.clone(),
+        metrics_mbox.clone(),
     );
     http_handlers.push(Box::new(report_sync_event_handler));
 
     let session_event_handler = SessionEventHandler::new(
         config.config_file.enable_data_collection,
-        metric_report_manager.clone(),
+        metric_report_manager.mbox().into(),
         config.mar_staging_path(),
-        NetworkConfig::from(&config),
+        (&config).into(),
     );
     http_handlers.push(Box::new(session_event_handler));
 
@@ -151,7 +152,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         let collectd_handler = CollectdHandler::new(
             config.config_file.enable_data_collection,
             config.builtin_system_metric_collection_enabled(),
-            metric_report_manager.clone(),
+            metric_report_manager.mbox().into(),
         );
         http_handlers.push(Box::new(collectd_handler));
     }
@@ -161,7 +162,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         let net_config = NetworkConfig::from(&config);
         let mar_staging_path = config.mar_staging_path();
         let heartbeat_interval = config.config_file.heartbeat_interval;
-        let metric_report_manager = metric_report_manager.clone();
+        let metric_report_manager = metric_report_manager.shared();
         spawn(move || {
             let periodic_metric_report_dumper = PeriodicMetricReportDumper::new(
                 mar_staging_path,
@@ -177,22 +178,25 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
 
     // Start statsd server
     if config.statsd_server_enabled() {
-        let statsd_server = StatsDServer::new();
         if let Ok(bind_address) = config.statsd_server_address() {
-            if let Err(e) = statsd_server.start(bind_address, metric_report_manager.clone()) {
-                warn!("Couldn't start StatsD server: {}", e);
-            };
+            let metrics_mailbox = metrics_mbox.clone();
+            spawn(move || {
+                let statsd_server = StatsDServer::new(metrics_mailbox);
+                if let Err(e) = statsd_server.run(bind_address) {
+                    warn!("Couldn't start StatsD server: {}", e);
+                };
+            });
         }
     }
 
     // Start system metric collector thread
     if config.builtin_system_metric_collection_enabled() {
-        let metric_report_manager = metric_report_manager.clone();
         let poll_interval = config.system_metric_poll_interval();
         let system_metric_config = config.system_metric_config();
+        let mbox = metrics_mbox.clone();
         spawn(move || {
-            let mut sys_metric_collector = SystemMetricsCollector::new(system_metric_config);
-            sys_metric_collector.run(poll_interval, metric_report_manager)
+            let mut sys_metric_collector = SystemMetricsCollector::new(system_metric_config, mbox);
+            sys_metric_collector.run(poll_interval)
         });
     }
 
@@ -200,7 +204,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     if config.config_file.metrics.enable_daily_heartbeats {
         let net_config = NetworkConfig::from(&config);
         let mar_staging_path = config.mar_staging_path();
-        let metric_report_manager = metric_report_manager.clone();
+        let metric_report_manager = metric_report_manager.shared();
         spawn(move || {
             let periodic_metric_report_dumper = PeriodicMetricReportDumper::new(
                 mar_staging_path,
@@ -229,7 +233,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                 let battery_info_command = Command::new(&battery_info_command_str);
                 if let Err(e) = battery_monitor
                     .lock()
-                    .unwrap()
+                    .expect("Mutex poisoned")
                     .update_via_command(battery_info_command)
                 {
                     warn!("Error updating battery monitor metrics: {}", e);
@@ -241,7 +245,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     if let Some(connectivity_monitor_config) = config.connectivity_monitor_config() {
         let mut connectivity_monitor = ConnectivityMonitor::<Instant, TcpConnectionChecker>::new(
             connectivity_monitor_config,
-            metric_report_manager.clone(),
+            metric_report_manager.mbox().into(),
         );
         spawn(move || {
             let mut next_connectivity_reading_time =
@@ -259,42 +263,49 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     }
     // Schedule a task to dump the metrics when a sync is forced
     {
-        let net_config = NetworkConfig::from(&config);
-        let mar_staging_path = config.mar_staging_path();
+        {
+            let net_config = NetworkConfig::from(&config);
+            let mar_staging_path = config.mar_staging_path();
+            let metric_report_manager = metric_report_manager.shared();
+            sync_tasks.push(Box::new(move |forced| match forced {
+                true => metric_report_manager
+                    .lock()
+                    .expect("Mutex poisoned")
+                    .dump_report_to_mar_entry(
+                        &mar_staging_path,
+                        &net_config,
+                        &MetricReportType::Heartbeat,
+                    ),
+                false => Ok(()),
+            }));
+        }
 
-        let heartbeat_report_manager = metric_report_manager.clone();
-        sync_tasks.push(Box::new(move |forced| match forced {
-            true => MetricReportManager::dump_report_to_mar_entry(
-                &heartbeat_report_manager,
-                &mar_staging_path,
-                &net_config,
-                &MetricReportType::Heartbeat,
-            ),
-            false => Ok(()),
-        }));
-
-        let daily_heartbeat_report_manager = metric_report_manager.clone();
-        let net_config = NetworkConfig::from(&config);
-        let mar_staging_path = config.mar_staging_path();
-        sync_tasks.push(Box::new(move |forced| match forced {
-            true => {
-                trace!("Dumping daily heartbeat metrics");
-                MetricReportManager::dump_report_to_mar_entry(
-                    &daily_heartbeat_report_manager,
-                    &mar_staging_path,
-                    &net_config,
-                    &MetricReportType::DailyHeartbeat,
-                )
-            }
-            false => Ok(()),
-        }));
+        {
+            let net_config = NetworkConfig::from(&config);
+            let mar_staging_path = config.mar_staging_path();
+            let metric_report_manager = metric_report_manager.shared();
+            sync_tasks.push(Box::new(move |forced| match forced {
+                true => {
+                    trace!("Dumping daily heartbeat metrics");
+                    metric_report_manager
+                        .lock()
+                        .expect("Mutex poisoined")
+                        .dump_report_to_mar_entry(
+                            &mar_staging_path,
+                            &net_config,
+                            &MetricReportType::DailyHeartbeat,
+                        )
+                }
+                false => Ok(()),
+            }));
+        }
     }
     // Schedule a task to dump the metrics when we are shutting down
     {
         let net_config = NetworkConfig::from(&config);
         let mar_staging_path = config.mar_staging_path();
 
-        let metric_report_manager = metric_report_manager.clone();
+        let metric_report_manager = metric_report_manager.shared();
         shutdown_tasks.push(Box::new(move || {
             MetricReportManager::dump_metric_reports(
                 &metric_report_manager,
@@ -305,20 +316,14 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     }
     // Schedule a task to compute operational and crashfree hours
     {
-        let metric_report_manager = metric_report_manager.clone();
-
-        let mut crashfree_tracker = CrashFreeIntervalTracker::<Instant>::new_hourly();
+        let mut crashfree_tracker =
+            CrashFreeIntervalTracker::<Instant>::new_hourly(metric_report_manager.mbox().into());
         http_handlers.push(crashfree_tracker.http_handler());
         spawn(move || {
             let interval = Duration::from_secs(60);
             loop {
-                let metrics = crashfree_tracker.wait_and_update(interval);
-                let mut store = metric_report_manager.lock().unwrap();
-                trace!("Crashfree hours metrics: {:?}", metrics);
-                for m in metrics {
-                    if let Err(e) = store.add_metric(m) {
-                        warn!("Unable to add crashfree metric: {}", e);
-                    }
+                if let Err(e) = crashfree_tracker.wait_and_update(interval) {
+                    warn!("Error updating crashfree hours: {}", e);
                 }
             }
         });
@@ -393,7 +398,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                 log_config,
                 on_log_completion,
                 headroom_limiter,
-                metric_report_manager.clone(),
+                metric_report_manager.mbox().into(),
             )?;
             log_collector.spawn_collect_from(log_receiver);
 
@@ -452,7 +457,9 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
             if enable_data_collection
                 && (!forced_sync_only
                     && (last_device_config_refresh.is_none()
-                        || last_device_config_refresh.unwrap() + CONFIG_REFRESH_INTERVAL
+                        || last_device_config_refresh
+                            .expect("Last device config refresh not present")
+                            + CONFIG_REFRESH_INTERVAL
                             < Instant::now())
                     || forced)
             {
@@ -480,7 +487,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                 }
             }
 
-            mar_cleaner.clean(DiskSize::ZERO).unwrap();
+            mar_cleaner.clean(DiskSize::ZERO)?;
 
             if enable_data_collection && !forced_sync_only || forced {
                 trace!("Collect MAR entries...");
@@ -490,17 +497,16 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                     config.config_file.mar.mar_file_max_size,
                     config.sampling(),
                 );
-                let _metric_result = match result {
-                    Ok(0) => Ok(()),
-                    Ok(_count) => metric_report_manager
-                        .lock()
-                        .unwrap()
-                        .increment_counter(METRIC_MF_SYNC_SUCCESS),
-                    Err(_) => metric_report_manager
-                        .lock()
-                        .unwrap()
-                        .increment_counter(METRIC_MF_SYNC_FAILURE),
-                };
+                let _metric_result =
+                    match result {
+                        Ok(0) => Ok(()),
+                        Ok(_count) => metrics_mbox.send_and_forget(vec![
+                            KeyedMetricReading::increment_counter(METRIC_MF_SYNC_SUCCESS.into()),
+                        ]),
+                        Err(_) => metrics_mbox.send_and_forget(vec![
+                            KeyedMetricReading::increment_counter(METRIC_MF_SYNC_FAILURE.into()),
+                        ]),
+                    };
                 return result.map(|_| ());
             }
             Ok(())

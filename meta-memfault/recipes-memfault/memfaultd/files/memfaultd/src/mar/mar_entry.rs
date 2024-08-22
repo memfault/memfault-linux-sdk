@@ -91,10 +91,12 @@ impl MarEntry {
                 path.display()
             ));
         }
-        let buf_reader =
-            BufReader::new(File::open(manifest).wrap_err("Error reading manifest file")?);
-        let manifest: Manifest =
-            serde_json::from_reader(buf_reader).wrap_err("Error parsing manifest file")?;
+        let buf_reader = BufReader::new(
+            File::open(&manifest)
+                .wrap_err_with(|| format!("Error reading manifest file {:?}", manifest))?,
+        );
+        let manifest: Manifest = serde_json::from_reader(buf_reader)
+            .wrap_err_with(|| format!("Error parsing manifest file {:?}", manifest))?;
         Ok(Self {
             path,
             uuid,

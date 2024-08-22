@@ -1,0 +1,8 @@
+---
+source: memfaultd/src/metrics/statsd_server/mod.rs
+expression: fixture.mock.take_metrics().unwrap()
+---
+{
+  "test-counter": 1.0,
+  "test-gauge": 2.0
+}

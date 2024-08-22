@@ -56,12 +56,12 @@ impl PeriodicMetricReportDumper {
 
     fn run_once(&self, next_report: &mut Instant) {
         *next_report += self.report_interval;
-        if let Err(e) = MetricReportManager::dump_report_to_mar_entry(
-            &self.metric_report_manager,
-            &self.mar_staging_path,
-            &self.net_config,
-            &self.report_type,
-        ) {
+        if let Err(e) = self
+            .metric_report_manager
+            .lock()
+            .expect("Mutex poisoned")
+            .dump_report_to_mar_entry(&self.mar_staging_path, &self.net_config, &self.report_type)
+        {
             warn!("Unable to dump metrics: {}", e);
         }
     }

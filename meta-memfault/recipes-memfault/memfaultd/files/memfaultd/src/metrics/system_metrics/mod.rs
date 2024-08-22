@@ -2,18 +2,16 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 use std::{
-    collections::HashSet,
-    sync::{Arc, Mutex},
     thread::sleep,
     time::{Duration, Instant},
 };
 
 use eyre::Result;
-use log::warn;
+use log::{debug, warn};
 
 use crate::{
     config::SystemMetricConfig,
-    metrics::{KeyedMetricReading, MetricReportManager},
+    metrics::KeyedMetricReading,
     util::system::{bytes_per_page, clock_ticks_per_second},
 };
 
@@ -42,6 +40,7 @@ use disk_space::{
 };
 
 use self::processes::ProcessMetricsConfig;
+use super::MetricsMBox;
 
 pub const BUILTIN_SYSTEM_METRIC_NAMESPACES: &[&str; 7] = &[
     CPU_METRIC_NAMESPACE,
@@ -63,10 +62,11 @@ pub trait SystemMetricFamilyCollector {
 
 pub struct SystemMetricsCollector {
     metric_family_collectors: Vec<Box<dyn SystemMetricFamilyCollector>>,
+    metrics_mbox: MetricsMBox,
 }
 
 impl SystemMetricsCollector {
-    pub fn new(system_metric_config: SystemMetricConfig) -> Self {
+    pub fn new(system_metric_config: SystemMetricConfig, metrics_mbox: MetricsMBox) -> Self {
         // CPU, Memory, and Thermal metrics are captured by default
         let mut metric_family_collectors: Vec<Box<dyn SystemMetricFamilyCollector>> = vec![
             Box::new(CpuMetricCollector::new()),
@@ -128,30 +128,21 @@ impl SystemMetricsCollector {
 
         Self {
             metric_family_collectors,
+            metrics_mbox,
         }
     }
 
-    pub fn run(
-        &mut self,
-        metric_poll_duration: Duration,
-        metric_report_manager: Arc<Mutex<MetricReportManager>>,
-    ) {
+    pub fn run(&mut self, metric_poll_duration: Duration) {
         loop {
             for collector in self.metric_family_collectors.iter_mut() {
                 match collector.collect_metrics() {
                     Ok(readings) => {
-                        for metric_reading in readings {
-                            if let Err(e) = metric_report_manager
-                                .lock()
-                                .expect("Mutex poisoned")
-                                .add_metric(metric_reading)
-                            {
-                                warn!(
-                                    "Couldn't add metric reading for family \"{}\": {:?}",
-                                    collector.family_name(),
-                                    e
-                                )
-                            }
+                        if let Err(e) = self.metrics_mbox.send_and_forget(readings) {
+                            debug!(
+                                "Couldn't add metric reading for family \"{}\": {:?}",
+                                collector.family_name(),
+                                e
+                            )
                         }
                     }
                     Err(e) => warn!(
@@ -164,17 +155,5 @@ impl SystemMetricsCollector {
 
             sleep(metric_poll_duration);
         }
-    }
-}
-
-impl Default for SystemMetricsCollector {
-    fn default() -> Self {
-        Self::new(SystemMetricConfig {
-            enable: true,
-            poll_interval_seconds: Duration::from_secs(10),
-            processes: Some(HashSet::from_iter(["memfaultd".to_string()])),
-            disk_space: None,
-            network_interfaces: None,
-        })
     }
 }

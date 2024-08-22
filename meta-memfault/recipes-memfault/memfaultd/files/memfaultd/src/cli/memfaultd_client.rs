@@ -4,7 +4,11 @@
 use std::{io::Read, str::from_utf8, time::Duration};
 
 use eyre::{eyre, Context, Result};
-use reqwest::{blocking::Client, header::ACCEPT, StatusCode};
+use reqwest::{
+    blocking::{Body, Client, Response},
+    header::ACCEPT,
+    StatusCode,
+};
 
 use crate::{
     config::Config,
@@ -139,16 +143,8 @@ impl MemfaultdClient {
         session_name: SessionName,
         readings: Vec<KeyedMetricReading>,
     ) -> Result<()> {
-        let body = if readings.is_empty() {
-            session_name.to_string()
-        } else {
-            serde_json::to_string(&SessionRequest::new(session_name, readings))?
-        };
-        let r = self
-            .client
-            .post(format!("{}/v1/session/start", self.base_url))
-            .body(body)
-            .send()?;
+        let body = build_session_request(session_name, readings)?;
+        let r = self.post_url("/v1/session/start", body)?;
         match r.status() {
             StatusCode::OK => Ok(()),
             _ => Err(eyre!(
@@ -164,16 +160,8 @@ impl MemfaultdClient {
         session_name: SessionName,
         readings: Vec<KeyedMetricReading>,
     ) -> Result<()> {
-        let body = if readings.is_empty() {
-            session_name.to_string()
-        } else {
-            serde_json::to_string(&SessionRequest::new(session_name, readings))?
-        };
-        let r = self
-            .client
-            .post(format!("{}/v1/session/end", self.base_url))
-            .body(body)
-            .send()?;
+        let body = build_session_request(session_name, readings)?;
+        let r = self.post_url("/v1/session/end", body)?;
         match r.status() {
             StatusCode::OK => Ok(()),
             _ => Err(eyre!(
@@ -202,5 +190,27 @@ impl MemfaultdClient {
     #[cfg(not(feature = "logging"))]
     pub fn get_crash_logs(&self) -> Result<Option<Vec<String>>> {
         Ok(None)
+    }
+
+    fn post_url<T: Into<Body>>(&self, url: &str, body: T) -> Result<Response> {
+        self.client
+            .post(format!("{}{}", self.base_url, url))
+            .body(body)
+            .send()
+            .map_err(|_| eyre!("Failed to POST to {}. Is memfaultd running?", url))
+    }
+}
+
+fn build_session_request(
+    session_name: SessionName,
+    readings: Vec<KeyedMetricReading>,
+) -> Result<String> {
+    if readings.is_empty() {
+        Ok(session_name.to_string())
+    } else {
+        Ok(serde_json::to_string(&SessionRequest::new(
+            session_name,
+            readings,
+        ))?)
     }
 }

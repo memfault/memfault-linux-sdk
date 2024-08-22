@@ -98,9 +98,7 @@ configure it to talk to our hawkBit DDI-compatible endpoint.
 Read more about [Linux OTA management using Memfault][docs-linux-ota].
 
 [docs-linux-ota]: https://mflt.io/linux-ota-integration-guide
-[hawkbit-homepage]: https://www.eclipse.org/hawkbit/
 [hawkbit-ddi]: https://www.eclipse.org/hawkbit/apis/ddi_api/
-[swupdate-homepage]: https://swupdate.org/
 
 ### Metrics
 

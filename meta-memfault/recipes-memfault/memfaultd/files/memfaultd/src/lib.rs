@@ -6,7 +6,7 @@
 pub mod cli;
 #[cfg(feature = "collectd")]
 mod collectd;
-mod config;
+pub mod config;
 #[cfg(feature = "coredump")]
 mod coredump;
 #[cfg(feature = "logging")]
@@ -14,7 +14,7 @@ mod fluent_bit;
 
 pub mod http_server;
 #[cfg(feature = "logging")]
-mod logs;
+pub mod logs;
 pub mod mar;
 mod memfaultd;
 pub mod metrics;

@@ -29,3 +29,4 @@ pub mod task;
 pub mod tcp_server;
 pub mod time_measure;
 pub mod zip;
+pub mod zip_dir;

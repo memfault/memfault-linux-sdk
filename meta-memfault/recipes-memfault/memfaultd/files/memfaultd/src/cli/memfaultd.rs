@@ -58,7 +58,7 @@ pub fn main() -> Result<()> {
         (true, _) => LevelFilter::Off,
         (false, true) => LevelFilter::Trace,
         _ => LevelFilter::Info,
-    });
+    })?;
 
     if args.version {
         println!("{}", format_version());

@@ -1,19 +1,17 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use std::{
-    io::Read,
-    sync::{Arc, Mutex},
-};
+use std::io::Read;
 
 use eyre::{eyre, Result};
+use itertools::Itertools;
 use log::{debug, log_enabled, trace, warn};
 use tiny_http::{Method, Request, Response};
 
 use crate::{
     collectd::payload::Payload,
     http_server::{HttpHandler, HttpHandlerResult},
-    metrics::{KeyedMetricReading, MetricReportManager, BUILTIN_SYSTEM_METRIC_NAMESPACES},
+    metrics::{KeyedMetricReading, MetricsMBox, BUILTIN_SYSTEM_METRIC_NAMESPACES},
 };
 
 /// A server that listens for collectd JSON pushes and stores them in memory.
@@ -21,7 +19,7 @@ use crate::{
 pub struct CollectdHandler {
     data_collection_enabled: bool,
     builtin_system_metric_collection_enabled: bool,
-    metrics_store: Arc<Mutex<MetricReportManager>>,
+    metrics_mbox: MetricsMBox,
     builtin_namespaces: Vec<String>,
 }
 
@@ -29,12 +27,12 @@ impl CollectdHandler {
     pub fn new(
         data_collection_enabled: bool,
         builtin_system_metric_collection_enabled: bool,
-        metrics_store: Arc<Mutex<MetricReportManager>>,
+        metrics_mbox: MetricsMBox,
     ) -> Self {
         CollectdHandler {
             data_collection_enabled,
             builtin_system_metric_collection_enabled,
-            metrics_store,
+            metrics_mbox,
             builtin_namespaces: BUILTIN_SYSTEM_METRIC_NAMESPACES
                 .iter()
                 .map(|namespace| namespace.to_string() + "/")
@@ -73,9 +71,8 @@ impl HttpHandler for CollectdHandler {
         }
         if self.data_collection_enabled {
             match Self::parse_request(request.as_reader()) {
-                Ok(readings) => {
-                    let mut metrics_store = self.metrics_store.lock().unwrap();
-                    for reading in readings {
+                Ok(mut readings) => {
+                    if self.builtin_system_metric_collection_enabled {
                         // If built-in metric collection IS enabled, we need to drop
                         // collectd metric readings who may have overlapping keys with
                         // memfaultd's built-in readings. To be safe, any reading whose
@@ -86,16 +83,20 @@ impl HttpHandler for CollectdHandler {
                         // this conditional will cause us to drop all collectd
                         // metric readings whose keys start with "cpu/" when
                         // built-in system metric collection is enabled
-                        if !self.builtin_system_metric_collection_enabled
-                            || !self
-                                .builtin_namespaces
-                                .iter()
-                                .any(|namespace| reading.name.as_str().starts_with(namespace))
-                        {
-                            if let Err(e) = metrics_store.add_metric(reading) {
-                                warn!("Invalid metric: {e}");
-                            }
-                        }
+                        readings = readings
+                            .into_iter()
+                            .filter(|reading| {
+                                !self
+                                    .builtin_namespaces
+                                    .iter()
+                                    .any(|namespace| reading.name.as_str().starts_with(namespace))
+                            })
+                            .collect_vec()
+                    }
+
+                    if !readings.is_empty() && self.metrics_mbox.send_and_forget(readings).is_err()
+                    {
+                        return HttpHandlerResult::Response(Response::empty(500).boxed());
                     }
                 }
                 Err(e) => {
@@ -109,45 +110,35 @@ impl HttpHandler for CollectdHandler {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
-
-    use insta::{assert_json_snapshot, assert_snapshot, with_settings};
+    use insta::assert_json_snapshot;
     use rstest::{fixture, rstest};
+    use ssf::ServiceMock;
     use tiny_http::{Method, TestRequest};
 
     use crate::{
         http_server::{HttpHandler, HttpHandlerResult},
-        metrics::MetricReportManager,
+        metrics::{KeyedMetricReading, TakeMetrics},
     };
 
     use super::CollectdHandler;
 
     #[rstest]
-    fn handle_push(handler: CollectdHandler) {
+    fn handle_push(mut fixture: Fixture) {
         let r = TestRequest::new().with_method(Method::Post).with_path("/v1/collectd").with_body(
             r#"[{"values":[0],"dstypes":["derive"],"dsnames":["value"],"time":1619712000.000,"interval":10.000,"host":"localhost","plugin":"cpu","plugin_instance":"0","type":"cpu","type_instance":"idle"}]"#,
         );
         assert!(matches!(
-            handler.handle_request(&mut r.into()),
+            fixture.handler.handle_request(&mut r.into()),
             HttpHandlerResult::Response(_)
         ));
 
-        let metrics = handler
-            .metrics_store
-            .lock()
-            .unwrap()
-            .take_heartbeat_metrics();
-        assert_snapshot!(serde_json::to_string_pretty(&metrics)
-            .expect("heartbeat_manager should be serializable"));
+        assert_json_snapshot!(fixture.mock.take_metrics().unwrap());
     }
 
     #[rstest]
     fn ignores_data_when_data_collection_is_off() {
-        let handler = CollectdHandler::new(
-            false,
-            false,
-            Arc::new(Mutex::new(MetricReportManager::new())),
-        );
+        let mut mock = ServiceMock::new();
+        let handler = CollectdHandler::new(false, false, mock.mbox.clone());
         let r = TestRequest::new().with_method(Method::Post).with_path("/v1/collectd").with_body(
             r#"[{"values":[0],"dstypes":["derive"],"dsnames":["value"],"time":1619712000.000,"interval":10.000,"host":"localhost","plugin":"cpu","plugin_instance":"0","type":"cpu","type_instance":"idle"}]"#,
         );
@@ -156,19 +147,13 @@ mod tests {
             HttpHandlerResult::Response(_)
         ));
 
-        let metrics = handler
-            .metrics_store
-            .lock()
-            .unwrap()
-            .take_heartbeat_metrics();
-        assert_snapshot!(serde_json::to_string_pretty(&metrics)
-            .expect("heartbeat_manager should be serializable"));
+        assert_eq!(mock.take_messages().len(), 0)
     }
 
     #[rstest]
     fn drops_cpu_metrics_when_builtin_system_metrics_are_enabled() {
-        let handler =
-            CollectdHandler::new(true, true, Arc::new(Mutex::new(MetricReportManager::new())));
+        let mut mock = ServiceMock::new();
+        let handler = CollectdHandler::new(true, true, mock.mbox.clone());
         let r = TestRequest::new().with_method(Method::Post).with_path("/v1/collectd").with_body(
             r#"[{"values":[0],"dstypes":["derive"],"dsnames":["value"],"time":1619712000.000,"interval":10.000,"host":"localhost","plugin":"cpu","plugin_instance":"0","type":"cpu","type_instance":"idle"}]"#,
         );
@@ -194,23 +179,20 @@ mod tests {
             HttpHandlerResult::Response(_)
         ));
 
-        let metrics = handler
-            .metrics_store
-            .lock()
-            .unwrap()
-            .take_heartbeat_metrics();
+        assert_json_snapshot!(mock.take_metrics().unwrap());
+    }
 
-        with_settings!({sort_maps => true}, {
-            assert_json_snapshot!(metrics);
-        });
+    struct Fixture {
+        handler: CollectdHandler,
+        mock: ServiceMock<Vec<KeyedMetricReading>>,
     }
 
     #[fixture]
-    fn handler() -> CollectdHandler {
-        CollectdHandler::new(
-            true,
-            false,
-            Arc::new(Mutex::new(MetricReportManager::new())),
-        )
+    fn fixture() -> Fixture {
+        let mock = ServiceMock::new();
+        Fixture {
+            handler: CollectdHandler::new(true, false, mock.mbox.clone()),
+            mock,
+        }
     }
 }

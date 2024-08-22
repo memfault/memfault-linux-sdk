@@ -18,3 +18,6 @@ pub const METRIC_OPERATIONAL_CRASHES: &str = "operational_crashes";
 pub const METRIC_BATTERY_DISCHARGE_DURATION_MS: &str = "battery_discharge_duration_ms";
 pub const METRIC_BATTERY_SOC_PCT_DROP: &str = "battery_soc_pct_drop";
 pub const METRIC_BATTERY_SOC_PCT: &str = "battery_soc_pct";
+
+// Memory Metrics
+pub const METRIC_MEMORY_PCT: &str = "memory_pct";

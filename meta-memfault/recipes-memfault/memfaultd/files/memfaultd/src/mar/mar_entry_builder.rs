@@ -3,12 +3,17 @@
 // See License.txt for details
 //! MAR Entry Builder
 //!
-use crate::mar::{CollectionTime, Manifest, MarEntry, Metadata};
 use crate::network::NetworkConfig;
 use crate::util::disk_size::DiskSize;
 use crate::util::fs::move_file;
+use crate::{
+    mar::{CollectionTime, Manifest, MarEntry, Metadata},
+    util::fs::copy_file,
+};
 use eyre::WrapErr;
-use std::fs::{create_dir, remove_dir_all, rename, File};
+use std::ffi::OsStr;
+use std::fs::{create_dir, remove_dir_all, rename, File, Metadata as FsMetadata};
+use std::io;
 use std::mem::take;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -23,7 +28,7 @@ pub struct MarEntryBuilder<M> {
     uuid: Uuid,
     collection_time: CollectionTime,
     metadata: M,
-    attachments: Vec<PathBuf>,
+    attachments: Vec<MarAttachment>,
 }
 
 pub struct NoMetadata;
@@ -37,10 +42,23 @@ impl<M> MarEntryBuilder<M> {
         self.entry_dir_path().join(filename.as_ref())
     }
 
+    /// Add an attachment to this entry.
+    ///
+    /// The file will be moved to the entry directory
     pub fn add_attachment(mut self, file: PathBuf) -> MarEntryBuilder<M> {
         assert!(file.is_file());
         assert!(file.is_absolute());
-        self.attachments.push(file);
+        self.attachments.push(MarAttachment::Move(file));
+        self
+    }
+
+    /// Add an attachment to this entry.
+    ///
+    /// The file will be copied to the entry directory
+    pub fn add_copied_attachment(mut self, file: PathBuf) -> MarEntryBuilder<M> {
+        assert!(file.is_file());
+        assert!(file.is_absolute());
+        self.attachments.push(MarAttachment::Copy(file));
         self
     }
 }
@@ -86,9 +104,14 @@ impl MarEntryBuilder<Metadata> {
             if let Some(filename) = filepath.file_name() {
                 let target = self.entry_dir.path.join(filename);
 
-                // Note: if the attachment path was created using make_attachment_path_in_entry_dir(),
-                // filepath and target will be the same and this will be a no-op.
-                move_file(&filepath, &target)?;
+                match filepath {
+                    MarAttachment::Copy(source) => {
+                        copy_file(&source, &target)?;
+                    }
+                    MarAttachment::Move(source) => {
+                        move_file(&source, &target)?;
+                    }
+                }
             }
         }
 
@@ -135,6 +158,26 @@ impl MarEntryBuilder<Metadata> {
 
     pub fn get_metadata(&self) -> &Metadata {
         &self.metadata
+    }
+}
+
+#[derive(Debug)]
+enum MarAttachment {
+    Copy(PathBuf),
+    Move(PathBuf),
+}
+
+impl MarAttachment {
+    fn file_name(&self) -> Option<&OsStr> {
+        match self {
+            MarAttachment::Copy(path) | MarAttachment::Move(path) => path.file_name(),
+        }
+    }
+
+    fn metadata(&self) -> io::Result<FsMetadata> {
+        match self {
+            MarAttachment::Copy(path) | MarAttachment::Move(path) => path.metadata(),
+        }
     }
 }
 

@@ -29,7 +29,7 @@ use std::fs::{remove_dir_all, File};
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
-use eyre::{Context, Result};
+use eyre::{eyre, Context, Result};
 use itertools::Itertools;
 use log::{trace, warn};
 
@@ -90,6 +90,7 @@ fn should_upload(metadata: &Metadata, sampling: &Sampling) -> bool {
                 sampling.logging_resolution >= Resolution::Normal
             }
         }
+        Metadata::CustomDataRecording { .. } => sampling.debugging_resolution >= Resolution::Normal,
     }
 }
 
@@ -174,7 +175,7 @@ impl TryFrom<&MarEntry> for Vec<ZipEntryInfo> {
                     File::open(&path).wrap_err_with(|| format!("Error opening {:?}", filename))?;
                 drop(file);
 
-                let base = entry_path.parent().unwrap();
+                let base = entry_path.parent().ok_or(eyre!("No parent directory"))?;
                 ZipEntryInfo::new(path, base)
                     .wrap_err_with(|| format!("Error adding {:?}", filename))
             })

@@ -17,8 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tiny_http::{Header, Method, Request, Response, ResponseBox, StatusCode};
 
-use crate::util::rate_limiter::RateLimiter;
-use crate::{config::Config, metrics::MetricReportManager};
+use crate::config::Config;
 use crate::{config::LogToMetricRule, logs::completed_log::CompletedLog};
 use crate::{config::StorageConfig, http_server::ConvenientHeader};
 use crate::{
@@ -27,6 +26,7 @@ use crate::{
 };
 use crate::{http_server::HttpHandlerResult, logs::recovery::recover_old_logs};
 use crate::{logs::headroom::HeadroomCheck, util::circular_queue::CircularQueue};
+use crate::{metrics::MetricsMBox, util::rate_limiter::RateLimiter};
 
 pub const CRASH_LOGS_URL: &str = "/api/v1/crash-logs";
 
@@ -54,7 +54,7 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
         mut on_log_completion: R,
         headroom_limiter: H,
         #[cfg_attr(not(feature = "log-to-metrics"), allow(unused_variables))]
-        heartbeat_manager: Arc<Mutex<MetricReportManager>>,
+        metrics_mbox: MetricsMBox,
     ) -> Result<Self> {
         fs::create_dir_all(&log_config.log_tmp_path).wrap_err_with(|| {
             format!(
@@ -89,10 +89,7 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
                 rate_limiter: RateLimiter::new(log_config.max_lines_per_minute),
                 headroom_limiter,
                 #[cfg(feature = "log-to-metrics")]
-                log_to_metrics: LogToMetrics::new(
-                    log_config.log_to_metrics_rules,
-                    heartbeat_manager,
-                ),
+                log_to_metrics: LogToMetrics::new(log_config.log_to_metrics_rules, metrics_mbox),
                 log_queue: CircularQueue::new(in_memory_lines),
                 storage_config: log_config.storage_config,
             }))),
@@ -379,21 +376,24 @@ impl<H: HeadroomCheck + Send + 'static> HttpHandler for CrashLogHandler<H> {
 #[cfg(test)]
 mod tests {
     use std::cmp::min;
+    use std::fs::remove_file;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc::{channel, Receiver};
     use std::sync::Arc;
-    use std::{fs::remove_file, sync::Mutex};
     use std::{io::Write, path::PathBuf, time::Duration};
     use std::{mem::replace, num::NonZeroU32};
 
-    use crate::logs::log_file::{LogFile, LogFileControl};
+    use crate::logs::{
+        completed_log::CompletedLog,
+        log_file::{LogFile, LogFileControl},
+    };
     use crate::test_utils::setup_logger;
-    use crate::{logs::completed_log::CompletedLog, metrics::MetricReportManager};
     use crate::{logs::headroom::HeadroomCheck, util::circular_queue::CircularQueue};
     use eyre::Context;
     use flate2::Compression;
     use rstest::{fixture, rstest};
     use serde_json::{json, Value};
+    use ssf::ServiceMock;
     use tempfile::{tempdir, TempDir};
     use tiny_http::{Method, TestRequest};
     use uuid::Uuid;
@@ -452,7 +452,7 @@ mod tests {
                 Ok(())
             },
             StubHeadroomLimiter,
-            Arc::new(Mutex::new(MetricReportManager::new())),
+            ServiceMock::new().mbox,
         )
         .unwrap();
 
@@ -714,8 +714,6 @@ mod tests {
 
         let on_completion_should_fail = Arc::new(AtomicBool::new(false));
 
-        let heartbeat_manager = Arc::new(Mutex::new(MetricReportManager::new()));
-
         let collector = {
             let on_completion_should_fail = on_completion_should_fail.clone();
             let on_log_completion = move |CompletedLog { path, cid, .. }| {
@@ -736,7 +734,7 @@ mod tests {
                 config,
                 on_log_completion,
                 StubHeadroomLimiter,
-                heartbeat_manager,
+                ServiceMock::new().mbox,
             )
             .unwrap()
         };

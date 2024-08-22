@@ -144,8 +144,10 @@ where
         // We still need `.try_into()` to convert [u8] into [u8; 4]
         // because the compiler cannot verify that the length is 4 at
         // compile time. #failproof™
-        let seconds_bytes: [u8; 4] = bytes[0..4].try_into().unwrap();
-        let nanoseconds_bytes: [u8; 4] = bytes[4..].try_into().unwrap();
+        let seconds_bytes: [u8; 4] = bytes[0..4].try_into().expect("Failed to extract seconds");
+        let nanoseconds_bytes: [u8; 4] = bytes[4..]
+            .try_into()
+            .expect("Failed to extract nanoseconds");
         Utc.timestamp_opt(
             u32::from_be_bytes(seconds_bytes) as i64,
             u32::from_be_bytes(nanoseconds_bytes),

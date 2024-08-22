@@ -3,8 +3,9 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 
-use eyre::eyre;
+use eyre::{eyre, Result};
 use log::LevelFilter;
+use std::env::args;
 use std::path::Path;
 use stderrlog::{LogLevelNum, StdErrLog};
 
@@ -29,35 +30,37 @@ fn build_logger(level: LevelFilter) -> StdErrLog {
     log
 }
 
-fn init_logger(level: LevelFilter) {
-    build_logger(level).init().unwrap();
+fn init_logger(level: LevelFilter) -> Result<()> {
+    build_logger(level)
+        .init()
+        .map_err(|e| eyre!("Failed to initialize logger: {}", e))
 }
 
 pub fn main() {
-    let arg0 = std::env::args().next().unwrap();
-    let cmd_name = Path::new(&arg0)
-        .file_name()
-        .expect("<command name>")
-        .to_str()
-        .unwrap();
+    let cmd_name = args().next().and_then(|arg0| {
+        Path::new(&arg0)
+            .file_name()
+            .map(|f| f.to_string_lossy().into_owned())
+    });
 
-    let result = match cmd_name {
+    let result = match cmd_name.as_deref() {
         #[cfg(all(target_os = "linux", feature = "coredump"))]
-        "memfault-core-handler" => memfault_core_handler::main(),
+        Some("memfault-core-handler") => memfault_core_handler::main(),
         #[cfg(not(all(target_os = "linux", feature = "coredump")))]
-        "memfault-core-handler" => Err(eyre!(
+        Some("memfault-core-handler") => Err(eyre!(
             "memfault-core-handler is not supported in this build"
         )),
-        "memfaultctl" => memfaultctl::main(),
-        "memfaultd" => memfaultd::main(),
+        Some("memfaultctl") => memfaultctl::main(),
+        Some("memfaultd") => memfaultd::main(),
         #[cfg(feature = "mfw")]
-        "mfw" => memfault_watch::main(),
+        Some("mfw") => memfault_watch::main(),
         #[cfg(not(feature = "mfw"))]
-        "mfw" => Err(eyre!("Memfault-watch is currently experimental. You must compile with the experimental flag enabled.")),
-        _ => Err(eyre!(
+        Some("mfw") => Err(eyre!("Memfault-watch is currently experimental. You must compile with the experimental flag enabled.")),
+        Some(cmd_name) => Err(eyre!(
             "Unknown command: {}. Should be memfaultd/memfaultctl/memfault-core-handler.",
             cmd_name
         )),
+        None => Err(eyre!("No command name found")),
     };
 
     match result {

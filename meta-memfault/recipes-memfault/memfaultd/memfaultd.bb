@@ -6,9 +6,9 @@ LIC_FILES_CHKSUM = "file://${FILE_DIRNAME}/../../../License.txt;md5=f10c502d265f
 FILESEXTRAPATHS_prepend := "${FILE_DIRNAME}/../../:"
 
 SRC_URI = " \
-    file://libmemfaultc \
     file://memfaultc-sys \
     file://memfaultd \
+    file://memfault-ssf \
     file://memfaultd.service \
     file://memfaultd.init \
     file://Cargo.toml \

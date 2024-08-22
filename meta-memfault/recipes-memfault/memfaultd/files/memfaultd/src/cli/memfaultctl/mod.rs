@@ -2,7 +2,8 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 use argh::{FromArgs, TopLevelCommand};
-use std::{path::Path, str::FromStr};
+use chrono::{DateTime, Utc};
+use std::{path::Path, str::FromStr, time::Duration};
 
 mod add_battery_reading;
 mod config_file;
@@ -106,6 +107,7 @@ enum MemfaultctlCommand {
     ReportSyncFailure(ReportSyncFailureArgs),
     StartSession(StartSessionArgs),
     EndSession(EndSessionArgs),
+    AddCustomDataRecording(AddCustomDataRecordingArgs),
 }
 
 #[derive(FromArgs)]
@@ -231,6 +233,28 @@ struct EndSessionArgs {
     readings: Vec<KeyedMetricReading>,
 }
 
+#[derive(FromArgs)]
+/// Add custom data recording to memfaultd
+#[argh(subcommand, name = "add-custom-data-recording")]
+struct AddCustomDataRecordingArgs {
+    /// reason for the recording
+    #[argh(positional)]
+    reason: String,
+    /// name of file to attach to the recording
+    #[argh(positional)]
+    file_name: String,
+    /// MIME types of the file. Should be a space or comma separated list.
+    #[argh(positional)]
+    mime_types: Vec<String>,
+
+    /// duration of the recording in milliseconds, defaults to 0
+    #[argh(option, default = "0")]
+    duration_ms: u64,
+    /// start time of the recording. Expected in RFC3339 format eg.(2024-08-15T14:10:30.00Z)
+    #[argh(option)]
+    start_time: Option<DateTime<Utc>>,
+}
+
 fn check_data_collection_enabled(config: &Config, do_what: &str) -> Result<()> {
     match config.config_file.enable_data_collection {
         true => Ok(()),
@@ -252,7 +276,7 @@ pub fn main() -> Result<()> {
         LevelFilter::Trace
     } else {
         LevelFilter::Info
-    });
+    })?;
 
     let config_path = args.config_file.as_ref().map(Path::new);
     let mut config = Config::read_from_system(config_path)?;
@@ -318,5 +342,41 @@ pub fn main() -> Result<()> {
             session_name,
             readings,
         }) => end_session(&config, session_name, readings),
+        MemfaultctlCommand::AddCustomDataRecording(AddCustomDataRecordingArgs {
+            reason,
+            file_name,
+            duration_ms,
+            mime_types,
+            start_time,
+        }) => {
+            check_data_collection_enabled(&config, "add custom data recording")?;
+
+            let file_path = Path::new(&file_name).to_owned();
+            if !file_path.is_file() {
+                return Err(eyre!("{} does not exist", file_name));
+            }
+            if !file_path.is_absolute() {
+                return Err(eyre!("{} is not an absolute path", file_name));
+            }
+
+            let file_name = file_name
+                .trim()
+                .split('/')
+                .last()
+                .ok_or_else(|| eyre!("{} is not a valid file path", file_name))?
+                .to_string();
+
+            MarEntryBuilder::new(&mar_staging_path)?
+                .set_metadata(Metadata::new_custom_data_recording(
+                    start_time,
+                    Duration::from_millis(duration_ms),
+                    mime_types,
+                    reason,
+                    file_name,
+                ))
+                .add_copied_attachment(file_path)
+                .save(&network_config)
+                .map(|_entry| ())
+        }
     }
 }

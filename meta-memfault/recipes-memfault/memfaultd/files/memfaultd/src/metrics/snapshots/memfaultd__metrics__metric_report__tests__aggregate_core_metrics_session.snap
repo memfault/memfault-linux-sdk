@@ -7,6 +7,7 @@ expression: sorted_metrics
   "battery_soc_pct_drop": 100.0,
   "connectivity_connected_time_ms": 100.0,
   "connectivity_expected_time_ms": 100.0,
+  "memory_pct": 100.0,
   "operational_crashes": 100.0,
   "sync_failure": 100.0,
   "sync_memfault_failure": 100.0,
