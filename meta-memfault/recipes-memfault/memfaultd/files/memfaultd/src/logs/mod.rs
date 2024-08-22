@@ -18,4 +18,4 @@ mod log_file;
 mod recovery;
 
 #[cfg(feature = "log-to-metrics")]
-mod log_to_metrics;
+pub mod log_to_metrics;

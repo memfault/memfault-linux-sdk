@@ -16,9 +16,9 @@ use crate::{
     metrics::{
         core_metrics::{
             METRIC_BATTERY_DISCHARGE_DURATION_MS, METRIC_BATTERY_SOC_PCT_DROP,
-            METRIC_CONNECTED_TIME, METRIC_EXPECTED_CONNECTED_TIME, METRIC_MF_SYNC_FAILURE,
-            METRIC_MF_SYNC_SUCCESS, METRIC_OPERATIONAL_CRASHES, METRIC_SYNC_FAILURE,
-            METRIC_SYNC_SUCCESS,
+            METRIC_CONNECTED_TIME, METRIC_EXPECTED_CONNECTED_TIME, METRIC_MEMORY_PCT,
+            METRIC_MF_SYNC_FAILURE, METRIC_MF_SYNC_SUCCESS, METRIC_OPERATIONAL_CRASHES,
+            METRIC_SYNC_FAILURE, METRIC_SYNC_SUCCESS,
         },
         metric_reading::KeyedMetricReading,
         timeseries::{Counter, Gauge, Histogram, TimeSeries, TimeWeightedAverage},
@@ -36,7 +36,7 @@ pub enum CapturedMetrics {
 pub const HEARTBEAT_REPORT_TYPE: &str = "heartbeat";
 pub const DAILY_HEARTBEAT_REPORT_TYPE: &str = "daily-heartbeat";
 
-const SESSION_CORE_METRICS: &[&str; 9] = &[
+const SESSION_CORE_METRICS: &[&str; 10] = &[
     METRIC_MF_SYNC_FAILURE,
     METRIC_MF_SYNC_SUCCESS,
     METRIC_BATTERY_DISCHARGE_DURATION_MS,
@@ -46,6 +46,7 @@ const SESSION_CORE_METRICS: &[&str; 9] = &[
     METRIC_SYNC_FAILURE,
     METRIC_SYNC_SUCCESS,
     METRIC_OPERATIONAL_CRASHES,
+    METRIC_MEMORY_PCT,
 ];
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]

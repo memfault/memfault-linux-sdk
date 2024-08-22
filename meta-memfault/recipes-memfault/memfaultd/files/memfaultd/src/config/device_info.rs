@@ -54,6 +54,9 @@ impl DeviceInfoDefaults for DeviceInfoDefaultsImpl {
 
     fn device_id(&self) -> Result<String> {
         let device_id = read_to_string(DEVICE_ID_PATH)?;
+        if device_id.is_empty() {
+            return Err(eyre!("Empty device id ({})", DEVICE_ID_PATH));
+        }
 
         Ok(device_id)
     }

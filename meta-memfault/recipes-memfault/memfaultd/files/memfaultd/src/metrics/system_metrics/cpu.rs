@@ -29,22 +29,18 @@
 //!
 //! See additional Linux kernel documentation on /proc/stat here:
 //! https://docs.kernel.org/filesystems/proc.html#miscellaneous-kernel-statistics-in-proc-stat
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
-use std::iter::zip;
-use std::ops::Add;
-use std::path::Path;
-use std::str::FromStr;
+use std::{
+    fs::File,
+    io::{BufRead, BufReader},
+    iter::zip,
+    path::Path,
+    str::FromStr,
+};
 
 use chrono::Utc;
 use nom::{
-    bytes::complete::tag,
-    character::complete::{digit0, space1},
-    multi::count,
-    number::complete::double,
-    sequence::{pair, preceded},
-    IResult,
+    bytes::complete::tag, character::complete::space1, multi::count, number::complete::double,
+    sequence::preceded, IResult,
 };
 
 use crate::metrics::{
@@ -56,14 +52,12 @@ const PROC_STAT_PATH: &str = "/proc/stat";
 pub const CPU_METRIC_NAMESPACE: &str = "cpu";
 
 pub struct CpuMetricCollector {
-    last_reading_by_cpu: HashMap<String, Vec<f64>>,
+    last_reading: Option<Vec<f64>>,
 }
 
 impl CpuMetricCollector {
     pub fn new() -> Self {
-        Self {
-            last_reading_by_cpu: HashMap::new(),
-        }
+        Self { last_reading: None }
     }
 
     pub fn get_cpu_metrics(&mut self) -> Result<Vec<KeyedMetricReading>> {
@@ -81,11 +75,14 @@ impl CpuMetricCollector {
         for line in reader.lines() {
             // Discard errors - the assumption here is that we are only parsing
             // lines that follow the specified format and expect other lines in the file to error
-            if let Ok((cpu_id, cpu_stats)) = Self::parse_proc_stat_line_cpu(line?.trim()) {
+            if let Ok(cpu_stats) = Self::parse_proc_stat_line_cpu(line?.trim()) {
                 no_parseable_lines = false;
-                if let Ok(Some(mut readings)) = self.delta_since_last_reading(cpu_id, cpu_stats) {
+                if let Ok(Some(mut readings)) = self.delta_since_last_reading(cpu_stats) {
                     cpu_metric_readings.append(&mut readings);
                 }
+                // There is only one line in the /proc/stat file for the total CPU stats, break
+                // once we've found it to avoid reading and attempting to parse extraneous lines
+                break;
             }
         }
 
@@ -100,20 +97,11 @@ impl CpuMetricCollector {
         }
     }
 
-    /// Parse a cpu ID from a line of /proc/stat
-    ///
-    /// A cpu ID is the digit following the 3 character string "cpu"
-    /// No ID being present implies these stats are for the total
-    /// of all cores on the CPU
-    fn parse_cpu_id(input: &str) -> IResult<&str, &str> {
-        preceded(tag("cpu"), digit0)(input)
-    }
-
     /// Parse the CPU stats from the suffix of a /proc/stat line following the cpu ID
     ///
     /// 7 or more space delimited integers are expected. Values after the 7th are discarded.
     fn parse_cpu_stats(input: &str) -> IResult<&str, Vec<f64>> {
-        count(preceded(space1, double), 7)(input)
+        preceded(tag("cpu"), count(preceded(space1, double), 7))(input)
     }
 
     /// Parse the output of a line of /proc/stat, returning
@@ -124,12 +112,11 @@ impl CpuMetricCollector {
     /// spent in the "user", "nice", "system", "idle", "iowait", "irq",
     /// "softirq", in that order    
     /// Example of a valid parse-able line:
-    /// cpu2 36675 176 11216 1552961 689 0 54
-    fn parse_proc_stat_line_cpu(line: &str) -> Result<(String, Vec<f64>)> {
-        let (_remaining, (cpu_id, cpu_stats)) =
-            pair(Self::parse_cpu_id, Self::parse_cpu_stats)(line)
-                .map_err(|_e| eyre!("Failed to parse CPU stats line: {}", line))?;
-        Ok(("cpu".to_string().add(cpu_id), cpu_stats))
+    /// cpu0 36675 176 11216 1552961 689 0 54
+    fn parse_proc_stat_line_cpu(line: &str) -> Result<Vec<f64>> {
+        let (_, cpu_stats) = Self::parse_cpu_stats(line)
+            .map_err(|_e| eyre!("Failed to parse CPU stats line: {}", line))?;
+        Ok(cpu_stats)
     }
 
     /// Calculate the time spent in each state for the
@@ -140,14 +127,10 @@ impl CpuMetricCollector {
     /// to calculate a delta from.
     fn delta_since_last_reading(
         &mut self,
-        cpu_id: String,
         cpu_stats: Vec<f64>,
     ) -> Result<Option<Vec<KeyedMetricReading>>> {
         // Check to make sure there was a previous reading to calculate a delta with
-        if let Some(last_stats) = self
-            .last_reading_by_cpu
-            .insert(cpu_id.clone(), cpu_stats.clone())
-        {
+        if let Some(last_stats) = self.last_reading.replace(cpu_stats.clone()) {
             let delta = cpu_stats
                 .iter()
                 .zip(last_stats)
@@ -167,8 +150,8 @@ impl CpuMetricCollector {
                 .map(|(key, value)| -> Result<KeyedMetricReading, ErrReport> {
                     Ok(KeyedMetricReading::new(
                         MetricStringKey::from_str(&format!(
-                            "{}/{}/percent/{}",
-                            CPU_METRIC_NAMESPACE, cpu_id, key
+                            "{}/cpu/percent/{}",
+                            CPU_METRIC_NAMESPACE, key
                         ))
                         .map_err(|e| eyre!(e))?,
                         MetricReading::Histogram {
@@ -209,7 +192,6 @@ mod test {
 
     #[rstest]
     #[case("cpu 1000 5 0 0 2 0 0", "test_basic_line")]
-    #[case("cpu0 1000 5 0 0 2 0 0 0 0 0", "test_basic_line_with_extra")]
     fn test_process_valid_proc_stat_line(#[case] proc_stat_line: &str, #[case] test_name: &str) {
         assert_json_snapshot!(test_name, 
                               CpuMetricCollector::parse_proc_stat_line_cpu(proc_stat_line).unwrap(), 
@@ -240,12 +222,12 @@ mod test {
     ) {
         let mut cpu_metric_collector = CpuMetricCollector::new();
 
-        let (cpu, stats) = CpuMetricCollector::parse_proc_stat_line_cpu(proc_stat_line_a).unwrap();
-        let result_a = cpu_metric_collector.delta_since_last_reading(cpu, stats);
+        let stats = CpuMetricCollector::parse_proc_stat_line_cpu(proc_stat_line_a).unwrap();
+        let result_a = cpu_metric_collector.delta_since_last_reading(stats);
         matches!(result_a, Ok(None));
 
-        let (cpu, stats) = CpuMetricCollector::parse_proc_stat_line_cpu(proc_stat_line_b).unwrap();
-        let result_b = cpu_metric_collector.delta_since_last_reading(cpu, stats);
+        let stats = CpuMetricCollector::parse_proc_stat_line_cpu(proc_stat_line_b).unwrap();
+        let result_b = cpu_metric_collector.delta_since_last_reading(stats);
 
         assert!(result_b.is_ok());
 
@@ -255,48 +237,13 @@ mod test {
                                   {"[].value.**.timestamp" => "[timestamp]", "[].value.**.value" => rounded_redaction(5)})
         });
 
-        let (cpu, stats) = CpuMetricCollector::parse_proc_stat_line_cpu(proc_stat_line_c).unwrap();
-        let result_c = cpu_metric_collector.delta_since_last_reading(cpu, stats);
+        let stats = CpuMetricCollector::parse_proc_stat_line_cpu(proc_stat_line_c).unwrap();
+        let result_c = cpu_metric_collector.delta_since_last_reading(stats);
 
         assert!(result_c.is_ok());
 
         with_settings!({sort_maps => true}, {
             assert_json_snapshot!(format!("{}_{}", test_name, "b_c_metrics"),
-                                  result_c.unwrap(),
-                                  {"[].value.**.timestamp" => "[timestamp]", "[].value.**.value" => rounded_redaction(5)})
-        });
-    }
-
-    #[rstest]
-    #[case(
-        "cpu1 40 20 30 10 0 0 0",
-        "cpu0 1500 20 4 1 2 0 0",
-        "cpu1 110 30 40 12 5 3 0",
-        "different_cores"
-    )]
-    fn test_cpu_metric_collector_different_cores(
-        #[case] proc_stat_line_a: &str,
-        #[case] proc_stat_line_b: &str,
-        #[case] proc_stat_line_c: &str,
-        #[case] test_name: &str,
-    ) {
-        let mut cpu_metric_collector = CpuMetricCollector::new();
-
-        let (cpu, stats) = CpuMetricCollector::parse_proc_stat_line_cpu(proc_stat_line_a).unwrap();
-        let result_a = cpu_metric_collector.delta_since_last_reading(cpu, stats);
-        matches!(result_a, Ok(None));
-
-        let (cpu, stats) = CpuMetricCollector::parse_proc_stat_line_cpu(proc_stat_line_b).unwrap();
-        let result_b = cpu_metric_collector.delta_since_last_reading(cpu, stats);
-        matches!(result_b, Ok(None));
-
-        let (cpu, stats) = CpuMetricCollector::parse_proc_stat_line_cpu(proc_stat_line_c).unwrap();
-        let result_c = cpu_metric_collector.delta_since_last_reading(cpu, stats);
-
-        assert!(result_c.is_ok());
-
-        with_settings!({sort_maps => true}, {
-            assert_json_snapshot!(format!("{}_{}", test_name, "a_c_metrics"),
                                   result_c.unwrap(),
                                   {"[].value.**.timestamp" => "[timestamp]", "[].value.**.value" => rounded_redaction(5)})
         });

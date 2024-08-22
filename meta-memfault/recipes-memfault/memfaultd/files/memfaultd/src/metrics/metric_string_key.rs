@@ -30,7 +30,7 @@ impl MetricStringKey {
     {
         input.split_at_position_complete(|item| {
             let c = item.as_char();
-            !(c.is_alphanumeric() || c == '_' || c == '/' || c == '.')
+            !(c.is_alphanumeric() || c == '_' || c == '/' || c == '.' || c == '-')
         })
     }
 
@@ -58,6 +58,19 @@ impl FromStr for MetricStringKey {
         Ok(Self {
             inner: s.to_string(),
         })
+    }
+}
+
+/// Supports creating `MetricStringKey` from a `'static' string. This skips the
+/// verification of validity.
+/// Ideally we would replace this with a const-compatible verification of
+/// validity but it' not available in our currently Rust min version.
+impl From<&'static str> for MetricStringKey {
+    fn from(value: &'static str) -> Self {
+        Self {
+            // FIXME: We could really optimize this use-case if inner was a Cow...
+            inner: value.to_string(),
+        }
     }
 }
 

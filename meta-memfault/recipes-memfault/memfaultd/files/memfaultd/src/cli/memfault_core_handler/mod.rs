@@ -97,7 +97,7 @@ pub fn main() -> Result<()> {
     };
     // When the kernel executes a core dump handler, the stdout/stderr go nowhere.
     // Let's log to the kernel log to aid debugging:
-    init_kernel_logger(log_level, capture_logs_tx);
+    init_kernel_logger(log_level, capture_logs_tx)?;
 
     if let Err(e) = dumpable_result {
         warn!("Failed to set dumpable: {}", e);
@@ -277,7 +277,7 @@ impl From<CoredumpCompression> for CompressionAlgorithm {
     }
 }
 
-fn init_kernel_logger(level: LevelFilter, capture_logs_tx: SyncSender<String>) {
+fn init_kernel_logger(level: LevelFilter, capture_logs_tx: SyncSender<String>) -> Result<()> {
     // kernlog::init() reads from the KERNLOG_LEVEL to set the level. There's no public interface
     // to set it otherwise, so: if this environment variable is not set, set it according to the
     // --verbose flag:
@@ -296,11 +296,14 @@ fn init_kernel_logger(level: LevelFilter, capture_logs_tx: SyncSender<String>) {
         capture_logs_tx,
         CAPTURE_LOG_MAX_LEVEL,
     ));
-    log::set_boxed_logger(logger).unwrap();
+    log::set_boxed_logger(logger)
+        .map_err(|e| eyre!("Failed to initialize kernel logger: {}", e))?;
 
     // Set the max log level to the max of the log level and the capture log level.
     // This is necessary because the log macros will completely disable calls if the level
     // is below the max level.
     let max_level = max(level, CAPTURE_LOG_MAX_LEVEL);
     log::set_max_level(max_level);
+
+    Ok(())
 }

@@ -6,21 +6,25 @@ pub use reason::RebootReason;
 mod reason_codes;
 pub use reason_codes::RebootReasonCode;
 
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
+use std::{
+    fs::read_dir,
+    path::{Path, PathBuf},
+};
 use std::{fs::write, fs::File, process::Command};
+use std::{io::BufWriter, str::FromStr};
+use std::{io::Write, time::Duration};
 
 use eyre::{eyre, Context, Result};
 use log::{debug, error, info, warn};
 use uuid::Uuid;
 
-use crate::util::system::read_system_boot_id;
+use crate::util::{system::read_system_boot_id, zip_dir::zip_dir};
 use crate::{config::Config, service_manager::ServiceManagerStatus};
 use crate::{mar::MarEntryBuilder, network::NetworkConfig};
 use crate::{mar::Metadata, service_manager::MemfaultdServiceManager};
 
 const PSTORE_DIR: &str = "/sys/fs/pstore";
+const PSTORE_DMESG_FILE: &str = "/sys/fs/pstore/dmesg-ramoops-0";
 
 /// Manages reboot reasons and writes them to the MAR file if untracked.
 ///
@@ -64,7 +68,8 @@ impl<'a> RebootReasonTracker<'a> {
             // Clear boot id since we haven't enabled data collection yet.
             self.check_boot_id_is_tracked(&boot_id);
 
-            process_pstore_files(PSTORE_DIR);
+            // Clean the pstore, even when data collection is disabled.
+            clean_pstore(PSTORE_DIR);
 
             return Ok(());
         }
@@ -186,16 +191,23 @@ struct RebootReasonSource {
     func: fn(&Config) -> Option<RebootReason>,
 }
 
-const PSTORE_DMESG_FILE: &str = "/sys/fs/pstore/dmesg-ramoops-0";
-
-fn read_reboot_reason_and_clear_file_pstore(_config: &Config) -> Option<RebootReason> {
-    if Path::new(PSTORE_DMESG_FILE).exists() {
-        process_pstore_files(PSTORE_DIR);
-
+fn read_reboot_reason_and_clear_file_pstore(config: &Config) -> Option<RebootReason> {
+    let result = if Path::new(PSTORE_DMESG_FILE).exists() {
         Some(RebootReason::from(RebootReasonCode::KernelPanic))
     } else {
         None
+    };
+
+    // Only capture pstore content on demand
+    if config.config_file.reboot.capture_pstore && config.config_file.enable_data_collection {
+        if let Err(e) = capture_pstore_content(Path::new(PSTORE_DIR), config) {
+            error!("Failed to generate MAR with pstore content: {}", e);
+        }
     }
+    // Always clean pstore
+    clean_pstore(PSTORE_DIR);
+
+    result
 }
 
 fn read_reboot_reason_and_clear_file_internal(config: &Config) -> Option<RebootReason> {
@@ -233,16 +245,41 @@ fn read_reboot_reason_and_clear_file(file_name: &PathBuf) -> Option<RebootReason
     Some(reboot_reason)
 }
 
-fn process_pstore_files(pstore_dir: &str) {
-    // TODO: MFLT-7805 Process last kmsg/console logs
+fn capture_pstore_content(pstore_dir: &Path, config: &Config) -> Result<()> {
+    let zip_name = "pstore.zip".to_owned();
+    let mar_builder = MarEntryBuilder::new(&config.mar_staging_path())?.set_metadata(
+        Metadata::new_custom_data_recording(
+            None,
+            Duration::from_secs(0),
+            vec!["application/zip".to_owned()],
+            "pstore".to_owned(),
+            zip_name.clone(),
+        ),
+    );
+
+    let mut pstore_it = read_dir(pstore_dir)?.filter_map(|entry| entry.ok());
+    let zip_path = mar_builder.make_attachment_path_in_entry_dir(&zip_name);
+    zip_dir(
+        &mut pstore_it,
+        pstore_dir,
+        BufWriter::new(File::create(&zip_path)?),
+        zip::CompressionMethod::Deflated,
+    )?;
+
+    let mar_entry = mar_builder.add_attachment(zip_path).save(&config.into())?;
+    debug!("Saved pstore to {:?}", mar_entry.path);
+    Ok(())
+}
+
+fn clean_pstore(pstore_dir: &str) {
     debug!("Cleaning up pstore...");
 
-    fn inner_process_pstore(pstore_dir: &str) -> Result<()> {
+    fn inner_clean_pstore(pstore_dir: &Path) -> Result<()> {
         for entry in std::fs::read_dir(pstore_dir)? {
             let path = entry?.path();
 
             if path.is_file() || path.is_symlink() {
-                debug!("Cleaning pstore - Removing {}...", path.display());
+                info!("Cleaning pstore - Removing {}", path.display());
                 std::fs::remove_file(path)?;
             }
         }
@@ -250,8 +287,8 @@ fn process_pstore_files(pstore_dir: &str) {
         Ok(())
     }
 
-    if let Err(e) = inner_process_pstore(pstore_dir) {
-        error!("Failed to process pstore files: {}", e);
+    if let Err(e) = inner_clean_pstore(Path::new(pstore_dir)) {
+        error!("Failed to clean pstore files: {}", e);
     }
 }
 

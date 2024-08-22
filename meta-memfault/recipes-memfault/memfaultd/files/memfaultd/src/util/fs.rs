@@ -50,3 +50,21 @@ pub fn move_file(source: &PathBuf, target: &PathBuf) -> Result<()> {
     }
     Ok(())
 }
+
+/// Copy a file.
+///
+/// If the source and target are the same, do nothing.
+pub fn copy_file(source: &PathBuf, target: &PathBuf) -> Result<()> {
+    if source == target {
+        return Ok(());
+    }
+
+    fs::copy(source, target).wrap_err_with(|| {
+        format!(
+            "Error copying file {} to {}",
+            source.display(),
+            target.display()
+        )
+    })?;
+    Ok(())
+}

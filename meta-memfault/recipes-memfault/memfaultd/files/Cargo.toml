@@ -2,7 +2,8 @@
 
 members = [
   "memfaultd",
-  "memfaultc-sys"
+  "memfaultc-sys",
+  "memfault-ssf"
 ]
 resolver = "2"
 

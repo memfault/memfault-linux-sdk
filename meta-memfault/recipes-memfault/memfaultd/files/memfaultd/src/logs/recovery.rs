@@ -76,7 +76,7 @@ fn get_recovery(file_infos: Vec<FileInfo>, gen_uuid: fn() -> Uuid) -> Recovery {
     let next_cids: Vec<Uuid> = to_recover_infos
         .iter()
         .skip(1)
-        .map(|i| i.uuid.unwrap())
+        .map(|i| i.uuid.expect("No UUID present"))
         .chain(once(last_cid))
         .collect();
 
@@ -85,7 +85,7 @@ fn get_recovery(file_infos: Vec<FileInfo>, gen_uuid: fn() -> Uuid) -> Recovery {
         to_recover: zip(to_recover_infos.iter_mut(), next_cids)
             .map(|(info, next_cid)| LogFileToRecover {
                 path: take(&mut info.path),
-                cid: info.uuid.unwrap(),
+                cid: info.uuid.expect("No UUID present"),
                 next_cid,
             })
             .collect(),

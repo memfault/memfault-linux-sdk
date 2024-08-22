@@ -56,7 +56,8 @@ use nom::{
 };
 
 use crate::metrics::{
-    system_metrics::SystemMetricFamilyCollector, KeyedMetricReading, MetricStringKey,
+    core_metrics::METRIC_MEMORY_PCT, system_metrics::SystemMetricFamilyCollector,
+    KeyedMetricReading, MetricStringKey,
 };
 
 const PROC_MEMINFO_PATH: &str = "/proc/meminfo";
@@ -129,19 +130,31 @@ impl MemoryMetricsCollector {
         let free = stats
             .remove("MemFree")
             .ok_or_else(|| eyre!("{} is missing required value MemFree", PROC_MEMINFO_PATH))?;
-        let available = stats.remove("MemAvailable").unwrap_or(free);
 
-        let used = total - available;
+        // Check that MemTotal is nonzero to avoid dividing by 0
+        if total != 0.0 {
+            let available = stats.remove("MemAvailable").unwrap_or(free);
 
-        let used_key = MetricStringKey::from_str("memory/memory/used")
-            .map_err(|e| eyre!("Failed to construct MetricStringKey for used memory: {}", e))?;
-        let free_key = MetricStringKey::from_str("memory/memory/free")
-            .map_err(|e| eyre!("Failed to construct MetricStringKey for used memory: {}", e))?;
+            let used = total - available;
 
-        Ok(vec![
-            KeyedMetricReading::new_histogram(free_key, free),
-            KeyedMetricReading::new_histogram(used_key, used),
-        ])
+            let pct_used = (used / total) * 100.0;
+
+            let used_key = MetricStringKey::from_str("memory/memory/used")
+                .map_err(|e| eyre!("Failed to construct MetricStringKey for used memory: {}", e))?;
+            let free_key = MetricStringKey::from_str("memory/memory/free")
+                .map_err(|e| eyre!("Failed to construct MetricStringKey for used memory: {}", e))?;
+
+            let pct_key = MetricStringKey::from_str(METRIC_MEMORY_PCT)
+                .map_err(|e| eyre!("Failed to construct MetricStringKey for used memory: {}", e))?;
+
+            Ok(vec![
+                KeyedMetricReading::new_histogram(free_key, free),
+                KeyedMetricReading::new_histogram(used_key, used),
+                KeyedMetricReading::new_histogram(pct_key, pct_used),
+            ])
+        } else {
+            Err(eyre!("MemTotal is 0, can't calculate memory usage metrics"))
+        }
     }
 }
 
@@ -285,6 +298,34 @@ KReclaimable:      14028 kB
         // Not properly formatted with newlines between each key / kB pair
         let meminfo = "MemTotal:         365916 kB MemFree:          242276 kB
 Buffers:            4544 kB Cached:            52128 kB Shmem:             11264 kB
+        ";
+        assert!(MemoryMetricsCollector::parse_meminfo_memory_stats(meminfo).is_err());
+    }
+
+    #[rstest]
+    fn test_fail_get_metrics_when_mem_total_is_zero() {
+        // MemFree is missing
+        let meminfo = "MemTotal:         0 kB
+MemAvailable:     292088 kB
+Buffers:            4544 kB
+Cached:            52128 kB
+SwapCached:            0 kB
+Active:            21668 kB
+Inactive:          51404 kB
+Active(anon):       2312 kB
+Inactive(anon):    25364 kB
+Active(file):      19356 kB
+Inactive(file):    26040 kB
+Unevictable:        3072 kB
+Mlocked:               0 kB
+SwapTotal:             0 kB
+SwapFree:              0 kB
+Dirty:                 0 kB
+Writeback:             0 kB
+AnonPages:         19488 kB
+Mapped:            29668 kB
+Shmem:             11264 kB
+KReclaimable:      14028 kB
         ";
         assert!(MemoryMetricsCollector::parse_meminfo_memory_stats(meminfo).is_err());
     }

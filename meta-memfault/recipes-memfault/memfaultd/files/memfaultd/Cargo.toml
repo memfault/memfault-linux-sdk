@@ -1,9 +1,15 @@
 [package]
 name = "memfaultd"
-version = "0.1.0"
+version = "0.0.0"
 edition = "2021"
 autobins = false
-rust-version = "1.65"
+rust-version = "1.72"
+description = "Memfault daemon for embedded Linux systems. Observability, logging, crash reporting, and updating all in one service. Learn more at https://docs.memfault.com/"
+homepage = "https://github.com/memfault/memfaultd"
+documentation = "https://docs.memfault.com/"
+license-file = "License.txt"
+readme = "README.md"
+repository = "https://github.com/memfault/memfaultd"
 
 [[bin]]
 name = "memfaultd"
@@ -22,7 +28,8 @@ name= "mfw"
 path= "src/bin/mfw.rs"
 
 [dependencies]
-memfaultc-sys = { path= "../memfaultc-sys" }
+memfaultc-sys = { path= "../memfaultc-sys", version = "0.1.0" }
+ssf = { package = "memfault-ssf", path= "../memfault-ssf", version = "0.1.0" }
 argh = "0.1.10"
 cfg-if = "1.0.0"
 chrono = { version = "0.4.23", features = ["serde"]}
@@ -65,20 +72,28 @@ crc-catalog = "2.2.0"
 regex= { version = "1.10.2", optional = true}
 nom = "7.1.3"
 sealed_test = "1.1.0"
+zip = { version = "1.1.4", default-features = false, features = ["deflate"]}
 
 [target.'cfg(target_os = "linux")'.dependencies]
 procfs = { version = "0.15.1", optional = true }
 
 [dev-dependencies]
+criterion = { version = "0.5" }
+# Fixing requirement here as later versions require Rust 1.74
+clap_builder = "=4.4.18"
 tempfile = "3.3.0"
 mockall = "0.11.3"
 rstest = "0.16.0"
 goblin = { version = "0.7", default-features = false, features = ["elf32", "elf64", "std", "endian_fd"] }
 insta = {version= "1.26.0", features= ["json", "redactions"]}
-zip = { version = "0.6.3", default-features = false, features = ["deflate"] }
+zip = { version = "1.1.4", default-features = false, features = ["deflate"] }
 hex = "0.4.3"
 rand = "0.8.5"
 nom = "7.1.3"
+
+[[bench]]
+name = "logs_to_metrics"
+harness = false
 
 [features]
 default = ["coredump", "collectd", "logging", "log-to-metrics", "systemd", "rust-tls" ]

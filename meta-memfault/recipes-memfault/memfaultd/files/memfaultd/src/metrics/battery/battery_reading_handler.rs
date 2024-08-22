@@ -61,7 +61,7 @@ where
                     match self
                         .battery_monitor
                         .lock()
-                        .unwrap()
+                        .expect("Mutex poisoned")
                         .add_new_reading(reading)
                     {
                         Ok(()) => HttpHandlerResult::Response(Response::empty(200).boxed()),
@@ -85,29 +85,29 @@ where
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::BTreeMap,
         sync::{Arc, Mutex},
         time::Duration,
     };
 
     use insta::assert_json_snapshot;
     use rstest::rstest;
+    use ssf::ServiceMock;
     use tiny_http::{Method, TestRequest};
 
-    use crate::test_utils::TestInstant;
     use crate::{
         http_server::{HttpHandler, HttpHandlerResult},
-        metrics::{BatteryMonitor, MetricReportManager},
+        metrics::BatteryMonitor,
     };
+    use crate::{metrics::TakeMetrics, test_utils::TestInstant};
 
     use super::BatteryReadingHandler;
     #[rstest]
     fn handle_push() {
-        let heartbeat_manager = Arc::new(Mutex::new(MetricReportManager::new()));
+        let mut metrics_mock = ServiceMock::new();
         let handler = BatteryReadingHandler::new(
             true,
             Arc::new(Mutex::new(BatteryMonitor::<TestInstant>::new(
-                heartbeat_manager.clone(),
+                metrics_mock.mbox.clone(),
             ))),
         );
         let r = TestRequest::new()
@@ -119,12 +119,7 @@ mod tests {
             HttpHandlerResult::Response(_)
         ));
 
-        let metrics = heartbeat_manager.lock().unwrap().take_heartbeat_metrics();
-
-        // Need to sort the map so the JSON string is consistent
-        let sorted_metrics: BTreeMap<_, _> = metrics.iter().collect();
-
-        assert_json_snapshot!(&sorted_metrics);
+        assert_json_snapshot!(metrics_mock.take_metrics().unwrap());
     }
 
     // Need to include a test_name string parameter here due to
@@ -139,11 +134,11 @@ mod tests {
         #[case] seconds_between_readings: u64,
         #[case] test_name: &str,
     ) {
-        let heartbeat_manager = Arc::new(Mutex::new(MetricReportManager::new()));
+        let mut metrics_mock = ServiceMock::new();
         let handler = BatteryReadingHandler::new(
             true,
             Arc::new(Mutex::new(BatteryMonitor::<TestInstant>::new(
-                heartbeat_manager.clone(),
+                metrics_mock.mbox.clone(),
             ))),
         );
         for reading in readings {
@@ -158,23 +153,16 @@ mod tests {
             TestInstant::sleep(Duration::from_secs(seconds_between_readings));
         }
 
-        let metrics = heartbeat_manager.lock().unwrap().take_heartbeat_metrics();
-
-        // Need to sort the map so the JSON string is consistent
-        let sorted_metrics: BTreeMap<_, _> = metrics.iter().collect();
-
         // Set battery_soc_pct to 0.0 to avoid flakiness due to it being weighted by wall time
-        assert_json_snapshot!(test_name, &sorted_metrics, {".battery_soc_pct" => 0.0 });
+        assert_json_snapshot!(test_name, metrics_mock.take_metrics().unwrap(), {".battery_soc_pct" => 0.0 });
     }
 
     #[rstest]
     fn errors_when_body_is_invalid() {
-        let heartbeat_manager = Arc::new(Mutex::new(MetricReportManager::new()));
+        let mock = ServiceMock::new();
         let handler = BatteryReadingHandler::<TestInstant>::new(
             true,
-            Arc::new(Mutex::new(BatteryMonitor::<TestInstant>::new(
-                heartbeat_manager,
-            ))),
+            Arc::new(Mutex::new(BatteryMonitor::<TestInstant>::new(mock.mbox))),
         );
         let r = TestRequest::new()
             .with_method(Method::Post)

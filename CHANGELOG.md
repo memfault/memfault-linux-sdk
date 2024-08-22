@@ -6,6 +6,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.14.0] - 2024-08-21
+
+This is a minor release consisting mostly of refactors, but we have also added
+some cool new features! We have added support for custom data recordings, which
+allows you to record arbitrary data on your device and have it uploaded to
+Memfault. We have also added support for capturing the contents of the `pstore`
+file system as a custom data recording whenever there is a kernel panic. This
+will allow you to inspect any logs or data that were present at the time of the
+panic.
+
+### Added
+
+- Support for
+  [custom data recordings](https://docs.memfault.com/docs/platform/inspecting-a-device#custom-data-recordings)
+  has been added! This feature allows you to record arbitrary data on your
+  device and have it uploaded to Memfault. This is useful for data that doesn't
+  fit into the existing metrics or logs categories.
+- `memfaultd` will now capture the contents of the `pstore` file system as a
+  custom data recording whenever there is a kernel panic. It will be uploaded as
+  a custom data recording named `pstore`. This feature is disabled by default
+  and can be enabled with the `reboot.capture_pstore` configuration option.
+- A new core metric `memory_pct` has been added to track the memory utilization
+  of the device. This metric represents the percentage of memory used by the
+  device at the time of the metric report.
+
+### Changed
+
+- The `libmemfaultc` C library was moved under the `memfaultc-sys` crate
+  directory, enabling publishing of the `memfaultd` crate.
+- Allow `-` characters in statsd metric names that are ingested by the builtin
+  StatsD server.
+- We've started a refactor of the `memfaultd` codebase to centralize our usage
+  of concurrency primitives. This will make the codebase more maintainable and
+  easier to reason about. You can find this new concurrency framework in the
+  `ssf` crate.
+- A host of internal changes to allow us to publish to crates.io! Look forward
+  to seeing `memfaultd` on crates.io soon!
+- Removed per core builtin cpu metrics. These were not very useful and were
+  creating a lot of noise in the timeline view. Tracking of CPU utilization can
+  still be done aggregated across all cores.
+
+### Fixed
+
+- Lowered log level for system metric collection logs from `warn` to `debug`.
+  These logs were very spammy, and were not actionable by end users.
+
+### Breaking
+
+- The MSRV for `memfaultd` has been bumped from 1.65.0 to 1.72.0. If you are
+  using the included `meta-rust-bin` layer you won't need to change anything.
+  Otherwise, you may need to update your Rust toolchain to a version that is at
+  least 1.72.0.
+
 ## [1.13.0] - 2024-07-15
 
 This is a minor release with a few bug fixes and couple of new metrics related
@@ -19,13 +72,13 @@ later this year.
 
 ### Added
 
-- `memfaultd` will now automatically collect thermal zone metrics when [system
-  metric collection is enabled](https://docs.memfault.com/docs/linux/reference-memfaultd-configuration#metrics).
+- `memfaultd` will now automatically collect thermal zone metrics when
+  [system metric collection is enabled](https://docs.memfault.com/docs/linux/reference-memfaultd-configuration#metrics).
 - `memfaultd` will now automatically collect network interface metrics when
-  [system metric collection is enabled](https://docs.memfault.com/docs/linux/reference-memfaultd-configuration#metrics). The
-  `metrics.system_metric_collection.network_interfaces` configuration option can
-  be used to specify which interfaces should be monitored. If it is unset, all
-  non-loopback interfaces will be monitored.
+  [system metric collection is enabled](https://docs.memfault.com/docs/linux/reference-memfaultd-configuration#metrics).
+  The `metrics.system_metric_collection.network_interfaces` configuration option
+  can be used to specify which interfaces should be monitored. If it is unset,
+  all non-loopback interfaces will be monitored.
 - `memfaultd` will now automatically collect disk usage metrics when system
   metric collection is enabled. The
   `metrics.system_metric_collection.disk_space` configuration option can be used
@@ -43,11 +96,12 @@ later this year.
 - Daily heartbeat metric reports are now disabled by default.
 - The local version of `meta-rust-bin` is updated with the Rust versions up to
   1.79.0.
-- `memfaultd` now has a separate repo to host its source code! This is a part of 
-  an ongoing effort to move the `memfaultd` source code outside of `meta-memfault`.
-  The end goal is to simply have a pointer to the `memfaultd` repository in the
-  `memfaultd` bitbake recipe, but for now the structure of this repository is unchanged.
-  Check it out at for yourself [here](https://github.com/memfault/memfaultd]!
+- `memfaultd` now has a separate repo to host its source code! This is a part of
+  an ongoing effort to move the `memfaultd` source code outside of
+  `meta-memfault`. The end goal is to simply have a pointer to the `memfaultd`
+  repository in the `memfaultd` bitbake recipe, but for now the structure of
+  this repository is unchanged. Check it out at for yourself
+  [here](https://github.com/memfault/memfaultd)!
 
 ### Fixed
 
@@ -250,8 +304,8 @@ This release also adds the ability to convert logs into metrics _on the edge_.
 ### Added
 
 - `memfaultd` now supports built-in capture of connectivity, battery, and
-  crashiness metrics. See our docs on [Memfault Core Metrics]
-  (https://docs.memfault.com/docs/platform/memfault-core-metrics).
+  crashiness metrics. See our docs on
+  [Memfault Core Metrics](https://docs.memfault.com/docs/platform/memfault-core-metrics).
   - Crashiness is measured automatically (any hour without a coredump collected
     will count as a crash-free hour).
   - Battery and connectivity are supported via the
@@ -470,7 +524,7 @@ Specifically:
 
   For example, to enable all features (the default):
 
-  ```
+  ```diff
   -PACKAGECONFIG := "plugin_swupdate plugin_collectd plugin_coredump plugin_logging"
   +PACKAGECONFIG := "swupdate collectd coredump logging"
   ```
@@ -487,7 +541,7 @@ Specifically:
   now `coredump`, `swupdate_plugin` is now `swupdate`, `reboot_plugin` is now
   `reboot`.
 
-  ```
+  ```diff
   -"swupdate_plugin": {
   +"swupdate": {
     "input_file": "/etc/swupdate.cfg",
@@ -916,7 +970,7 @@ documentation][docs-linux] for an introduction to the Memfault Linux SDK.
 During start-up of the `memfaultd` service, you may see a log line in the output
 of `journalctl --unit memfaultd`:
 
-```
+```log
 memfaultd.service: Can't open PID file /run/memfaultd.pid (yet?) after start: Operation not permitted
 ```
 
@@ -976,3 +1030,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.12.0-kirkstone
 [1.13.0]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.13.0-kirkstone
+[1.14.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.14.0-kirkstone

@@ -20,13 +20,13 @@ use super::{MetricStringKey, MetricTimestamp};
 
 use crate::util::serialization::float_to_duration;
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
 /// A typed value and timestamp pair that represents
 /// an individual reading value for a metric. This type does
 /// not have a notion of which key it is associated it
 /// and is purely the "value" in a metric reading.
 /// For the full metric reading type that includes the key,
 /// use KeyedMetricReading.
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum MetricReading {
     /// TimeWeightedAverage readings will be aggregated based on
     /// the time the reading was captured over.
@@ -35,7 +35,7 @@ pub enum MetricReading {
         timestamp: MetricTimestamp,
         /// Time period considered for this reading. This is only used to give a "time-weight" to the first
         /// value in the series. For future values we will use the time
-        /// difference we measure between the two points         
+        /// difference we measure between the two points
         /// In doubt, it's safe to use Duration::from_secs(0) here. This means the first value will be ignored.
         #[serde(with = "float_to_duration")]
         interval: Duration,
@@ -140,6 +140,26 @@ impl KeyedMetricReading {
                 s,
                 e
             )),
+        }
+    }
+
+    pub fn increment_counter(name: MetricStringKey) -> Self {
+        Self {
+            name,
+            value: MetricReading::Counter {
+                value: 1.0,
+                timestamp: Utc::now(),
+            },
+        }
+    }
+
+    pub fn add_to_counter(name: MetricStringKey, value: f64) -> Self {
+        Self {
+            name,
+            value: MetricReading::Counter {
+                value,
+                timestamp: Utc::now(),
+            },
         }
     }
 

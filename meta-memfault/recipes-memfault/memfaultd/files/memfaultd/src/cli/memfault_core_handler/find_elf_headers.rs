@@ -52,8 +52,16 @@ pub fn find_elf_headers_and_build_id_note_ranges<P: Read + Seek>(
 
             // FIXME: MFLT-11635 CoreElf .py requires ELF header + build ID in single segment
             Ok(vec![MemoryRange::new(
-                ranges.iter().map(|r| r.start).min().unwrap(),
-                ranges.iter().map(|r| r.end).max().unwrap(),
+                ranges
+                    .iter()
+                    .map(|r| r.start)
+                    .min()
+                    .ok_or_else(|| eyre::eyre!("No memory regions found"))?,
+                ranges
+                    .iter()
+                    .map(|r| r.end)
+                    .max()
+                    .ok_or_else(|| eyre::eyre!("No memory regions found"))?,
             )])
         }
         None => Err(eyre::eyre!("Build ID note missing")),

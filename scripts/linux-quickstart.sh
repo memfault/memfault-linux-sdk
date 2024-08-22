@@ -7,7 +7,7 @@
 # Enable for trace
 # set -eux
 
-LATEST_VERSION="1.12.0"
+LATEST_VERSION="1.13.0"
 
 # Required so that the script works  if run as root user or a regular user
 # Mostly for compatibility with Yocto systems, which are often accessed as
@@ -62,13 +62,13 @@ main() {
   get_architecture
   local _arch="$RETVAL"
   case "$_arch" in
-    aarch64-linux)
+    aarch64)
       echo "Detected architecture: '${_arch}'."
       ;;
-    arm-linux)
+    arm)
       echo "Detected architecture: '${_arch}'."
       ;;
-    x86_64-linux)
+    x86_64)
       echo "Detected architecture: '${_arch}'."
       ;;
     *)
@@ -89,9 +89,9 @@ main() {
   # fall back to default if a url is not specified
   if [ -z "${release_url}" ]; then
     if [ "${use_musl}" ]; then
-      release_url="https://github.com/memfault/memfault-linux-sdk/releases/download/${LATEST_VERSION}-kirkstone/memfaultd_${_arch}-musl"
+      release_url="https://github.com/memfault/memfaultd/releases/download/${LATEST_VERSION}/memfaultd-${_arch}-unknown-linux-musl"
     else
-      release_url="https://github.com/memfault/memfault-linux-sdk/releases/download/${LATEST_VERSION}-kirkstone/memfaultd_${_arch}"
+      release_url="https://github.com/memfault/memfaultd/releases/download/${LATEST_VERSION}/memfaultd-${_arch}-unknown-linux-gnu"
     fi
   fi
   local memfaultd_binary="${tmp_dir}/memfaultd"
@@ -166,6 +166,13 @@ get_architecture() {
   local _ostype
   _ostype="$(uname -s | tr '[:upper:]' '[:lower:]')"
 
+  case "$_ostype" in
+    linux) ;;
+    *)
+      err "Non-Linux systems are not supported by memfaultd"
+      ;;
+  esac
+
   case "$_cputype" in
     arm64 | aarch64)
       local _cputype=aarch64
@@ -176,12 +183,9 @@ get_architecture() {
     *)
       err "no precompiled binaries available for CPU architecture: $_cputype"
       ;;
-
   esac
 
-  local _arch="${_cputype}-${_ostype}"
-
-  RETVAL="$_arch"
+  RETVAL="$_cputype"
 }
 
 install_memfaultd_service_file() {

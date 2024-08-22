@@ -1,11 +1,7 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use std::{
-    ops::Sub,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{ops::Sub, time::Duration};
 
 use eyre::Result;
 
@@ -13,7 +9,7 @@ use crate::{
     config::{ConnectivityMonitorConfig, ConnectivityMonitorTarget},
     metrics::{
         core_metrics::{METRIC_CONNECTED_TIME, METRIC_EXPECTED_CONNECTED_TIME},
-        MetricReportManager,
+        KeyedMetricReading, MetricStringKey, MetricsMBox,
     },
     util::{can_connect::CanConnect, time_measure::TimeMeasure},
 };
@@ -22,7 +18,7 @@ pub struct ConnectivityMonitor<T, U> {
     targets: Vec<ConnectivityMonitorTarget>,
     interval: Duration,
     last_checked_at: Option<T>,
-    heartbeat_manager: Arc<Mutex<MetricReportManager>>,
+    metrics_mbox: MetricsMBox,
     connection_checker: U,
 }
 
@@ -31,15 +27,12 @@ where
     T: TimeMeasure + Copy + Ord + Sub<T, Output = Duration>,
     U: CanConnect,
 {
-    pub fn new(
-        config: &ConnectivityMonitorConfig,
-        heartbeat_manager: Arc<Mutex<MetricReportManager>>,
-    ) -> Self {
+    pub fn new(config: &ConnectivityMonitorConfig, metrics_mbox: MetricsMBox) -> Self {
         Self {
             targets: config.targets.clone(),
             interval: config.interval_seconds,
             last_checked_at: None,
-            heartbeat_manager,
+            metrics_mbox,
             connection_checker: U::new(config.timeout_seconds),
         }
     }
@@ -61,12 +54,17 @@ where
             Duration::ZERO
         };
 
-        let mut store = self.heartbeat_manager.lock().expect("Mutex Poisoned");
-        store.add_to_counter(METRIC_CONNECTED_TIME, connected_duration.as_millis() as f64)?;
-        store.add_to_counter(
-            METRIC_EXPECTED_CONNECTED_TIME,
-            since_last_reading.as_millis() as f64,
-        )?;
+        let metrics = vec![
+            KeyedMetricReading::add_to_counter(
+                MetricStringKey::from(METRIC_CONNECTED_TIME),
+                connected_duration.as_millis() as f64,
+            ),
+            KeyedMetricReading::add_to_counter(
+                MetricStringKey::from(METRIC_EXPECTED_CONNECTED_TIME),
+                since_last_reading.as_millis() as f64,
+            ),
+        ];
+        self.metrics_mbox.send_and_forget(metrics)?;
 
         self.last_checked_at = Some(now);
 
@@ -80,27 +78,21 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::BTreeMap,
-        net::IpAddr,
-        str::FromStr,
-        sync::{Arc, Mutex},
-        time::Duration,
-    };
+    use std::{collections::BTreeMap, net::IpAddr, str::FromStr, time::Duration};
 
     use insta::assert_json_snapshot;
     use rstest::rstest;
+    use ssf::ServiceMock;
 
     use super::ConnectivityMonitor;
     use crate::test_utils::{TestConnectionChecker, TestInstant};
     use crate::{
         config::{ConnectionCheckProtocol, ConnectivityMonitorConfig, ConnectivityMonitorTarget},
-        metrics::MetricReportManager,
+        metrics::TakeMetrics,
     };
 
     #[rstest]
     fn test_while_connected() {
-        let heartbeat_manager = Arc::new(Mutex::new(MetricReportManager::new()));
         let config = ConnectivityMonitorConfig {
             targets: vec![ConnectivityMonitorTarget {
                 host: IpAddr::from_str("8.8.8.8").unwrap(),
@@ -110,10 +102,11 @@ mod tests {
             interval_seconds: Duration::from_secs(15),
             timeout_seconds: Duration::from_secs(10),
         };
+        let mut metrics_mock = ServiceMock::new();
         let mut connectivity_monitor =
             ConnectivityMonitor::<TestInstant, TestConnectionChecker>::new(
                 &config,
-                heartbeat_manager.clone(),
+                metrics_mock.mbox.clone(),
             );
 
         TestConnectionChecker::connect();
@@ -127,7 +120,7 @@ mod tests {
             .update_connected_time()
             .expect("Couldn't update connected time monitor!");
 
-        let metrics = heartbeat_manager.lock().unwrap().take_heartbeat_metrics();
+        let metrics = metrics_mock.take_metrics().unwrap();
 
         // Need to sort the map so the JSON string is consistent
         let sorted_metrics: BTreeMap<_, _> = metrics.iter().collect();
@@ -137,7 +130,6 @@ mod tests {
 
     #[rstest]
     fn test_half_connected_half_disconnected() {
-        let heartbeat_manager = Arc::new(Mutex::new(MetricReportManager::new()));
         let config = ConnectivityMonitorConfig {
             targets: vec![ConnectivityMonitorTarget {
                 host: IpAddr::from_str("8.8.8.8").unwrap(),
@@ -147,10 +139,11 @@ mod tests {
             interval_seconds: Duration::from_secs(15),
             timeout_seconds: Duration::from_secs(10),
         };
+        let mut metrics_mock = ServiceMock::new();
         let mut connectivity_monitor =
             ConnectivityMonitor::<TestInstant, TestConnectionChecker>::new(
                 &config,
-                heartbeat_manager.clone(),
+                metrics_mock.mbox.clone(),
             );
 
         TestConnectionChecker::connect();
@@ -169,7 +162,7 @@ mod tests {
         connectivity_monitor
             .update_connected_time()
             .expect("Couldn't update connected time monitor!");
-        let metrics = heartbeat_manager.lock().unwrap().take_heartbeat_metrics();
+        let metrics = metrics_mock.take_metrics().unwrap();
 
         // Need to sort the map so the JSON string is consistent
         let sorted_metrics: BTreeMap<_, _> = metrics.iter().collect();
@@ -178,7 +171,6 @@ mod tests {
 
     #[rstest]
     fn test_fully_disconnected() {
-        let heartbeat_manager = Arc::new(Mutex::new(MetricReportManager::new()));
         let config = ConnectivityMonitorConfig {
             targets: vec![ConnectivityMonitorTarget {
                 host: IpAddr::from_str("8.8.8.8").unwrap(),
@@ -188,10 +180,11 @@ mod tests {
             interval_seconds: Duration::from_secs(15),
             timeout_seconds: Duration::from_secs(10),
         };
+        let mut metrics_mock = ServiceMock::new();
         let mut connectivity_monitor =
             ConnectivityMonitor::<TestInstant, TestConnectionChecker>::new(
                 &config,
-                heartbeat_manager.clone(),
+                metrics_mock.mbox.clone(),
             );
 
         TestConnectionChecker::disconnect();
@@ -207,7 +200,7 @@ mod tests {
         connectivity_monitor
             .update_connected_time()
             .expect("Couldn't update connected time monitor!");
-        let metrics = heartbeat_manager.lock().unwrap().take_heartbeat_metrics();
+        let metrics = metrics_mock.take_metrics().unwrap();
 
         // Need to sort the map so the JSON string is consistent
         let sorted_metrics: BTreeMap<_, _> = metrics.iter().collect();

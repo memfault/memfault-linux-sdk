@@ -134,10 +134,26 @@ pub enum Metadata {
     LinuxMemfaultWatch {
         cmdline: Vec<String>,
         exit_code: i32,
+        #[serde(rename = "duration_ms", with = "milliseconds_to_duration")]
         duration: Duration,
         stdio_log_file_name: String,
         compression: CompressionAlgorithm,
     },
+    #[serde(rename = "custom-data-recording")]
+    CustomDataRecording {
+        start_time: Option<CdrTimestamp>,
+        #[serde(rename = "duration_ms", with = "milliseconds_to_duration")]
+        duration: Duration,
+        #[serde(rename = "mimetypes")]
+        mime_types: Vec<String>,
+        reason: String,
+        recording_file_name: String,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CdrTimestamp {
+    timestamp: chrono::DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -230,6 +246,24 @@ impl Metadata {
             report_type,
         }
     }
+
+    pub fn new_custom_data_recording(
+        start_time: Option<chrono::DateTime<Utc>>,
+        duration: Duration,
+        mime_types: Vec<String>,
+        reason: String,
+        recording_file_name: String,
+    ) -> Self {
+        let start_time = start_time.map(|timestamp| CdrTimestamp { timestamp });
+
+        Self::CustomDataRecording {
+            start_time,
+            duration,
+            mime_types,
+            reason,
+            recording_file_name,
+        }
+    }
 }
 
 impl CollectionTime {
@@ -302,6 +336,10 @@ impl Manifest {
                 stdio_log_file_name,
                 ..
             } => vec![stdio_log_file_name.clone()],
+            Metadata::CustomDataRecording {
+                recording_file_name,
+                ..
+            } => vec![recording_file_name.clone()],
         }
     }
 }

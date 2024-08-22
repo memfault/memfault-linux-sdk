@@ -1,34 +1,32 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 
 use eyre::Result;
 use log::{debug, warn};
 use regex::Regex;
 use serde_json::{Map, Value};
 
-use crate::{config::LogToMetricRule, metrics::MetricReportManager};
+use crate::{
+    config::LogToMetricRule,
+    metrics::{KeyedMetricReading, MetricsMBox},
+};
 
 const SEARCH_FIELD: &str = "MESSAGE";
 
 pub struct LogToMetrics {
     rules: Vec<LogToMetricRule>,
-    heartbeat_manager: Arc<Mutex<MetricReportManager>>,
+    metrics_mbox: MetricsMBox,
     regex_cache: HashMap<String, Regex>,
 }
 
 impl LogToMetrics {
-    pub fn new(
-        rules: Vec<LogToMetricRule>,
-        heartbeat_manager: Arc<Mutex<MetricReportManager>>,
-    ) -> Self {
+    pub fn new(rules: Vec<LogToMetricRule>, metrics_mbox: MetricsMBox) -> Self {
         Self {
             rules,
-            heartbeat_manager,
+            metrics_mbox,
             regex_cache: HashMap::new(),
         }
     }
@@ -49,8 +47,8 @@ impl LogToMetrics {
                             &mut self.regex_cache,
                             metric_name,
                             filter,
-                            self.heartbeat_manager.clone(),
-                        ),
+                            self.metrics_mbox.clone(),
+                        )?,
                     }
                 }
             }
@@ -75,22 +73,23 @@ impl LogToMetrics {
         regex_cache: &mut HashMap<String, Regex>,
         metric_name: &str,
         filter: &HashMap<String, String>,
-        heartbeat_manager: Arc<Mutex<MetricReportManager>>,
-    ) {
+        metrics_box: MetricsMBox,
+    ) -> Result<()> {
         // Use filter to quickly disqualify a log entry
         for (key, value) in filter {
             if let Some(log_value) = data.get(key) {
                 if log_value != value {
-                    return;
+                    return Ok(());
                 }
             } else {
-                return;
+                return Ok(());
             }
         }
 
-        let regex = regex_cache
-            .entry(pattern.to_string())
-            .or_insert_with(|| Regex::new(pattern).unwrap());
+        let regex = match regex_cache.entry(pattern.to_string()) {
+            Entry::Occupied(e) => e.into_mut(),
+            Entry::Vacant(e) => e.insert(Regex::new(pattern)?),
+        };
         if let Some(search_value) = data[SEARCH_FIELD].as_str() {
             let captures = regex.captures(search_value);
             debug!(
@@ -103,26 +102,33 @@ impl LogToMetrics {
             if let Some(captures) = captures {
                 let metric_name_with_captures =
                     Self::get_metric_name_with_captures(metric_name, captures);
-
-                if let Err(e) = heartbeat_manager
-                    .lock()
-                    .unwrap()
-                    .increment_counter(&metric_name_with_captures)
-                {
-                    warn!("Failed to increment metric: {}", e)
+                match metric_name_with_captures.parse() {
+                    Ok(metric_key) => metrics_box
+                        .send_and_forget(vec![KeyedMetricReading::increment_counter(metric_key)])?,
+                    Err(e) => {
+                        warn!(
+                            "LogToMetrics suggested invalid metric name {}: {}",
+                            metric_name_with_captures, e
+                        )
+                    }
                 }
             }
         }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{metrics::MetricValue, test_utils::setup_logger};
+    use crate::{
+        metrics::{MetricValue, TakeMetrics},
+        test_utils::setup_logger,
+    };
 
     use super::*;
     use rstest::rstest;
     use serde_json::json;
+    use ssf::ServiceMock;
 
     #[rstest]
     #[case(vec![LogToMetricRule::CountMatching {
@@ -174,25 +180,23 @@ mod tests {
         #[case] expected_value: f64,
         _setup_logger: (),
     ) {
-        let metric_report_manager = Arc::new(Mutex::new(MetricReportManager::new()));
-        let mut log_to_metrics = LogToMetrics::new(rules, metric_report_manager.clone());
+        let mut mock = ServiceMock::new();
+        let mut log_to_metrics = LogToMetrics::new(rules, mock.mbox.clone());
 
         for log in logs {
             log_to_metrics
                 .process(&json!({ "data": log }))
                 .expect("process error");
         }
-        let metrics = metric_report_manager
-            .lock()
-            .unwrap()
-            .take_heartbeat_metrics();
+
+        let metrics = mock.take_metrics().expect("invalid metrics");
 
         if expected_value == 0.0 {
-            assert!(!metrics.iter().any(|m| m.0.as_str() == metric_name));
+            assert!(!metrics.iter().any(|m| m.0.to_string() == metric_name));
         } else {
             let m = metrics
                 .iter()
-                .find(|m| m.0.as_str() == metric_name)
+                .find(|m| m.0.to_string() == metric_name)
                 .unwrap();
 
             match m.1 {

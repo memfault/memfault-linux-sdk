@@ -1,8 +1,6 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use std::sync::{Arc, Mutex};
-
 use log::warn;
 use tiny_http::{Method, Request, Response};
 
@@ -10,7 +8,7 @@ use crate::{
     http_server::{HttpHandler, HttpHandlerResult},
     metrics::{
         core_metrics::{METRIC_SYNC_FAILURE, METRIC_SYNC_SUCCESS},
-        MetricReportManager,
+        KeyedMetricReading, MetricsMBox,
     },
 };
 
@@ -18,17 +16,14 @@ use crate::{
 #[derive(Clone)]
 pub struct ReportSyncEventHandler {
     data_collection_enabled: bool,
-    metrics_store: Arc<Mutex<MetricReportManager>>,
+    metrics_mbox: MetricsMBox,
 }
 
 impl ReportSyncEventHandler {
-    pub fn new(
-        data_collection_enabled: bool,
-        metrics_store: Arc<Mutex<MetricReportManager>>,
-    ) -> Self {
+    pub fn new(data_collection_enabled: bool, metrics_mbox: MetricsMBox) -> Self {
         Self {
             data_collection_enabled,
-            metrics_store,
+            metrics_mbox,
         }
     }
 }
@@ -42,13 +37,21 @@ impl HttpHandler for ReportSyncEventHandler {
         }
         if self.data_collection_enabled {
             if request.url() == "/v1/sync/success" {
-                let mut metrics_store = self.metrics_store.lock().unwrap();
-                if let Err(e) = metrics_store.increment_counter(METRIC_SYNC_SUCCESS) {
+                if let Err(e) =
+                    self.metrics_mbox
+                        .send_and_forget(vec![KeyedMetricReading::increment_counter(
+                            METRIC_SYNC_SUCCESS.into(),
+                        )])
+                {
                     warn!("Couldn't increment sync_success counter: {:#}", e);
                 }
             } else if request.url() == "/v1/sync/failure" {
-                let mut metrics_store = self.metrics_store.lock().unwrap();
-                if let Err(e) = metrics_store.increment_counter(METRIC_SYNC_FAILURE) {
+                if let Err(e) =
+                    self.metrics_mbox
+                        .send_and_forget(vec![KeyedMetricReading::increment_counter(
+                            METRIC_SYNC_FAILURE.into(),
+                        )])
+                {
                     warn!("Couldn't increment sync_failure counter: {:#}", e);
                 }
             }
@@ -59,66 +62,51 @@ impl HttpHandler for ReportSyncEventHandler {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::BTreeMap,
-        sync::{Arc, Mutex},
-    };
-
     use insta::assert_json_snapshot;
     use rstest::{fixture, rstest};
+    use ssf::ServiceMock;
     use tiny_http::{Method, TestRequest};
 
     use crate::{
         http_server::{HttpHandler, HttpHandlerResult},
-        metrics::MetricReportManager,
+        metrics::{KeyedMetricReading, TakeMetrics},
     };
 
     use super::ReportSyncEventHandler;
 
     #[rstest]
-    fn handle_sync_success(handler: ReportSyncEventHandler) {
+    fn handle_sync_success(mut fixture: Fixture) {
         let r = TestRequest::new()
             .with_method(Method::Post)
             .with_path("/v1/sync/success");
         assert!(matches!(
-            handler.handle_request(&mut r.into()),
+            fixture.handler.handle_request(&mut r.into()),
             HttpHandlerResult::Response(_)
         ));
 
-        let metrics = handler
-            .metrics_store
-            .lock()
-            .unwrap()
-            .take_heartbeat_metrics();
-        assert_json_snapshot!(&metrics);
+        assert_json_snapshot!(fixture.mock.take_metrics().unwrap());
     }
 
     #[rstest]
-    fn handle_sync_failure(handler: ReportSyncEventHandler) {
+    fn handle_sync_failure(mut fixture: Fixture) {
         let r = TestRequest::new()
             .with_method(Method::Post)
             .with_path("/v1/sync/failure");
         assert!(matches!(
-            handler.handle_request(&mut r.into()),
+            fixture.handler.handle_request(&mut r.into()),
             HttpHandlerResult::Response(_)
         ));
-
-        let metrics = handler
-            .metrics_store
-            .lock()
-            .unwrap()
-            .take_heartbeat_metrics();
-        assert_json_snapshot!(&metrics);
+        assert_json_snapshot!(fixture.mock.take_metrics().unwrap());
     }
 
     #[rstest]
-    fn handle_multiple_sync_events(handler: ReportSyncEventHandler) {
+    fn handle_multiple_sync_events(mut fixture: Fixture) {
         for _ in 0..10 {
             let r = TestRequest::new()
                 .with_method(Method::Post)
                 .with_path("/v1/sync/failure");
             assert!(matches!(
-                handler.handle_request(&mut r.into()),
+                fixture.handler.handle_request(&mut r.into()),
                 HttpHandlerResult::Response(_)
             ));
         }
@@ -128,23 +116,22 @@ mod tests {
                 .with_method(Method::Post)
                 .with_path("/v1/sync/success");
             assert!(matches!(
-                handler.handle_request(&mut r.into()),
+                fixture.handler.handle_request(&mut r.into()),
                 HttpHandlerResult::Response(_)
             ));
         }
-        let metrics = handler
-            .metrics_store
-            .lock()
-            .unwrap()
-            .take_heartbeat_metrics();
-        // Need to sort the map so the JSON string is consistent
-        let sorted_metrics: BTreeMap<_, _> = metrics.iter().collect();
-
-        assert_json_snapshot!(&sorted_metrics);
+        assert_json_snapshot!(fixture.mock.take_metrics().unwrap());
     }
 
+    struct Fixture {
+        handler: ReportSyncEventHandler,
+        mock: ServiceMock<Vec<KeyedMetricReading>>,
+    }
     #[fixture]
-    fn handler() -> ReportSyncEventHandler {
-        ReportSyncEventHandler::new(true, Arc::new(Mutex::new(MetricReportManager::new())))
+    fn fixture() -> Fixture {
+        let mock = ServiceMock::new();
+        let handler = ReportSyncEventHandler::new(true, mock.mbox.clone());
+
+        Fixture { handler, mock }
     }
 }

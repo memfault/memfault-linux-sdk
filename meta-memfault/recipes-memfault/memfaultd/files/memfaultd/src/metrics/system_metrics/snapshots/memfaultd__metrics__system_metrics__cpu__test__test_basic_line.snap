@@ -3,14 +3,11 @@ source: memfaultd/src/metrics/system_metrics/cpu.rs
 expression: "CpuMetricCollector::parse_proc_stat_line_cpu(proc_stat_line).unwrap()"
 ---
 [
-  "cpu",
-  [
-    1000.0,
-    5.0,
-    0.0,
-    0.0,
-    2.0,
-    0.0,
-    0.0
-  ]
+  1000.0,
+  5.0,
+  0.0,
+  0.0,
+  2.0,
+  0.0,
+  0.0
 ]

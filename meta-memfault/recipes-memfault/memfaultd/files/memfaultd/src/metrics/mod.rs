@@ -21,6 +21,10 @@ pub use metric_report::MetricReportType;
 
 mod metric_report_manager;
 pub use metric_report_manager::MetricReportManager;
+pub use metric_report_manager::TakeMetrics;
+
+mod messages;
+pub use messages::*;
 
 mod metric_reading;
 pub use metric_reading::KeyedMetricReading;

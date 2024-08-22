@@ -5,7 +5,7 @@ use cc::Build;
 use std::env;
 use walkdir::WalkDir;
 
-static LIBMEMFAULTC: &str = "../libmemfaultc/";
+static LIBMEMFAULTC: &str = "libmemfaultc";
 
 fn main() {
     // Cross-compile C flags set by the CC Crate can conflict with the
@@ -62,7 +62,8 @@ fn main() {
     println!("cargo:rustc-link-lib=static=memfaultc");
 
     // Tell cargo to rebuild the project when any of the C project files changes
-    WalkDir::new("../libmemfaultc/src")
+    let root_src_dir = format!("{}/src", LIBMEMFAULTC);
+    WalkDir::new(root_src_dir)
         .into_iter()
         .filter_map(Result::ok)
         .filter_map(

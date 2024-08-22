@@ -15,12 +15,13 @@ use buffer::{monitor_and_buffer, STOP_THREADS};
 use chrono::Local;
 use eyre::{eyre, Result};
 use flate2::{write::ZlibEncoder, Compression};
-use log::{error, info, trace, LevelFilter};
+use log::{debug, error, info, trace, LevelFilter};
 
 use crate::{
     cli::{init_logger, MemfaultdClient},
     config::Config,
-    mar::{CompressionAlgorithm, Metadata},
+    mar::{CompressionAlgorithm, MarEntryBuilder, Metadata},
+    network::NetworkConfig,
 };
 
 use super::memfaultctl::WrappedArgs;
@@ -53,15 +54,17 @@ fn run_from_args(args: MemfaultWatchArgs) -> Result<i32> {
         LevelFilter::Trace
     } else {
         LevelFilter::Info
-    });
+    })?;
 
     let config_path = args.config_file.as_ref().map(Path::new);
     let config = Config::read_from_system(config_path)?;
 
     // Set up log files
     let file_name = format!("mfw-log-{}", Local::now().to_rfc3339());
+    let mut stdio_log_file_path = std::env::current_dir()?;
     let stdio_log_file_name = format!("{file_name}.zlib");
-    let stdio_log_file = File::create(&stdio_log_file_name)
+    stdio_log_file_path.push(&stdio_log_file_name);
+    let stdio_log_file = File::create(&stdio_log_file_path)
         .map_err(|_| eyre!("Failed to create output file on filesystem!"))?;
 
     let (command, additional_args) = args
@@ -162,21 +165,35 @@ fn run_from_args(args: MemfaultWatchArgs) -> Result<i32> {
 
     trace!("Command completed in {} ms", duration.as_millis());
 
-    let _metadata = Metadata::LinuxMemfaultWatch {
+    let metadata = Metadata::LinuxMemfaultWatch {
         cmdline: args.command,
         exit_code,
         duration,
-        stdio_log_file_name,
+        stdio_log_file_name: stdio_log_file_name.clone(),
         compression: CompressionAlgorithm::Zlib,
     };
 
     if !status.success() {
         info!("Command failed with exit code {exit_code}!");
+
+        let network_config = NetworkConfig::from(&config);
+        let mar_staging_path = config.mar_staging_path();
+        info!("Sending MAR file from {stdio_log_file_path:?} to {mar_staging_path:?}");
+        let mar_builder = MarEntryBuilder::new(&mar_staging_path)?;
+        let mar_entry = mar_builder
+            .set_metadata(metadata)
+            .add_attachment(stdio_log_file_path)
+            .save(&network_config)?;
+
+        info!("MFW MAR entry generated: {}", mar_entry.path.display());
+
         let client = MemfaultdClient::from_config(&config)
             .map_err(|report| eyre!("Failed to create Memfaultd client from config! {report}"))?;
 
         if client.notify_crash().is_err() {
             error!("Unable to contact memfaultd. Is it running?");
+        } else {
+            debug!("Notified memfaultd about crash!");
         }
     }
 

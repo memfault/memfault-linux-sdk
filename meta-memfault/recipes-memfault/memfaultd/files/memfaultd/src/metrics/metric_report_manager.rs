@@ -3,15 +3,16 @@
 // See License.txt for details
 use eyre::{eyre, Result};
 use log::{debug, error};
+use ssf::{Handler, Service};
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{hash_map::Entry, BTreeMap, HashMap},
     path::Path,
     sync::{Arc, Mutex},
 };
 
 use super::{
     core_metrics::METRIC_OPERATIONAL_CRASHES, metric_reading::KeyedMetricReading,
-    metric_report::CapturedMetrics, SessionName,
+    metric_report::CapturedMetrics, SessionEventMessage, SessionName,
 };
 use crate::{
     config::SessionConfig,
@@ -146,43 +147,30 @@ impl MetricReportManager {
 
     /// Dump the metrics to a MAR entry.
     ///
-    /// This takes a &Arc<Mutex<MetricReportManager>> and will minimize lock time.
     /// This will empty the metrics store.
     /// When used with a heartbeat metric report type, the heartbeat
     /// will be reset.
     /// When used with a session report type, the session will end and
     /// be removed from the MetricReportManager's internal sessions HashMap.
     pub fn dump_report_to_mar_entry(
-        metric_report_manager: &Arc<Mutex<Self>>,
+        &mut self,
         mar_staging_area: &Path,
         network_config: &NetworkConfig,
         report_type: &MetricReportType,
     ) -> Result<()> {
         let mar_builder = match report_type {
-            MetricReportType::Heartbeat => metric_report_manager
-                .lock()
-                .expect("Mutex Poisoned!")
-                .heartbeat
-                .prepare_metric_report(mar_staging_area)?,
-            MetricReportType::DailyHeartbeat => metric_report_manager
-                .lock()
-                .expect("Mutex Poisoned!")
+            MetricReportType::Heartbeat => {
+                self.heartbeat.prepare_metric_report(mar_staging_area)?
+            }
+            MetricReportType::DailyHeartbeat => self
                 .daily_heartbeat
                 .prepare_metric_report(mar_staging_area)?,
-            MetricReportType::Session(session_name) => {
-                match metric_report_manager
-                    .lock()
-                    .expect("Mutex Poisoned!")
-                    .sessions
-                    .remove(session_name)
-                {
-                    Some(mut report) => report.prepare_metric_report(mar_staging_area)?,
-                    None => return Err(eyre!("No metric report found for {}", session_name)),
-                }
-            }
+            MetricReportType::Session(session_name) => match self.sessions.remove(session_name) {
+                Some(mut report) => report.prepare_metric_report(mar_staging_area)?,
+                None => return Err(eyre!("No metric report found for {}", session_name)),
+            },
         };
 
-        // Save to disk after releasing the lock
         if let Some(mar_builder) = mar_builder {
             let mar_entry = mar_builder
                 .save(network_config)
@@ -260,6 +248,54 @@ impl Default for MetricReportManager {
     }
 }
 
+impl Service for MetricReportManager {
+    fn name(&self) -> &str {
+        "MetricReportManager"
+    }
+}
+
+impl Handler<KeyedMetricReading> for MetricReportManager {
+    fn deliver(&mut self, m: KeyedMetricReading) -> Result<()> {
+        self.add_metric(m)
+    }
+}
+
+impl Handler<SessionEventMessage> for MetricReportManager {
+    fn deliver(&mut self, m: SessionEventMessage) -> <SessionEventMessage as ssf::Message>::Reply {
+        match m {
+            SessionEventMessage::StartSession { name, readings } => {
+                let report = MetricReportType::Session(name.clone());
+                self.start_session(name)?;
+                for metric_reading in readings {
+                    self.add_metric_to_report(&report, metric_reading)?
+                }
+            }
+            SessionEventMessage::StopSession {
+                name,
+                readings,
+                mar_staging_area,
+                network_config,
+            } => {
+                let report = MetricReportType::Session(name);
+                for metric_reading in readings {
+                    self.add_metric_to_report(&report, metric_reading)?
+                }
+
+                self.dump_report_to_mar_entry(&mar_staging_area, &network_config, &report)?;
+            }
+        };
+        Ok(())
+    }
+}
+
+/// A trait to make it easier to verify (in unit tests) all the code that pushes metrics.
+///
+/// The implementation should implement some logic to coalesce multiple metrics
+/// of the same name into one value.
+pub trait TakeMetrics {
+    fn take_metrics(&mut self) -> Result<BTreeMap<MetricStringKey, MetricValue>>;
+}
+
 #[cfg(test)]
 mod tests {
     use tempfile::TempDir;
@@ -268,7 +304,21 @@ mod tests {
     use crate::test_utils::in_histograms;
     use insta::assert_json_snapshot;
     use rstest::rstest;
+    use ssf::ServiceMock;
     use std::str::FromStr;
+
+    impl TakeMetrics for ServiceMock<Vec<KeyedMetricReading>> {
+        fn take_metrics(&mut self) -> Result<BTreeMap<MetricStringKey, MetricValue>> {
+            let mut metric_service = MetricReportManager::new();
+            for m in self.take_messages().into_iter().flatten() {
+                metric_service.deliver(m)?;
+            }
+            Ok(metric_service
+                .take_heartbeat_metrics()
+                .into_iter()
+                .collect())
+        }
+    }
 
     #[rstest]
     #[case(in_histograms(vec![("foo", 1.0), ("bar",  2.0), ("baz", 3.0)]), "heartbeat_report_1")]

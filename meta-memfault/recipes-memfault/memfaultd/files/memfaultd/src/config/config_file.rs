@@ -57,6 +57,7 @@ pub struct SwUpdateConfig {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RebootConfig {
     pub last_reboot_reason_file: PathBuf,
+    pub capture_pstore: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Copy, Clone)]
