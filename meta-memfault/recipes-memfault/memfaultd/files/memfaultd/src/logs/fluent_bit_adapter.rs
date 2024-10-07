@@ -27,16 +27,13 @@ impl FluentBitAdapter {
     }
 
     /// Convert a FluentdMessage into a serde_json::Value that we can log.
-    /// Returns None when this message should be filtered out.
+    ///
+    /// Returns None when this message should be filtered out. This can happen
+    /// if the message does not contain a `MESSAGE` field. Indicating that it is
+    /// not a log message.
     fn convert_message(msg: FluentdMessage, extra_fields: &[String]) -> Option<LogEntry> {
-        if !msg.1.contains_key("MESSAGE") {
-            // We are only interested in log messages. They will have a 'MESSAGE' key.
-            // Metrics do not have the MESSAGE key.
-            return None;
-        }
-
-        let mut log_entry = LogEntry::from(msg);
-        log_entry.filter_fields(extra_fields);
+        let mut log_entry = LogEntry::try_from(msg).ok()?;
+        log_entry.filter_extra_fields(extra_fields);
 
         Some(log_entry)
     }

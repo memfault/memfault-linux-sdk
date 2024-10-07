@@ -62,7 +62,7 @@ impl StatsDServer {
 #[cfg(test)]
 mod test {
     use crate::metrics::TakeMetrics;
-    use insta::assert_json_snapshot;
+    use insta::{assert_json_snapshot, with_settings};
     use rstest::{fixture, rstest};
     use ssf::ServiceMock;
 
@@ -93,7 +93,9 @@ mod test {
 
         // Process second StatsD test message
         fixture.server.process_statsd_message(statsd_message_b);
+        with_settings!({sort_maps => true}, {
         assert_json_snapshot!(test_name, fixture.mock.take_metrics().unwrap());
+        });
     }
 
     struct Fixture {

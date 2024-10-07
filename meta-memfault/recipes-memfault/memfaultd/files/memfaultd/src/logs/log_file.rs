@@ -5,24 +5,40 @@
 //!
 use crate::logs::completed_log::CompletedLog;
 use crate::mar::CompressionAlgorithm;
+use chrono::{DateTime, Utc};
 use eyre::{eyre, Result, WrapErr};
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use log::{trace, warn};
-use serde_json::{json, Value};
 use std::fs::{remove_file, File};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+use std::collections::HashMap;
+
+use super::log_entry::{LogData, LogEntry};
+
 pub trait LogFile {
-    fn write_json_line(&mut self, json: Value) -> Result<()>;
-    fn write_log<S: AsRef<str>>(&mut self, ts: Option<Value>, msg: S) -> Result<()> {
-        self.write_json_line(json!({
-            "ts": ts,
-            "data": { "MESSAGE": msg.as_ref() }
-        }))
+    fn write_json_line(&mut self, json: LogEntry) -> Result<()>;
+    fn write_log<S: AsRef<str>>(
+        &mut self,
+        ts: DateTime<Utc>,
+        priority: &str,
+        msg: S,
+    ) -> Result<()> {
+        let data = LogData {
+            message: msg.as_ref().to_string(),
+            pid: None,
+            systemd_unit: None,
+            priority: Some(priority.to_string()),
+            original_priority: None,
+            extra_fields: HashMap::new(),
+        };
+
+        let log_entry = LogEntry { ts, data };
+        self.write_json_line(log_entry)
     }
     fn flush(&mut self) -> Result<()>;
 }
@@ -60,7 +76,7 @@ impl LogFileImpl {
 }
 
 impl LogFile for LogFileImpl {
-    fn write_json_line(&mut self, json: Value) -> Result<()> {
+    fn write_json_line(&mut self, json: LogEntry) -> Result<()> {
         let bytes = serde_json::to_vec(&json)?;
         let mut written = self.writer.write(&bytes)?;
         written += self.writer.write("\n".as_bytes())?;
@@ -217,10 +233,13 @@ impl LogFileControl<LogFileImpl> for LogFileControlImpl {
 mod tests {
     use std::io::Read;
 
+    use crate::logs::log_entry::LogValue;
+
     use super::*;
     use flate2::bufread::ZlibDecoder;
     use rand::distributions::{Alphanumeric, DistString};
     use rstest::rstest;
+    use serde_json::Value;
     use tempfile::tempdir;
 
     // We saw this bug when we tried switching to the rust-based backend for flate2 (miniz-oxide)
@@ -239,7 +258,21 @@ mod tests {
                 Alphanumeric.sample_string(&mut rand::thread_rng(), 16),
                 Alphanumeric.sample_string(&mut rand::thread_rng(), 20),
             );
-            log.write_json_line(json!({ "data": { "message": message, "prio": 42, "unit": "systemd"}, "ts": "2023-22-22T22:22:22Z"})).expect("error writing json line");
+            let log_entry = LogEntry {
+                ts: "2024-09-11T12:34:56Z".parse().unwrap(),
+                data: LogData {
+                    message,
+                    pid: None,
+                    systemd_unit: None,
+                    priority: None,
+                    original_priority: None,
+                    extra_fields: [("unit".to_string(), LogValue::String("systemd".to_string()))]
+                        .into_iter()
+                        .collect(),
+                },
+            };
+            log.write_json_line(log_entry)
+                .expect("error writing json line");
             count_lines += 1;
         }
 

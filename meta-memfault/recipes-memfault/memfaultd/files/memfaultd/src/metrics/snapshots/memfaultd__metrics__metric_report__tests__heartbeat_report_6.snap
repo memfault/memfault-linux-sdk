@@ -1,0 +1,9 @@
+---
+source: memfaultd/src/metrics/metric_report.rs
+expression: sorted_metrics
+---
+{
+  "interface/eth0/bytes_per_second/rx": 1.6666666666666667,
+  "interface/eth0/bytes_per_second/rx_max": 2.0,
+  "interface/eth0/bytes_per_second/rx_min": 1.0
+}

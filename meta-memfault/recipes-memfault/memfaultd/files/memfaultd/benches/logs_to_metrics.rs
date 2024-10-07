@@ -5,17 +5,25 @@ use std::{collections::HashMap, iter::repeat};
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use memfaultd::config::LogToMetricRule;
+use memfaultd::logs::log_entry::{LogData, LogEntry};
 use memfaultd::logs::log_to_metrics::LogToMetrics;
 use memfaultd::metrics::MetricReportManager;
-use serde_json::{json, Value};
 use ssf::ServiceJig;
 
-fn log_line_from_str(line: &str) -> Value {
-    json!({
-        "data": {
-            "MESSAGE": line,
-        }
-    })
+fn log_line_from_str(line: &str) -> LogEntry {
+    let data = LogData {
+        message: line.to_string(),
+        pid: None,
+        systemd_unit: None,
+        priority: None,
+        original_priority: None,
+        extra_fields: HashMap::new(),
+    };
+
+    LogEntry {
+        ts: chrono::Utc::now(),
+        data,
+    }
 }
 
 fn send_logs(num_log_lines: u64) {
@@ -31,7 +39,7 @@ fn send_logs(num_log_lines: u64) {
     let log_lines = repeat("eager evaluation is bad")
         .take(num_log_lines as usize)
         .map(log_line_from_str)
-        .collect::<Vec<Value>>();
+        .collect::<Vec<LogEntry>>();
 
     let mut logs_to_metrics = LogToMetrics::new(rules, report_service.mailbox.into());
     log_lines.iter().for_each(|log_line| {

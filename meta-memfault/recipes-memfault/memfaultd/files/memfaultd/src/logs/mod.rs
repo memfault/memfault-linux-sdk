@@ -17,5 +17,8 @@ pub mod log_entry;
 mod log_file;
 mod recovery;
 
-#[cfg(feature = "log-to-metrics")]
+#[cfg(feature = "regex")]
+pub mod log_level_mapper;
+
+#[cfg(feature = "regex")]
 pub mod log_to_metrics;

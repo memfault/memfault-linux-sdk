@@ -128,4 +128,21 @@ pub fn in_histograms(
         })
 }
 
+#[cfg(test)]
+/// Constructs an iterator of Counter metric readings for tests
+/// to easily generate mock data
+pub fn in_counters(metrics: Vec<(&'static str, f64)>) -> impl Iterator<Item = KeyedMetricReading> {
+    metrics
+        .into_iter()
+        .enumerate()
+        .map(|(i, (name, value))| KeyedMetricReading {
+            name: MetricStringKey::from_str(name).unwrap(),
+            value: MetricReading::Counter {
+                value,
+                timestamp: MetricTimestamp::from_str("2021-01-01T00:00:00Z").unwrap()
+                    + chrono::Duration::seconds(i as i64),
+            },
+        })
+}
+
 pub(crate) use set_snapshot_suffix;

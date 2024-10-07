@@ -1,6 +1,6 @@
 ---
 source: memfaultd/src/metrics/session_event_handler.rs
-expression: metrics
+expression: fixture.take_session_metrics()
 ---
 {
   "bar": 2.0,

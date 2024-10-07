@@ -16,8 +16,11 @@ use crate::{
     network::DeviceConfigRevision,
     network::NetworkConfig,
     reboot::RebootReason,
-    util::serialization::{milliseconds_to_duration, optional_milliseconds_to_duration},
     util::system::{get_system_clock, read_system_boot_id, Clock},
+    util::{
+        serialization::{milliseconds_to_duration, optional_milliseconds_to_duration},
+        system::{get_osrelease, get_ostype},
+    },
 };
 
 #[derive(Serialize, Deserialize)]
@@ -56,6 +59,8 @@ struct Device {
 pub struct Producer {
     pub id: String,
     pub version: String,
+    pub os_version: Option<String>,
+    pub os_name: Option<String>,
 }
 
 impl Default for Producer {
@@ -63,6 +68,8 @@ impl Default for Producer {
         Self {
             id: "memfaultd".into(),
             version: VERSION.to_owned(),
+            os_version: get_ostype(),
+            os_name: get_osrelease(),
         }
     }
 }
@@ -194,7 +201,7 @@ impl<K: AsRef<str>, V: Into<Value>> TryFrom<(K, V)> for DeviceAttribute {
 
     fn try_from(value: (K, V)) -> std::result::Result<Self, Self::Error> {
         Ok(DeviceAttribute {
-            string_key: str::parse(value.0.as_ref())?,
+            string_key: str::parse(value.0.as_ref().trim())?,
             value: value.1.into(),
         })
     }
@@ -366,7 +373,7 @@ mod tests {
     use crate::network::NetworkConfig;
     use crate::reboot::RebootReason;
 
-    use super::{CollectionTime, Manifest};
+    use super::*;
 
     #[rstest]
     #[case("coredump-gzip", CompressionAlgorithm::Gzip)]
@@ -379,7 +386,7 @@ mod tests {
             CollectionTime::test_fixture(),
             super::Metadata::new_coredump("/tmp/core.elf".into(), compression),
         );
-        insta::assert_json_snapshot!(name, manifest, { ".producer.version" => "tests"});
+        insta::assert_json_snapshot!(name, manifest, { ".producer.version" => "tests",  ".producer.os_version" => "tests", ".producer.os_name" => "tests"});
     }
 
     #[rstest]
@@ -395,7 +402,7 @@ mod tests {
             CollectionTime::test_fixture(),
             super::Metadata::new_log("/var/log/syslog".into(), this_cid, next_cid, compression),
         );
-        insta::assert_json_snapshot!(name, manifest, { ".producer.version" => "tests" });
+        insta::assert_json_snapshot!(name, manifest, { ".producer.version" => "tests",  ".producer.os_version" => "tests", ".producer.os_name" => "tests"});
     }
 
     #[rstest]
@@ -411,7 +418,7 @@ mod tests {
                 ("my_bool", true).try_into().unwrap(),
             ]),
         );
-        insta::assert_json_snapshot!(manifest, { ".producer.version" => "tests"});
+        insta::assert_json_snapshot!( manifest, { ".producer.version" => "tests",  ".producer.os_version" => "tests", ".producer.os_name" => "tests"});
     }
 
     #[rstest]
@@ -422,7 +429,7 @@ mod tests {
             CollectionTime::test_fixture(),
             super::Metadata::new_device_config(42),
         );
-        insta::assert_json_snapshot!(manifest, { ".producer.version" => "tests"});
+        insta::assert_json_snapshot!( manifest, { ".producer.version" => "tests",  ".producer.os_version" => "tests", ".producer.os_name" => "tests"});
     }
 
     #[rstest]
@@ -433,7 +440,7 @@ mod tests {
             CollectionTime::test_fixture(),
             super::Metadata::new_reboot(RebootReason::from(RebootReasonCode::UserShutdown)),
         );
-        insta::assert_json_snapshot!(manifest, { ".producer.version" => "tests"});
+        insta::assert_json_snapshot!( manifest, { ".producer.version" => "tests",  ".producer.os_version" => "tests", ".producer.os_name" => "tests"});
     }
 
     #[rstest]
@@ -446,7 +453,7 @@ mod tests {
                 RebootReason::from_str("CustomRebootReason").unwrap_or_else(|e| panic!("{}", e)),
             ),
         );
-        insta::assert_json_snapshot!(manifest, { ".producer.version" => "tests"});
+        insta::assert_json_snapshot!( manifest, { ".producer.version" => "tests",  ".producer.os_version" => "tests", ".producer.os_name" => "tests"});
     }
 
     #[rstest]
@@ -460,7 +467,7 @@ mod tests {
                     .unwrap_or_else(|e| panic!("{}", e)),
             ),
         );
-        insta::assert_json_snapshot!(manifest, { ".producer.version" => "tests"});
+        insta::assert_json_snapshot!( manifest, { ".producer.version" => "tests",  ".producer.os_version" => "tests", ".producer.os_name" => "tests"});
     }
 
     #[rstest]
@@ -478,7 +485,7 @@ mod tests {
                 report_type: MetricReportType::Heartbeat,
             },
         );
-        insta::assert_json_snapshot!(manifest, { ".producer.version" => "tests"});
+        insta::assert_json_snapshot!( manifest, { ".producer.version" => "tests",  ".producer.os_version" => "tests", ".producer.os_name" => "tests"});
     }
 
     #[rstest]
@@ -496,6 +503,17 @@ mod tests {
             .with_extension("json");
         let manifest_json = std::fs::read_to_string(input_path).unwrap();
         let manifest: Manifest = serde_json::from_str(manifest_json.as_str()).unwrap();
-        insta::assert_json_snapshot!(name, manifest, { ".producer.version" => "tests"});
+        insta::assert_json_snapshot!(name, manifest, { ".producer.version" => "tests",  ".producer.os_version" => "tests", ".producer.os_name" => "tests"});
+    }
+
+    #[rstest]
+    #[case(" before", "before")]
+    #[case("after ", "after")]
+    #[case(" both ", "both")]
+    #[case("\ttab\t", "tab")]
+    #[case("\nnewline\n", "newline")]
+    fn whitespace_trimmed_attribute(#[case] input_string: &str, #[case] expected: &str) {
+        let attribute = DeviceAttribute::try_from((input_string, 42)).unwrap();
+        assert_eq!(attribute.string_key.as_str(), expected);
     }
 }

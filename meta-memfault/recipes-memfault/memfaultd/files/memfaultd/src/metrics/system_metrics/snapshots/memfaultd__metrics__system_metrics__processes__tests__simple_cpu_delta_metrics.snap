@@ -65,5 +65,23 @@ expression: process_metric_readings.unwrap()
         "timestamp": "[timestamp]"
       }
     }
+  },
+  {
+    "name": "cpu_usage_memfaultd_pct",
+    "value": {
+      "Histogram": {
+        "value": 0.15,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory_memfaultd_pct",
+    "value": {
+      "Histogram": {
+        "value": 0.01801,
+        "timestamp": "[timestamp]"
+      }
+    }
   }
 ]

@@ -1,0 +1,8 @@
+---
+source: memfaultd/src/metrics/metric_report.rs
+expression: sorted_metrics
+---
+{
+  "operational_crashes": 2.0,
+  "operational_crashes_memfaultd": 5.0
+}

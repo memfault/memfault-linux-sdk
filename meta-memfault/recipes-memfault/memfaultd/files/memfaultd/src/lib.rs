@@ -4,7 +4,6 @@
 // See License.txt for details
 
 pub mod cli;
-#[cfg(feature = "collectd")]
 mod collectd;
 pub mod config;
 #[cfg(feature = "coredump")]

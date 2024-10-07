@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use eyre::{eyre, Result};
 use std::cmp;
 
-use super::{MetricReading, MetricValue};
+use super::{construct_histogram_value, MetricReading, MetricValue};
 
 const FINITENESS_ERROR: &str = "Metric values must be finite.";
 
@@ -33,6 +33,7 @@ impl Histogram {
                 if !value.is_finite() {
                     return Err(eyre!(FINITENESS_ERROR));
                 }
+
                 Ok(Self {
                     sum: value,
                     count: 1,
@@ -70,9 +71,13 @@ impl TimeSeries for Histogram {
 
     fn value(&self) -> MetricValue {
         if self.count > 0 {
-            MetricValue::Number(self.sum / self.count as f64)
+            MetricValue::Histogram(construct_histogram_value(
+                self.min,
+                self.sum / self.count as f64,
+                self.max,
+            ))
         } else {
-            MetricValue::Number(f64::NAN)
+            MetricValue::Histogram(construct_histogram_value(f64::NAN, f64::NAN, f64::NAN))
         }
     }
 }
@@ -282,23 +287,24 @@ mod tests {
     use chrono::Duration;
     use rstest::rstest;
 
-    use crate::metrics::{MetricReading, MetricTimestamp, MetricValue};
+    use crate::metrics::{HistogramValue, MetricReading, MetricTimestamp, MetricValue};
     use std::{f64::INFINITY, f64::NAN, f64::NEG_INFINITY, str::FromStr};
 
     use super::TimeSeries;
     use super::{Counter, Gauge, Histogram, TimeWeightedAverage};
 
     #[rstest]
-    #[case(1.0, 1000, 2.0, 1.5, 1000)]
-    #[case(10.0, 10_000, 10.0, 10.0, 10_000)]
-    #[case(1.0, 9_000, 0.0, 0.5, 9_000)]
-    #[case(1.0, 0, 2.0, 1.5, 0)]
-    #[case(1.0, 1000, 2.0, 1.5, 1000)]
+    #[case(1.0, 1000, 2.0, 1.5, 2.0, 1.0, 1000)]
+    #[case(10.0, 10_000, 10.0, 10.0, 10.0, 10.0, 10_000)]
+    #[case(1.0, 9_000, 0.0, 0.5, 1.0, 0.0, 9_000)]
+    #[case(1.0, 0, 2.0, 1.5, 2.0, 1.0, 0)]
     fn test_histogram_aggregation(
         #[case] a: f64,
         #[case] duration_between_ms: i64,
         #[case] b: f64,
-        #[case] expected: f64,
+        #[case] expected_mean: f64,
+        #[case] expected_max: f64,
+        #[case] expected_min: f64,
         #[case] expected_ms: i64,
     ) {
         let t0 = MetricTimestamp::from_str("2021-01-01T00:00:00Z").unwrap();
@@ -318,7 +324,14 @@ mod tests {
         assert_eq!(h.start, t0);
         assert_eq!(h.end, t0 + Duration::milliseconds(duration_between_ms));
         assert_eq!((h.end - h.start).num_milliseconds(), expected_ms);
-        assert_eq!(h.value(), MetricValue::Number(expected));
+        assert_eq!(
+            h.value(),
+            MetricValue::Histogram(HistogramValue {
+                min: expected_min,
+                mean: expected_mean,
+                max: expected_max,
+            })
+        );
     }
 
     #[rstest]

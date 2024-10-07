@@ -123,6 +123,16 @@ impl KeyedMetricReading {
         }
     }
 
+    pub fn new_counter(name: MetricStringKey, value: f64) -> Self {
+        Self {
+            name,
+            value: MetricReading::Counter {
+                value,
+                timestamp: Utc::now(),
+            },
+        }
+    }
+
     /// Construct a KeyedMetricReading from a string in the StatsD format
     /// <MetricStringKey:<f64>|<StatsDMetricType>
     ///

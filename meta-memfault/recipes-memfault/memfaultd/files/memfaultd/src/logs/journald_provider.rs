@@ -31,10 +31,15 @@ impl<J: JournalRaw> JournaldLogProvider<J> {
     }
 
     fn run_once(&mut self) -> Result<()> {
-        for entry in self.journal.iter() {
-            let mut log_entry = LogEntry::from(entry);
+        for entry in self
+            .journal
+            .iter()
+            .filter(|e| e.fields.contains_key("MESSAGE"))
+        {
+            // We would only fail here if 'MESSAGE' is not present. Which we verified above.
+            let mut log_entry = LogEntry::try_from(entry)?;
             // TODO: Add support for filtering additional fields
-            log_entry.filter_fields(&[]);
+            log_entry.filter_extra_fields(&[]);
 
             if let Err(e) = self.entry_sender.send(log_entry) {
                 return Err(eyre!("Journald channel dropped: {}", e));

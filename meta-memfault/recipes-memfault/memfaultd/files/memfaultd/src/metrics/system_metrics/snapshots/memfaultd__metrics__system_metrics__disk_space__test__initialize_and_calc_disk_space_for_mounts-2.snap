@@ -22,6 +22,15 @@ expression: metrics
     }
   },
   {
+    "name": "storage_used_sda1_pct",
+    "value": {
+      "Histogram": {
+        "value": 72.07031,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
     "name": "disk_space/sda2/free_bytes",
     "value": {
       "Histogram": {
@@ -35,6 +44,15 @@ expression: metrics
     "value": {
       "Histogram": {
         "value": 3022848.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "storage_used_sda2_pct",
+    "value": {
+      "Histogram": {
+        "value": 72.07031,
         "timestamp": "[timestamp]"
       }
     }

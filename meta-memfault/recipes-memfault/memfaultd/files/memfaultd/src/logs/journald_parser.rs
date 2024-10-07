@@ -2,7 +2,7 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 use chrono::{DateTime, NaiveDateTime, Utc};
-use eyre::{eyre, Result};
+use eyre::{eyre, Error, Result};
 use libc::free;
 use nix::poll::{poll, PollFd};
 use serde::Serialize;
@@ -18,7 +18,7 @@ use memfaultc_sys::systemd::{
     sd_journal_process, sd_journal_seek_cursor,
 };
 
-use super::log_entry::{LogEntry, LogValue};
+use super::log_entry::{LogData, LogEntry, LogValue};
 use crate::util::system::read_system_boot_id;
 /// A trait for reading journal entries from the systemd journal.
 ///
@@ -269,18 +269,38 @@ impl From<JournalEntryRaw> for JournalEntry {
     }
 }
 
-impl From<JournalEntry> for LogEntry {
-    fn from(entry: JournalEntry) -> Self {
+impl TryFrom<JournalEntry> for LogEntry {
+    type Error = Error;
+
+    fn try_from(mut entry: JournalEntry) -> Result<Self, Self::Error> {
         let ts = entry.ts;
-        let data = entry
+
+        let fields = &mut entry.fields;
+        let message = fields
+            .remove("MESSAGE")
+            .ok_or_else(|| eyre!("Journal entry is missing MESSAGE field"))?;
+
+        let pid = fields.remove("_PID");
+        let systemd_unit = fields.remove("_SYSTEMD_UNIT");
+        let priority = fields.remove("PRIORITY");
+
+        let extra_fields = entry
             .fields
             .into_iter()
             .fold(HashMap::new(), |mut acc, (k, v)| {
                 acc.insert(k, LogValue::String(v));
                 acc
             });
+        let data = LogData {
+            message,
+            pid,
+            systemd_unit,
+            priority,
+            original_priority: None,
+            extra_fields,
+        };
 
-        LogEntry { ts, data }
+        Ok(LogEntry { ts, data })
     }
 }
 

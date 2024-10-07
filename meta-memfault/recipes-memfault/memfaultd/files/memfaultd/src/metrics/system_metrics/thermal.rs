@@ -23,7 +23,7 @@
 //! See additional Linux kernel documentation on /sys/class/thermal here:
 //! https://www.kernel.org/doc/Documentation/thermal/sysfs-api.txt
 
-use std::str::FromStr;
+use std::{fs::read_to_string, str::FromStr};
 
 use crate::metrics::{
     system_metrics::SystemMetricFamilyCollector, KeyedMetricReading, MetricStringKey,
@@ -41,13 +41,21 @@ impl ThermalMetricsCollector {
     }
 
     fn read_thermal_zone_temp(zone_name: &str, root_dir: &str) -> Result<KeyedMetricReading> {
-        let temp_file = &format!("{}/{}/temp", root_dir, zone_name);
+        let temp_file = format!("{}/{}/temp", root_dir, zone_name);
+        let type_file = format!("{}/{}/type", root_dir, zone_name);
+
         // The readings are in millidegrees Celsius, so we divide by 1000 to get
         // the temperature in degrees Celsius.
-        let temp_in_celsius = std::fs::read_to_string(temp_file)?.trim().parse::<f64>()? / 1000.0;
+        let temp_in_celsius = read_to_string(temp_file)?.trim().parse::<f64>()? / 1000.0;
 
-        Ok(KeyedMetricReading::new_gauge(
-            MetricStringKey::from_str(zone_name).map_err(|e| {
+        // Extract the string for the type of the thermal zone for use in the metric key
+        let thermal_zone_type = read_to_string(type_file)?.trim().to_string();
+
+        Ok(KeyedMetricReading::new_histogram(
+            MetricStringKey::from_str(
+                format!("{}/{}/temp", THERMAL_METRIC_NAMESPACE, thermal_zone_type).as_str(),
+            )
+            .map_err(|e| {
                 eyre!(
                     "Failed to construct MetricStringKey for thermal zone: {}",
                     e
@@ -95,7 +103,7 @@ impl SystemMetricFamilyCollector for ThermalMetricsCollector {
 // the input and output values are known.
 mod tests {
     use super::*;
-    use crate::metrics::MetricReading;
+    use insta::{assert_json_snapshot, rounded_redaction};
     use std::fs::File;
     use std::io::Write;
     use tempfile::tempdir;
@@ -116,21 +124,21 @@ mod tests {
         // Write the temperature (in millidegrees Celsius) to the "temp" file.
         writeln!(temp_file, "50000").unwrap();
 
+        // Create a "temp" file inside the "thermal_zone0" directory.
+        let type_file_path = thermal_zone_dir.join("type");
+        let mut type_file = File::create(type_file_path).unwrap();
+
+        // Write the temperature (in millidegrees Celsius) to the "temp" file.
+        writeln!(type_file, "cpu-temp").unwrap();
+
         // Call the function and check the result.
         let result = ThermalMetricsCollector::read_thermal_zone_temp(
             "thermal_zone0",
             dir.path().to_str().unwrap(),
         )
         .unwrap();
-        // The temperature should be 50.0 degrees Celsius.
-        assert!(matches!(
-            result.value,
-            MetricReading::Gauge {
-                #[allow(illegal_floating_point_literal_pattern)]
-                value: 50.0,
-                ..
-            }
-        ));
+
+        assert_json_snapshot!(result, {".value.**.timestamp" => "[timestamp]", ".value.**.value" => rounded_redaction(5)});
 
         // Delete the temporary directory.
         dir.close().unwrap();

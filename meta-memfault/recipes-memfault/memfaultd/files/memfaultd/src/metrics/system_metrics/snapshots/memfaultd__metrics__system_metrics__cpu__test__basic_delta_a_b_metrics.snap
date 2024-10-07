@@ -1,35 +1,8 @@
 ---
 source: memfaultd/src/metrics/system_metrics/cpu.rs
-expression: result_b.unwrap()
+expression: result_b
 ---
 [
-  {
-    "name": "cpu/cpu/percent/user",
-    "value": {
-      "Histogram": {
-        "value": 96.15385,
-        "timestamp": "[timestamp]"
-      }
-    }
-  },
-  {
-    "name": "cpu/cpu/percent/nice",
-    "value": {
-      "Histogram": {
-        "value": 2.88462,
-        "timestamp": "[timestamp]"
-      }
-    }
-  },
-  {
-    "name": "cpu/cpu/percent/system",
-    "value": {
-      "Histogram": {
-        "value": 0.76923,
-        "timestamp": "[timestamp]"
-      }
-    }
-  },
   {
     "name": "cpu/cpu/percent/idle",
     "value": {
@@ -58,10 +31,46 @@ expression: result_b.unwrap()
     }
   },
   {
+    "name": "cpu/cpu/percent/nice",
+    "value": {
+      "Histogram": {
+        "value": 2.88462,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
     "name": "cpu/cpu/percent/softirq",
     "value": {
       "Histogram": {
         "value": 0.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "cpu/cpu/percent/system",
+    "value": {
+      "Histogram": {
+        "value": 0.76923,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "cpu/cpu/percent/user",
+    "value": {
+      "Histogram": {
+        "value": 96.15385,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "cpu_usage_pct",
+    "value": {
+      "Histogram": {
+        "value": 99.80769,
         "timestamp": "[timestamp]"
       }
     }

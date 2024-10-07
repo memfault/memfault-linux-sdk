@@ -10,7 +10,7 @@ use crate::{
     mar::{CollectionTime, Manifest, MarEntry, Metadata},
     util::fs::copy_file,
 };
-use eyre::WrapErr;
+use eyre::{eyre, Result, WrapErr};
 use std::ffi::OsStr;
 use std::fs::{create_dir, remove_dir_all, rename, File, Metadata as FsMetadata};
 use std::io;
@@ -45,21 +45,25 @@ impl<M> MarEntryBuilder<M> {
     /// Add an attachment to this entry.
     ///
     /// The file will be moved to the entry directory
-    pub fn add_attachment(mut self, file: PathBuf) -> MarEntryBuilder<M> {
-        assert!(file.is_file());
-        assert!(file.is_absolute());
-        self.attachments.push(MarAttachment::Move(file));
-        self
+    pub fn add_attachment(mut self, file: PathBuf) -> Result<MarEntryBuilder<M>> {
+        if file.is_file() && file.is_absolute() {
+            self.attachments.push(MarAttachment::Move(file));
+            Ok(self)
+        } else {
+            Err(eyre!("Failed to add attachment!"))
+        }
     }
 
     /// Add an attachment to this entry.
     ///
     /// The file will be copied to the entry directory
-    pub fn add_copied_attachment(mut self, file: PathBuf) -> MarEntryBuilder<M> {
-        assert!(file.is_file());
-        assert!(file.is_absolute());
-        self.attachments.push(MarAttachment::Copy(file));
-        self
+    pub fn add_copied_attachment(mut self, file: PathBuf) -> Result<MarEntryBuilder<M>> {
+        if file.is_file() && file.is_absolute() {
+            self.attachments.push(MarAttachment::Copy(file));
+            Ok(self)
+        } else {
+            Err(eyre!("Failed to add copied attachment!"))
+        }
     }
 }
 
@@ -96,7 +100,7 @@ impl MarEntryBuilder<NoMetadata> {
 impl MarEntryBuilder<Metadata> {
     /// Consume this builder, writes the manifest and moves the attachment to the
     /// MAR storage area and returns a MAR entry.
-    pub fn save(self, network_config: &NetworkConfig) -> eyre::Result<MarEntry> {
+    pub fn save(self, network_config: &NetworkConfig) -> Result<MarEntry> {
         // Move attachments
         for filepath in self.attachments {
             // We already check that attachments are file in the constructor so we ignore
@@ -251,6 +255,7 @@ mod tests {
 
         builder
             .add_attachment(orig_attachment_path.clone())
+            .unwrap()
             .set_metadata(Metadata::test_fixture())
             .save(&NetworkConfig::test_fixture())
             .unwrap();
@@ -270,6 +275,7 @@ mod tests {
 
         builder
             .add_attachment(orig_attachment_path.clone())
+            .unwrap()
             .set_metadata(Metadata::test_fixture())
             .save(&NetworkConfig::test_fixture())
             .unwrap();
@@ -289,6 +295,7 @@ mod tests {
 
         let builder = builder
             .add_attachment(orig_attachment_path)
+            .unwrap()
             .set_metadata(Metadata::test_fixture());
 
         assert_eq!(

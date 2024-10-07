@@ -5,8 +5,8 @@ use crate::{
     logs::log_file::{LogFile, LogFileControl},
     util::disk_size::DiskSize,
 };
+use chrono::{DateTime, Utc};
 use eyre::Result;
-use serde_json::Value;
 
 #[derive(Debug)]
 enum Headroom {
@@ -20,7 +20,7 @@ enum Headroom {
 pub trait HeadroomCheck {
     fn check<L: LogFile>(
         &mut self,
-        log_timestamp: Option<&Value>,
+        log_timestamp: &DateTime<Utc>,
         log_file_control: &mut impl LogFileControl<L>,
     ) -> Result<bool>;
 }
@@ -55,7 +55,7 @@ impl HeadroomCheck for HeadroomLimiter {
     /// It only returns an error if there is an error writing the "Dropped N logs" message.
     fn check<L: LogFile>(
         &mut self,
-        log_timestamp: Option<&Value>,
+        log_timestamp: &DateTime<Utc>,
         log_file_control: &mut impl LogFileControl<L>,
     ) -> Result<bool> {
         let available = (self.get_available_space)()?;
@@ -67,7 +67,8 @@ impl HeadroomCheck for HeadroomLimiter {
                 // Best-effort warning log & flush. If this fails, just keep going.
                 let current_log = log_file_control.current_log()?;
                 let _ = current_log.write_log(
-                    log_timestamp.cloned(),
+                    *log_timestamp,
+                    "WARN",
                     match (
                         available.bytes >= self.min_headroom.bytes,
                         available.inodes >= self.min_headroom.inodes,
@@ -110,7 +111,8 @@ impl HeadroomCheck for HeadroomLimiter {
             ) => {
                 let current_log = log_file_control.current_log()?;
                 current_log.write_log(
-                    log_timestamp.cloned(),
+                    *log_timestamp,
+                    "INFO",
                     format!(
                         "Recovered from low disk space. Dropped {} logs.",
                         num_dropped_logs
@@ -127,26 +129,27 @@ impl HeadroomCheck for HeadroomLimiter {
 
 #[cfg(test)]
 mod tests {
-    use crate::util::disk_size::DiskSize;
+    use crate::{logs::log_entry::LogEntry, util::disk_size::DiskSize};
     use std::sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
     };
 
     use super::*;
+    use chrono::TimeZone;
     use eyre::eyre;
     use rstest::{fixture, rstest};
 
     #[rstest]
     fn returns_true_if_headroom_ok_and_stays_ok(mut fixture: Fixture) {
-        let log_timestamp = Value::from(12345);
+        let log_timestamp = build_date_time();
         let mut log_file_control = FakeLogFileControl::default();
         fixture.set_available_space(MIN_HEADROOM);
 
         // Enough headroom: check() returns true and no calls to log_file_control are made:
         assert!(fixture
             .limiter
-            .check(Some(&log_timestamp), &mut log_file_control)
+            .check(&log_timestamp, &mut log_file_control)
             .unwrap());
         assert_eq!(0, log_file_control.logs_written.len());
         assert_eq!(0, log_file_control.flush_count);
@@ -155,14 +158,14 @@ mod tests {
 
     #[rstest]
     fn log_upon_enter_and_exit_headroom_space_shortage(mut fixture: Fixture) {
-        let log_timestamp = Value::from(12345);
+        let log_timestamp = build_date_time();
         let mut log_file_control = FakeLogFileControl::default();
 
         // Enter headroom shortage: check() returns false:
         fixture.set_available_space(MIN_HEADROOM - 1);
         assert!(!fixture
             .limiter
-            .check(Some(&log_timestamp), &mut log_file_control)
+            .check(&log_timestamp, &mut log_file_control)
             .unwrap());
 
         // Check that the warning log was written:
@@ -175,14 +178,14 @@ mod tests {
         // Still not enough headroom: check() returns false:
         assert!(!fixture
             .limiter
-            .check(Some(&log_timestamp), &mut log_file_control)
+            .check(&log_timestamp, &mut log_file_control)
             .unwrap());
 
         // Recover from headroom shortage: check() returns true again:
         fixture.set_available_space(MIN_HEADROOM);
         assert!(fixture
             .limiter
-            .check(Some(&log_timestamp), &mut log_file_control)
+            .check(&log_timestamp, &mut log_file_control)
             .unwrap());
 
         // Check that the "recovered" log was written:
@@ -193,14 +196,14 @@ mod tests {
 
     #[rstest]
     fn log_upon_enter_and_exit_headroom_node_shortage(mut fixture: Fixture) {
-        let log_timestamp = Value::from(12345);
+        let log_timestamp = build_date_time();
         let mut log_file_control = FakeLogFileControl::default();
 
         // Enter headroom shortage: check() returns false:
         fixture.set_available_inodes(MIN_INODES - 1);
         assert!(!fixture
             .limiter
-            .check(Some(&log_timestamp), &mut log_file_control)
+            .check(&log_timestamp, &mut log_file_control)
             .unwrap());
 
         // Check that the warning log was written:
@@ -214,14 +217,14 @@ mod tests {
         // Still not enough headroom: check() returns false:
         assert!(!fixture
             .limiter
-            .check(Some(&log_timestamp), &mut log_file_control)
+            .check(&log_timestamp, &mut log_file_control)
             .unwrap());
 
         // Recover from headroom shortage: check() returns true again:
         fixture.set_available_inodes(MIN_INODES);
         assert!(fixture
             .limiter
-            .check(Some(&log_timestamp), &mut log_file_control)
+            .check(&log_timestamp, &mut log_file_control)
             .unwrap());
 
         // Check that the "recovered" log was written:
@@ -232,7 +235,7 @@ mod tests {
 
     #[rstest]
     fn rotate_once_only_entering_headroom_shortage(mut fixture: Fixture) {
-        let log_timestamp = Value::from(12345);
+        let log_timestamp = build_date_time();
         let mut log_file_control = FakeLogFileControl {
             // Make log_file_control.rotate_if_needed() return Ok(true):
             rotate_return: Some(true),
@@ -243,28 +246,28 @@ mod tests {
         fixture.set_available_space(MIN_HEADROOM - 1);
         fixture
             .limiter
-            .check(Some(&log_timestamp), &mut log_file_control)
+            .check(&log_timestamp, &mut log_file_control)
             .unwrap();
         assert_eq!(log_file_control.rotation_count, 1);
 
         // Check again. Rotation should not be attempted again:
         fixture
             .limiter
-            .check(Some(&log_timestamp), &mut log_file_control)
+            .check(&log_timestamp, &mut log_file_control)
             .unwrap();
         assert_eq!(log_file_control.rotation_count, 1);
     }
 
     #[rstest]
     fn rotate_once_only_during_headroom_shortage(mut fixture: Fixture) {
-        let log_timestamp = Value::from(12345);
+        let log_timestamp = build_date_time();
         let mut log_file_control = FakeLogFileControl::default();
 
         // Enter headroom shortage:
         fixture.set_available_space(MIN_HEADROOM - 1);
         fixture
             .limiter
-            .check(Some(&log_timestamp), &mut log_file_control)
+            .check(&log_timestamp, &mut log_file_control)
             .unwrap();
         assert_eq!(log_file_control.rotation_count, 0);
 
@@ -274,21 +277,21 @@ mod tests {
         // Check again. Rotation should be attempted again:
         fixture
             .limiter
-            .check(Some(&log_timestamp), &mut log_file_control)
+            .check(&log_timestamp, &mut log_file_control)
             .unwrap();
         assert_eq!(log_file_control.rotation_count, 1);
 
         // Check again. Rotation should not be attempted again:
         fixture
             .limiter
-            .check(Some(&log_timestamp), &mut log_file_control)
+            .check(&log_timestamp, &mut log_file_control)
             .unwrap();
         assert_eq!(log_file_control.rotation_count, 1);
     }
 
     #[rstest]
     fn retry_rotate_after_failure(mut fixture: Fixture) {
-        let log_timestamp = Value::from(12345);
+        let log_timestamp = build_date_time();
         let mut log_file_control = FakeLogFileControl {
             // Make log_file_control.rotate_if_needed() return Err(...):
             rotate_return: None,
@@ -299,7 +302,7 @@ mod tests {
         fixture.set_available_space(MIN_HEADROOM - 1);
         fixture
             .limiter
-            .check(Some(&log_timestamp), &mut log_file_control)
+            .check(&log_timestamp, &mut log_file_control)
             .unwrap();
         assert_eq!(log_file_control.rotation_count, 0);
 
@@ -308,39 +311,39 @@ mod tests {
         log_file_control.rotate_return = Some(true);
         fixture
             .limiter
-            .check(Some(&log_timestamp), &mut log_file_control)
+            .check(&log_timestamp, &mut log_file_control)
             .unwrap();
         assert_eq!(log_file_control.rotation_count, 1);
     }
 
     #[rstest]
     fn write_error_of_initial_warning_message_is_ignored(mut fixture: Fixture) {
-        let log_timestamp = Value::from(12345);
+        let log_timestamp = build_date_time();
         let mut log_file_control = FakeLogFileControl::default();
 
         fixture.set_available_space(MIN_HEADROOM - 1);
         log_file_control.write_should_fail = true;
         assert!(fixture
             .limiter
-            .check(Some(&log_timestamp), &mut log_file_control)
+            .check(&log_timestamp, &mut log_file_control)
             .is_ok());
     }
 
     #[rstest]
     fn write_error_of_recovery_log_message_is_bubbled_up(mut fixture: Fixture) {
-        let log_timestamp = Value::from(12345);
+        let log_timestamp = build_date_time();
         let mut log_file_control = FakeLogFileControl::default();
 
         fixture.set_available_space(MIN_HEADROOM - 1);
         fixture
             .limiter
-            .check(Some(&log_timestamp), &mut log_file_control)
+            .check(&log_timestamp, &mut log_file_control)
             .unwrap();
         fixture.set_available_space(MIN_HEADROOM);
         log_file_control.write_should_fail = true;
         assert!(fixture
             .limiter
-            .check(Some(&log_timestamp), &mut log_file_control)
+            .check(&log_timestamp, &mut log_file_control)
             .is_err());
     }
 
@@ -370,7 +373,7 @@ mod tests {
     }
 
     impl LogFile for FakeLogFileControl {
-        fn write_json_line(&mut self, json: Value) -> Result<()> {
+        fn write_json_line(&mut self, json: LogEntry) -> Result<()> {
             if self.write_should_fail {
                 Err(eyre!("Write failed"))
             } else {
@@ -461,5 +464,9 @@ mod tests {
             available_inodes,
             available_space,
         }
+    }
+
+    fn build_date_time() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(1990, 12, 16, 12, 0, 0).unwrap()
     }
 }

@@ -1,0 +1,14 @@
+---
+source: memfaultd/src/metrics/metric_report_manager.rs
+expression: metrics
+---
+{
+  "cpu_usage_memfaultd_pct": 2.0,
+  "cpu_usage_memfaultd_pct_max": 2.0,
+  "cpu_usage_memfaultd_pct_min": 2.0,
+  "foo": 1.0,
+  "memory_pct": 3.0,
+  "memory_pct_max": 3.0,
+  "memory_pct_min": 3.0,
+  "operational_crashes": 0.0
+}

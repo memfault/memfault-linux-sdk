@@ -2,6 +2,7 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 use eyre::eyre;
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::time::Duration;
 use std::{
@@ -9,6 +10,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use crate::metrics::DiskSpaceMetricsConfig;
 use crate::{
     network::{NetworkClient, NetworkConfig},
     util::{DiskBacked, UnwrapOrDie, UpdateStatus},
@@ -34,11 +36,16 @@ pub use self::{
     device_info::{DeviceInfo, DeviceInfoDefaultsImpl, DeviceInfoWarning},
 };
 
-use crate::mar::MarEntryBuilder;
-use crate::mar::Metadata;
+use crate::{
+    mar::{MarEntryBuilder, Metadata},
+    metrics::ProcessMetricsConfig,
+};
+
 use eyre::{Context, Result};
 
 mod config_file;
+pub use config_file::{LevelMappingConfig, LevelMappingRegex};
+
 mod device_config;
 mod device_info;
 mod utils;
@@ -266,8 +273,50 @@ impl Config {
             .poll_interval_seconds
     }
 
+    pub fn system_metric_monitored_processes(&self) -> ProcessMetricsConfig {
+        match self
+            .config_file
+            .metrics
+            .system_metric_collection
+            .processes
+            .as_ref()
+        {
+            Some(processes) => {
+                let mut processes = processes.clone();
+                processes.insert("memfaultd".to_string());
+                ProcessMetricsConfig::Processes(processes)
+            }
+            None => ProcessMetricsConfig::Auto,
+        }
+    }
+
+    pub fn system_metric_disk_space_config(&self) -> DiskSpaceMetricsConfig {
+        match self
+            .config_file
+            .metrics
+            .system_metric_collection
+            .disk_space
+            .as_ref()
+        {
+            Some(mounts) => DiskSpaceMetricsConfig::Disks(mounts.clone()),
+            None => DiskSpaceMetricsConfig::Auto,
+        }
+    }
+
+    pub fn system_metric_network_interfaces_config(&self) -> Option<&HashSet<String>> {
+        self.config_file
+            .metrics
+            .system_metric_collection
+            .network_interfaces
+            .as_ref()
+    }
+
     pub fn system_metric_config(&self) -> SystemMetricConfig {
         self.config_file.metrics.system_metric_collection.clone()
+    }
+
+    pub fn log_extraction_config(&self) -> &LevelMappingConfig {
+        &self.config_file.logs.level_mapping
     }
 }
 

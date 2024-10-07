@@ -74,5 +74,23 @@ expression: result_b.unwrap()
         "timestamp": "[timestamp]"
       }
     }
+  },
+  {
+    "name": "connectivity_eth0_recv_bytes",
+    "value": {
+      "Counter": {
+        "value": 1500.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "connectivity_eth0_sent_bytes",
+    "value": {
+      "Counter": {
+        "value": 1000.0,
+        "timestamp": "[timestamp]"
+      }
+    }
   }
 ]

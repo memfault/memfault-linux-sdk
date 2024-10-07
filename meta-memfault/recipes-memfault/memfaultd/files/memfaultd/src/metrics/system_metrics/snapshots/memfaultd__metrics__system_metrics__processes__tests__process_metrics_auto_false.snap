@@ -4,6 +4,42 @@ expression: process_metric_readings_2
 ---
 [
   {
+    "name": "cpu_usage_memfaultd_pct",
+    "value": {
+      "Histogram": {
+        "value": 0.15,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "cpu_usage_systemd_pct",
+    "value": {
+      "Histogram": {
+        "value": 0.0116,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory_memfaultd_pct",
+    "value": {
+      "Histogram": {
+        "value": 0.01801,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory_systemd_pct",
+    "value": {
+      "Histogram": {
+        "value": 0.0114,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
     "name": "processes/memfaultd/cpu/percent/system",
     "value": {
       "Histogram": {

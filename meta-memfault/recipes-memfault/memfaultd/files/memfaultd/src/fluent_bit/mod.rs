@@ -21,12 +21,15 @@ use std::sync::mpsc::{Receiver, SyncSender};
 use std::{collections::HashMap, net::SocketAddr};
 
 use chrono::{DateTime, Utc};
-use eyre::Result;
+use eyre::{eyre, Error, Result};
 use log::warn;
 use rmp_serde::Deserializer;
 use serde::{Deserialize, Serialize};
 
-use crate::{config::Config, logs::log_entry::LogEntry};
+use crate::{
+    config::Config,
+    logs::log_entry::{LogData, LogEntry},
+};
 use crate::{
     logs::log_entry::LogValue,
     util::tcp_server::{TcpConnectionHandler, TcpNullConnectionHandler, ThreadedTcpServer},
@@ -39,6 +42,22 @@ mod decode_time;
 pub enum FluentdValue {
     String(String),
     Float(f64),
+}
+
+impl FluentdValue {
+    pub fn into_string(self) -> Option<String> {
+        match self {
+            FluentdValue::String(s) => Some(s),
+            FluentdValue::Float(_) => None,
+        }
+    }
+
+    pub fn into_float(self) -> Option<f64> {
+        match self {
+            FluentdValue::Float(f) => Some(f),
+            FluentdValue::String(_) => None,
+        }
+    }
 }
 
 impl From<FluentdValue> for LogValue {
@@ -56,10 +75,33 @@ pub struct FluentdMessage(
     pub HashMap<String, FluentdValue>,
 );
 
-impl From<FluentdMessage> for LogEntry {
-    fn from(value: FluentdMessage) -> Self {
-        let data = value.1.into_iter().map(|(k, v)| (k, v.into())).collect();
-        LogEntry { ts: value.0, data }
+impl TryFrom<FluentdMessage> for LogEntry {
+    type Error = Error;
+
+    fn try_from(mut value: FluentdMessage) -> Result<Self, Self::Error> {
+        let message = value
+            .1
+            .remove("MESSAGE")
+            .and_then(|v| v.into_string())
+            .ok_or_else(|| eyre!("No message in log entry"))?;
+        let pid = value.1.remove("_PID").and_then(|v| v.into_string());
+        let systemd_unit = value
+            .1
+            .remove("_SYSTEMD_UNIT")
+            .and_then(|v| v.into_string());
+        let priority = value.1.remove("PRIORITY").and_then(|v| v.into_string());
+
+        let extra_fields = value.1.into_iter().map(|(k, v)| (k, v.into())).collect();
+        let data = LogData {
+            message,
+            pid,
+            systemd_unit,
+            priority,
+            original_priority: None,
+            extra_fields,
+        };
+
+        Ok(LogEntry { ts: value.0, data })
     }
 }
 

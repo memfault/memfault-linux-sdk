@@ -7,47 +7,91 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     path::Path,
-    str::FromStr,
     time::{Duration, Instant},
 };
 
 use crate::{
     mar::{MarEntryBuilder, Metadata},
     metrics::{
-        core_metrics::{
-            METRIC_BATTERY_DISCHARGE_DURATION_MS, METRIC_BATTERY_SOC_PCT_DROP,
-            METRIC_CONNECTED_TIME, METRIC_EXPECTED_CONNECTED_TIME, METRIC_MEMORY_PCT,
-            METRIC_MF_SYNC_FAILURE, METRIC_MF_SYNC_SUCCESS, METRIC_OPERATIONAL_CRASHES,
-            METRIC_SYNC_FAILURE, METRIC_SYNC_SUCCESS,
-        },
         metric_reading::KeyedMetricReading,
         timeseries::{Counter, Gauge, Histogram, TimeSeries, TimeWeightedAverage},
         MetricReading, MetricStringKey, MetricValue, SessionName,
     },
+    util::wildcard_pattern::WildcardPattern,
 };
 
-use super::timeseries::ReportTag;
+use super::{
+    core_metrics::{
+        METRIC_CPU_USAGE_PCT, METRIC_CPU_USAGE_PROCESS_PCT_PREFIX,
+        METRIC_CPU_USAGE_PROCESS_PCT_SUFFIX, METRIC_MEMORY_PCT, METRIC_MEMORY_PROCESS_PCT_PREFIX,
+        METRIC_MEMORY_PROCESS_PCT_SUFFIX,
+    },
+    system_metrics::{
+        METRIC_INTERFACE_BYTES_PER_SECOND_RX_SUFFIX, METRIC_INTERFACE_BYTES_PER_SECOND_TX_SUFFIX,
+        NETWORK_INTERFACE_METRIC_NAMESPACE, THERMAL_METRIC_NAMESPACE,
+    },
+    timeseries::ReportTag,
+};
 
 pub enum CapturedMetrics {
     All,
-    Metrics(HashSet<MetricStringKey>),
+    Metrics(MetricsSet),
+}
+
+pub struct MetricsSet {
+    pub metric_keys: HashSet<MetricStringKey>,
+    pub wildcard_metric_keys: Vec<WildcardPattern>,
+}
+
+/// Returns a MetricsSet that represents
+/// all the keys that should report a
+/// min and max when aggregated as a
+/// Histogram
+fn histo_min_max_keys() -> MetricsSet {
+    MetricsSet {
+        metric_keys: HashSet::from_iter([
+            MetricStringKey::from(METRIC_CPU_USAGE_PCT),
+            MetricStringKey::from(METRIC_MEMORY_PCT),
+        ]),
+        wildcard_metric_keys: vec![
+            // cpu_usage_*_pct
+            WildcardPattern::new(
+                METRIC_CPU_USAGE_PROCESS_PCT_PREFIX,
+                METRIC_CPU_USAGE_PROCESS_PCT_SUFFIX,
+            ),
+            // memory_*_pct
+            WildcardPattern::new(
+                METRIC_MEMORY_PROCESS_PCT_PREFIX,
+                METRIC_MEMORY_PROCESS_PCT_SUFFIX,
+            ),
+            // interface/*/bytes_per_second/rx
+            WildcardPattern::new(
+                NETWORK_INTERFACE_METRIC_NAMESPACE,
+                METRIC_INTERFACE_BYTES_PER_SECOND_RX_SUFFIX,
+            ),
+            // interface/*/bytes_per_second/tx
+            WildcardPattern::new(
+                NETWORK_INTERFACE_METRIC_NAMESPACE,
+                METRIC_INTERFACE_BYTES_PER_SECOND_TX_SUFFIX,
+            ),
+            // thermal/*
+            WildcardPattern::new(THERMAL_METRIC_NAMESPACE, ""),
+        ],
+    }
+}
+
+impl MetricsSet {
+    pub fn contains(&self, metric_string_key: &MetricStringKey) -> bool {
+        self.metric_keys.contains(metric_string_key)
+            || self
+                .wildcard_metric_keys
+                .iter()
+                .any(|pattern| pattern.matches(metric_string_key.as_str()))
+    }
 }
 
 pub const HEARTBEAT_REPORT_TYPE: &str = "heartbeat";
 pub const DAILY_HEARTBEAT_REPORT_TYPE: &str = "daily-heartbeat";
-
-const SESSION_CORE_METRICS: &[&str; 10] = &[
-    METRIC_MF_SYNC_FAILURE,
-    METRIC_MF_SYNC_SUCCESS,
-    METRIC_BATTERY_DISCHARGE_DURATION_MS,
-    METRIC_BATTERY_SOC_PCT_DROP,
-    METRIC_CONNECTED_TIME,
-    METRIC_EXPECTED_CONNECTED_TIME,
-    METRIC_SYNC_FAILURE,
-    METRIC_SYNC_SUCCESS,
-    METRIC_OPERATIONAL_CRASHES,
-    METRIC_MEMORY_PCT,
-];
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum MetricReportType {
@@ -80,6 +124,9 @@ pub struct MetricReport {
     /// Indicates whether this is a heartbeat metric report or
     /// session metric report (with session name)
     report_type: MetricReportType,
+    /// Metric keys that should report a min and max value when
+    /// aggregated as Histograms
+    histo_min_max_metrics: MetricsSet,
 }
 
 struct MetricReportSnapshot {
@@ -88,33 +135,13 @@ struct MetricReportSnapshot {
 }
 
 impl MetricReport {
-    pub fn new(
-        report_type: MetricReportType,
-        configured_captured_metrics: CapturedMetrics,
-    ) -> Self {
-        // Always include session core metrics regardless of configuration
-        let captured_metrics = match configured_captured_metrics {
-            CapturedMetrics::All => CapturedMetrics::All,
-            CapturedMetrics::Metrics(metrics) => {
-                let mut merged_set = SESSION_CORE_METRICS
-                    .iter()
-                    .map(|core_metric_key| {
-                        // This expect should never be hit as SESSION_CORE_METRICS is
-                        // an array of static strings
-                        MetricStringKey::from_str(core_metric_key)
-                            .expect("Invalid Metric Key in SESSION_CORE_METRICS")
-                    })
-                    .collect::<HashSet<_>>();
-                merged_set.extend(metrics);
-                CapturedMetrics::Metrics(merged_set)
-            }
-        };
-
+    pub fn new(report_type: MetricReportType, captured_metrics: CapturedMetrics) -> Self {
         Self {
             metrics: HashMap::new(),
             start: Instant::now(),
             captured_metrics,
             report_type,
+            histo_min_max_metrics: histo_min_max_keys(),
         }
     }
 
@@ -188,7 +215,20 @@ impl MetricReport {
         let duration = std::mem::replace(&mut self.start, Instant::now()).elapsed();
         let metrics = std::mem::take(&mut self.metrics)
             .into_iter()
-            .map(|(name, state)| (name, state.value()))
+            .flat_map(|(name, state)| match state.value() {
+                MetricValue::Histogram(histo) => {
+                    if self.histo_min_max_metrics.contains(&name) {
+                        vec![
+                            (name.with_suffix("_max"), histo.max()),
+                            (name.with_suffix("_min"), histo.min()),
+                            (name, histo.avg()),
+                        ]
+                    } else {
+                        vec![(name, histo.avg())]
+                    }
+                }
+                _ => vec![(name, state.value())],
+            })
             .collect();
 
         MetricReportSnapshot { duration, metrics }
@@ -241,7 +281,10 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::test_utils::in_histograms;
+    use crate::{
+        metrics::core_metrics::CoreMetricKeys,
+        test_utils::{in_counters, in_histograms},
+    };
     use std::str::FromStr;
 
     use insta::assert_json_snapshot;
@@ -249,10 +292,15 @@ mod tests {
 
     #[rstest]
     #[case(in_histograms(vec![("foo", 1.0), ("bar", 2.0), ("baz",  3.0)]), "heartbeat_report_1")]
-    #[case(in_histograms(vec![("foo", 1.0), ("foo", 2.0), ("foo",  3.0)]), "heartbeat_report_2")]
+    // cpu_usage_memfaultd_pct should report a min and max as it matches a wildcard pattern
+    // in the MetricsSet returned by MetricReport::histo_min_max_metrics
+    #[case(in_histograms(vec![("cpu_usage_memfaultd_pct", 1.0), ("cpu_usage_memfaultd_pct", 2.0), ("cpu_usage_memfaultd_pct",  3.0)]), "heartbeat_report_2")]
     #[case(in_histograms(vec![("foo", 1.0), ("foo", 1.0)]), "heartbeat_report_3")]
-    #[case(in_histograms(vec![("foo", 1.0), ("foo", 2.0)]), "heartbeat_report_4")]
-    #[case(in_histograms(vec![("foo", 1.0), ("foo", 2.0), ("foo",  2.0)]), "heartbeat_report_5")]
+    #[case(in_histograms(vec![("memory_pct", 1.0), ("memory_pct", 2.0)]), "heartbeat_report_4")]
+    #[case(in_histograms(vec![("memory_systemd_pct", 1.0), ("memory_systemd_pct", 2.0), ("memory_systemd_pct",  2.0)]), "heartbeat_report_5")]
+    // bytes_per_second/rx should report a min and max, packets_per_second/rx should *not*
+    #[case(in_histograms(vec![("interface/eth0/bytes_per_second/rx", 1.0), ("interface/eth0/bytes_per_second/rx", 2.0), ("interface/eth0/bytes_per_second/rx",  2.0)]), "heartbeat_report_6")]
+    #[case(in_histograms(vec![("interface/eth0/packets_per_second/rx", 1.0), ("interface/eth0/packets_per_second/rx", 2.0), ("interface/eth0/packets_per_second/rx",  2.0)]), "heartbeat_report_7")]
     fn test_aggregate_metrics(
         #[case] metrics: impl Iterator<Item = KeyedMetricReading>,
         #[case] test_name: &str,
@@ -272,20 +320,23 @@ mod tests {
     #[case(in_histograms(vec![("foo", 1.0), ("foo", 1.0)]), "session_report_3")]
     #[case(in_histograms(vec![("foo", 1.0), ("foo", 2.0)]), "session_report_4")]
     #[case(in_histograms(vec![("foo", 1.0), ("foo", 2.0), ("baz",  2.0), ("bar",  3.0)]), "session_report_5")]
+    #[case(in_counters(vec![("operational_crashes", 2.0), ("operational_crashes_memfaultd", 3.0), ("operational_crashes_memfaultd",  2.0), ("crashes_systemd",  3.0)]), "session_report_6")]
     fn test_aggregate_metrics_session(
         #[case] metrics: impl Iterator<Item = KeyedMetricReading>,
         #[case] test_name: &str,
     ) {
+        let session_core_metrics = CoreMetricKeys::get_session_core_metrics();
+        let mut metric_keys = vec![
+            MetricStringKey::from_str("foo").unwrap(),
+            MetricStringKey::from_str("baz").unwrap(),
+        ];
+        metric_keys.extend(session_core_metrics.string_keys);
         let mut metric_report = MetricReport::new(
             MetricReportType::Session(SessionName::from_str("foo_only").unwrap()),
-            CapturedMetrics::Metrics(
-                [
-                    MetricStringKey::from_str("foo").unwrap(),
-                    MetricStringKey::from_str("baz").unwrap(),
-                ]
-                .into_iter()
-                .collect(),
-            ),
+            CapturedMetrics::Metrics(MetricsSet {
+                metric_keys: HashSet::from_iter(metric_keys),
+                wildcard_metric_keys: session_core_metrics.wildcard_pattern_keys,
+            }),
         );
 
         for m in metrics {
@@ -293,35 +344,6 @@ mod tests {
         }
         let sorted_metrics: BTreeMap<_, _> = metric_report.take_metrics().into_iter().collect();
         assert_json_snapshot!(test_name, sorted_metrics);
-    }
-
-    /// Core metrics should always be captured by sessions even if they are not
-    /// configured to do so
-    #[rstest]
-    fn test_aggregate_core_metrics_session() {
-        let mut metric_report = MetricReport::new(
-            MetricReportType::Session(SessionName::from_str("foo_only").unwrap()),
-            CapturedMetrics::Metrics(
-                [
-                    MetricStringKey::from_str("foo").unwrap(),
-                    MetricStringKey::from_str("baz").unwrap(),
-                ]
-                .into_iter()
-                .collect(),
-            ),
-        );
-
-        let metrics = in_histograms(
-            SESSION_CORE_METRICS
-                .map(|metric_name: &'static str| (metric_name, 100.0))
-                .to_vec(),
-        );
-
-        for m in metrics {
-            metric_report.add_metric(m).unwrap();
-        }
-        let sorted_metrics: BTreeMap<_, _> = metric_report.take_metrics().into_iter().collect();
-        assert_json_snapshot!(sorted_metrics);
     }
 
     #[rstest]

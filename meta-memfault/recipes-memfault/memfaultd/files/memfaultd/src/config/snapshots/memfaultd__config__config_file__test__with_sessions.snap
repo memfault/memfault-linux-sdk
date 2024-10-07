@@ -48,7 +48,11 @@ expression: content
     "max_lines_per_minute": 500,
     "log_to_metrics": null,
     "storage": "persist",
-    "source": "fluent-bit"
+    "source": "journald",
+    "level_mapping": {
+      "enable": false,
+      "regex": null
+    }
   },
   "mar": {
     "mar_file_max_size_kib": 10240,
@@ -63,20 +67,21 @@ expression: content
     {
       "name": "test-session",
       "captured_metrics": [
-        "cpu.total",
-        "statsd.wefaultd.blendpower"
+        "cpu.total"
       ]
     }
   ],
   "metrics": {
     "enable_daily_heartbeats": false,
     "system_metric_collection": {
-      "enable": false,
+      "enable": true,
       "poll_interval_seconds": 10,
       "processes": null,
       "disk_space": null,
       "network_interfaces": null
     },
-    "statsd_server": null
+    "statsd_server": {
+      "bind_address": "127.0.0.1:8125"
+    }
   }
 }

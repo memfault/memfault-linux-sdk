@@ -1,6 +1,6 @@
 ---
 source: memfaultd/src/collectd/collectd_handler.rs
-expression: metrics
+expression: mock.take_metrics().unwrap()
 ---
 {
   "cpufreq/0/cpu/idle": 0.0,

@@ -1,0 +1,96 @@
+---
+source: memfaultd/src/metrics/system_metrics/network_interfaces.rs
+expression: result_d.unwrap()
+---
+[
+  {
+    "name": "interface/eth1/bytes_per_second/rx",
+    "value": {
+      "Histogram": {
+        "value": 20.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "interface/eth1/packets_per_second/rx",
+    "value": {
+      "Histogram": {
+        "value": 0.33333,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "interface/eth1/errors_per_second/rx",
+    "value": {
+      "Histogram": {
+        "value": 0.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "interface/eth1/dropped_per_second/rx",
+    "value": {
+      "Histogram": {
+        "value": 0.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "interface/eth1/bytes_per_second/tx",
+    "value": {
+      "Histogram": {
+        "value": 3.33333,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "interface/eth1/packets_per_second/tx",
+    "value": {
+      "Histogram": {
+        "value": 0.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "interface/eth1/errors_per_second/tx",
+    "value": {
+      "Histogram": {
+        "value": 0.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "interface/eth1/dropped_per_second/tx",
+    "value": {
+      "Histogram": {
+        "value": 0.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "connectivity_eth1_recv_bytes",
+    "value": {
+      "Counter": {
+        "value": 1200.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "connectivity_eth1_sent_bytes",
+    "value": {
+      "Counter": {
+        "value": 200.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  }
+]

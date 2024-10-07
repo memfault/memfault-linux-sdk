@@ -8,34 +8,107 @@ use serde::{Deserialize, Serialize};
 
 use crate::util::serialization::datetime_to_rfc3339;
 
-// journal fields that should always be captured by memfaultd:
-// https://man7.org/linux/man-pages/man7/systemd.journal-fields.7.html
-const ALWAYS_INCLUDE_KEYS: &[&str] = &["MESSAGE", "_PID", "_SYSTEMD_UNIT", "PRIORITY"];
+const MESSAGE_KEY: &str = "MESSAGE";
+const PID_KEY: &str = "_PID";
+const SYSTEMD_UNIT_KEY: &str = "_SYSTEMD_UNIT";
+const PRIORITY_KEY: &str = "PRIORITY";
+const ORIGINAL_PRIORITY_KEY: &str = "ORIGINAL_PRIORITY";
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
 pub enum LogValue {
     String(String),
     Float(f64),
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+/// Represents the structured format of a log entry
+///
+/// Note that we will not serialize the fields that are `None` to save space.
+pub struct LogData {
+    #[serde(rename = "MESSAGE")]
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "_PID")]
+    pub pid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "_SYSTEMD_UNIT")]
+    pub systemd_unit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "PRIORITY")]
+    pub priority: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "ORIGINAL_PRIORITY")]
+    pub original_priority: Option<String>,
+    #[serde(flatten)]
+    pub extra_fields: HashMap<String, LogValue>,
+}
+
+impl LogData {
+    /// Returns the value of the field with the given key.
+    pub fn get_field(&self, key: &str) -> Option<String> {
+        match key {
+            MESSAGE_KEY => Some(self.message.clone()),
+            PID_KEY => self.pid.clone(),
+            SYSTEMD_UNIT_KEY => self.systemd_unit.clone(),
+            PRIORITY_KEY => self.priority.clone(),
+            ORIGINAL_PRIORITY_KEY => self.original_priority.clone(),
+            _ => self.extra_fields.get(key).and_then(|v| match v {
+                LogValue::String(s) => Some(s.clone()),
+                LogValue::Float(_) => None,
+            }),
+        }
+    }
+}
+
 /// Represents a structured log that could come from a variety of sources.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct LogEntry {
     #[serde(with = "datetime_to_rfc3339")]
     pub ts: DateTime<Utc>,
-    pub data: HashMap<String, LogValue>,
+    pub data: LogData,
 }
 
 impl LogEntry {
     /// Filter log fields to only include defaults and those specified in `extra_fields`.
     ///
-    /// This function modifies the log entry in place by removing fields that are not in the
-    /// `ALWAYS_INCLUDE_KEYS` list or in `extra_fields`. This is useful for reducing the size of
-    /// log entries sent to Memfault, as there are fields that are not useful or displayed.
-    pub fn filter_fields(&mut self, extra_fields: &[String]) {
+    /// This function modifies the log entry data to remove any extra fields that are not
+    /// specified by the user.
+    pub fn filter_extra_fields(&mut self, extra_fields: &[String]) {
         self.data
-            .retain(|k, _| ALWAYS_INCLUDE_KEYS.contains(&k.as_str()) || extra_fields.contains(k));
+            .extra_fields
+            .retain(|k, _| extra_fields.contains(k));
+    }
+}
+
+#[cfg(test)]
+impl LogEntry {
+    pub fn new_with_message(message: &str) -> Self {
+        LogEntry {
+            ts: Utc::now(),
+            data: LogData {
+                message: message.to_string(),
+                pid: None,
+                systemd_unit: None,
+                priority: None,
+                original_priority: None,
+                extra_fields: HashMap::new(),
+            },
+        }
+    }
+
+    pub fn new_with_message_and_ts(message: &str, ts: DateTime<Utc>) -> Self {
+        LogEntry {
+            ts,
+            data: LogData {
+                message: message.to_string(),
+                pid: None,
+                systemd_unit: None,
+                priority: None,
+                original_priority: None,
+                extra_fields: HashMap::new(),
+            },
+        }
     }
 }
 
@@ -48,7 +121,6 @@ mod tests {
     use super::*;
 
     #[rstest]
-    #[case("empty", "{}", "")]
     #[case("only_message", r#"{"MESSAGE":"TEST" }"#, "")]
     #[case("extra_key", r#"{"MESSAGE":"TEST", "SOME_EXTRA_KEY":"XX" }"#, "")]
     #[case(
@@ -73,7 +145,7 @@ mod tests {
         };
 
         let extra_attributes = extras.split(',').map(String::from).collect::<Vec<_>>();
-        entry.filter_fields(&extra_attributes);
+        entry.filter_extra_fields(&extra_attributes);
 
         with_settings!({sort_maps => true}, {
             assert_json_snapshot!(test_name, entry);

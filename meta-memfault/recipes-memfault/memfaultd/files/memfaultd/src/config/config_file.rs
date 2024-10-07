@@ -112,7 +112,6 @@ pub struct HttpServerConfig {
 pub enum LogSource {
     #[serde(rename = "fluent-bit")]
     FluentBit,
-    #[cfg(feature = "systemd")]
     #[serde(rename = "journald")]
     Journald,
 }
@@ -135,6 +134,8 @@ pub struct LogsConfig {
     pub storage: StorageConfig,
 
     pub source: LogSource,
+
+    pub level_mapping: LevelMappingConfig,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -222,7 +223,7 @@ fn default_connection_check_protocol() -> ConnectionCheckProtocol {
 #[derive(Serialize, Clone, Deserialize, Debug)]
 pub struct SessionConfig {
     pub name: SessionName,
-    pub captured_metrics: Vec<MetricStringKey>,
+    pub captured_metrics: HashSet<MetricStringKey>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -238,6 +239,24 @@ pub struct SystemMetricConfig {
     pub processes: Option<HashSet<String>>,
     pub disk_space: Option<HashSet<String>>,
     pub network_interfaces: Option<HashSet<String>>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct LevelMappingConfig {
+    pub enable: bool,
+    pub regex: Option<LevelMappingRegex>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct LevelMappingRegex {
+    pub emergency: Option<String>,
+    pub alert: Option<String>,
+    pub critical: Option<String>,
+    pub error: Option<String>,
+    pub warning: Option<String>,
+    pub notice: Option<String>,
+    pub info: Option<String>,
+    pub debug: Option<String>,
 }
 
 use flate2::Compression;

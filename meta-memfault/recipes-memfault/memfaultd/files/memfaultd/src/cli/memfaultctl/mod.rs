@@ -374,7 +374,7 @@ pub fn main() -> Result<()> {
                     reason,
                     file_name,
                 ))
-                .add_copied_attachment(file_path)
+                .add_copied_attachment(file_path)?
                 .save(&network_config)
                 .map(|_entry| ())
         }

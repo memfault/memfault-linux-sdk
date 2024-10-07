@@ -28,5 +28,6 @@ pub mod task;
 #[cfg(feature = "logging")]
 pub mod tcp_server;
 pub mod time_measure;
+pub mod wildcard_pattern;
 pub mod zip;
 pub mod zip_dir;

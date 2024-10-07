@@ -14,7 +14,7 @@ pub fn coredump_configure_kernel(config_path: &Path) -> Result<()> {
         write(
             "/proc/sys/kernel/core_pattern",
             format!(
-                "|/usr/sbin/memfault-core-handler -c {} %P",
+                "|/usr/sbin/memfault-core-handler -c {} %P %e",
                 config_path.display()
             ),
         )

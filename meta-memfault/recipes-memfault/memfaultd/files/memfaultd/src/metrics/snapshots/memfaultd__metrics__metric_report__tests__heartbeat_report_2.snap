@@ -3,5 +3,7 @@ source: memfaultd/src/metrics/metric_report.rs
 expression: sorted_metrics
 ---
 {
-  "foo": 2.0
+  "cpu_usage_memfaultd_pct": 2.0,
+  "cpu_usage_memfaultd_pct_max": 3.0,
+  "cpu_usage_memfaultd_pct_min": 1.0
 }
