@@ -6,6 +6,62 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.0] - 2024-09-30
+
+### Added
+
+- Add a new per-process `operational_crashes` metric. This is similar to the
+  system wide `operational_crashes` metric, but is broken down by service. The
+  metric will be named `operational_crashes_<process name>`, where `<process name>` is the name of the executable binary for the crashed process.
+- Add a builtin log level extractor for all logs that are ingested by
+  `memfaultd`. This allows you to define regex for each log level so that the
+  level reported to Memfault matches the level inside the log message. This is
+  useful for logs from `systemd` for example that do not always have a matching
+  level in the metadata and the message.
+- We've added a host of new builtin metrics:
+  - `cpu_usage_<process>_pct` - Percent CPU usage of a specific process.
+  - `memory_<process>_pct` - Percent memory usage of a specific process.
+  - `storage_used_<disk>_pct` - Percent disk usage of a specific disk.
+  - `connectivity_<sent/recv>_bytes` - Bytes sent and received over a network
+    interface.
+  - `connectivity_<interface>_<sent/recv>_bytes` - Bytes sent and received over
+    a specific network interface.
+
+### Changed
+
+- The builtin system metric configuration is now enabled by default. This means
+  that `memfaultd` will now collect metrics on CPU, memory, disk usage, and much
+  more out of the box. Note that this means 
+  some metrics previously reported via 
+  `collectd` will now have different keys.
+  We hope this will make it more clear what each
+  metric actually represents on a device -
+  if this causes issues with your Project configuration
+  please don't hesitate to reach out to us for 
+  support!
+- `memfaultd`'s internal `statsd` server is now enabled by default. This allows
+  you to send custom metrics to `memfaultd` using the StatsD protocol. without
+  having the first route them through `collectd`.
+- We've made some changes to increase performance in our log processing
+  pipeline. This should result in a lower CPU usage when processing logs.
+- Previously a small number of log messages written by `memfaultd` did not have a level. We've
+  updated them to now have a level matching the severity of each message.
+- The `journald` log source is now the default log collector. This will use our
+  internal processor for grabbing logs directly from the systemd journal. If you
+  are not using systemd, you can still use the `fluent-bit` log source.
+
+### Fixed
+
+- Fixed a bug where leading and trailing whitespace was being added to attribute
+  names when using `memfaultctl write-attributes`.
+- Previously `memfaultd` would panic if a MAR attachment was not an absolute
+  path or was not a file. This has been changed to simply log an error and
+  continue.
+- Fixed a bug in which some metrics captured before enabling data 
+  collection were uploadedto Memfault once data collection was enabled. 
+  No data captured on devices for which data collection was always disabled 
+  would be uploaded as a result of this bug.
+
 ## [1.14.0] - 2024-08-21
 
 This is a minor release consisting mostly of refactors, but we have also added
@@ -1032,3 +1088,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.13.0-kirkstone
 [1.14.0]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.14.0-kirkstone
+[1.15.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.15.0-kirkstone

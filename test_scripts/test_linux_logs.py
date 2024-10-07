@@ -24,7 +24,7 @@ def memfault_extra_config(log_source: str) -> object:
 #   or whatever the underlying QEMU instance points at.
 # - The MEMFAULT_E2E_* environment variables are set to match whatever the underlying
 #   QEMU instance points at.
-@pytest.mark.parametrize("log_source", ["journald", "fluent-bit"])
+@pytest.mark.parametrize("log_source", ["journald"])
 def test_logs(
     qemu: QEMU, memfault_service_tester: MemfaultServiceTester, qemu_device_id: str, log_source: str
 ) -> None:

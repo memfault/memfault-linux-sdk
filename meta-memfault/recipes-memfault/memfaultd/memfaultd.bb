@@ -28,7 +28,7 @@ INITSCRIPT_PARAMS = "defaults 15"
 
 DEPENDS = "zlib"
 
-PACKAGECONFIG ??= "coredump collectd swupdate logging"
+PACKAGECONFIG ??= "coredump swupdate logging"
 PACKAGECONFIG[coredump] = ""
 PACKAGECONFIG[collectd] = ""
 PACKAGECONFIG[swupdate] = ""
@@ -42,20 +42,6 @@ EXTRA_CARGO_FLAGS = "--no-default-features"
 CARGO_FEATURES_append = " \
     ${@bb.utils.contains('PACKAGECONFIG', 'coredump', \
         'coredump', \
-        '', \
-    d)} \
-"
-
-# Collectd
-CARGO_FEATURES_append = " \
-    ${@bb.utils.contains('PACKAGECONFIG', 'collectd', \
-        'collectd', \
-        '', \
-    d)} \
-"
-RRECOMMENDS_${PN} += " \
-    ${@bb.utils.contains('PACKAGECONFIG', 'collectd', \
-        'collectd', \
         '', \
     d)} \
 "
@@ -84,12 +70,6 @@ RRECOMMENDS_${PN}_append = " \
 CARGO_FEATURES_append = " \
     ${@bb.utils.contains('PACKAGECONFIG', 'logging', \
         'logging', \
-        '', \
-    d)} \
-"
-RRECOMMENDS_${PN} += " \
-    ${@bb.utils.contains('PACKAGECONFIG', 'logging', \
-        'fluent-bit', \
         '', \
     d)} \
 "

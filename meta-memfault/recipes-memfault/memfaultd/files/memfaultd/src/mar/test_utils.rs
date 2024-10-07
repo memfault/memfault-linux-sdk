@@ -217,6 +217,31 @@ impl MarCollectorFixture {
 
         path
     }
+
+    pub fn create_custom_data_recording_entry(&mut self, data: Vec<u8>) -> PathBuf {
+        let path = self.create_empty_entry();
+        let manifest_path = path.join("manifest.json");
+        let data_path = path.join("data");
+
+        let mut data_file = File::create(&data_path).unwrap();
+        data_file.write_all(&data).unwrap();
+
+        let manifest_file = File::create(manifest_path).unwrap();
+        let manifest = Manifest::new(
+            &self.config,
+            CollectionTime::test_fixture(),
+            Metadata::new_custom_data_recording(
+                None,
+                Duration::from_secs(0),
+                vec!["mime".to_string()],
+                "test".to_string(),
+                data_path.to_str().unwrap().to_string(),
+            ),
+        );
+        serde_json::to_writer(BufWriter::new(manifest_file), &manifest).unwrap();
+
+        path
+    }
 }
 
 /// Check the content of a MAR zip encoder against a list of expected files.

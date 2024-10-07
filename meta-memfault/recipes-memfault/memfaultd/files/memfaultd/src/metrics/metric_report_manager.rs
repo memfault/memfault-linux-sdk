@@ -10,14 +10,16 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use super::{
-    core_metrics::METRIC_OPERATIONAL_CRASHES, metric_reading::KeyedMetricReading,
-    metric_report::CapturedMetrics, SessionEventMessage, SessionName,
-};
 use crate::{
     config::SessionConfig,
     mar::{MarEntryBuilder, Metadata},
-    metrics::{MetricReport, MetricReportType, MetricStringKey, MetricValue},
+    metrics::{
+        core_metrics::{CoreMetricKeys, METRIC_OPERATIONAL_CRASHES},
+        metric_reading::KeyedMetricReading,
+        metric_report::{CapturedMetrics, MetricsSet},
+        MetricReport, MetricReportType, MetricStringKey, MetricValue, SessionEventMessage,
+        SessionName,
+    },
     network::NetworkConfig,
 };
 
@@ -26,6 +28,7 @@ pub struct MetricReportManager {
     daily_heartbeat: MetricReport,
     sessions: HashMap<SessionName, MetricReport>,
     session_configs: Vec<SessionConfig>,
+    core_metrics: CoreMetricKeys,
 }
 
 impl MetricReportManager {
@@ -37,6 +40,7 @@ impl MetricReportManager {
             daily_heartbeat: MetricReport::new_daily_heartbeat(),
             sessions: HashMap::new(),
             session_configs: vec![],
+            core_metrics: CoreMetricKeys::get_session_core_metrics(),
         }
     }
 
@@ -46,6 +50,7 @@ impl MetricReportManager {
             daily_heartbeat: MetricReport::new_daily_heartbeat(),
             sessions: HashMap::new(),
             session_configs: session_configs.to_vec(),
+            core_metrics: CoreMetricKeys::get_session_core_metrics(),
         }
     }
 
@@ -73,14 +78,23 @@ impl MetricReportManager {
         match report_type {
             MetricReportType::Heartbeat => Ok(CapturedMetrics::All),
             MetricReportType::DailyHeartbeat => Ok(CapturedMetrics::All),
-            MetricReportType::Session(session_name) => self
-                .session_configs
-                .iter()
-                .find(|&session_config| session_config.name == *session_name)
-                .map(|config| {
-                    CapturedMetrics::Metrics(config.captured_metrics.clone().into_iter().collect())
-                })
-                .ok_or_else(|| eyre!("No configuration for session named {} found!", session_name)),
+            MetricReportType::Session(session_name) => {
+                let mut metrics = self
+                    .session_configs
+                    .iter()
+                    .find(|&session_config| session_config.name == *session_name)
+                    .map(|config| config.captured_metrics.clone())
+                    .ok_or_else(|| {
+                        eyre!("No configuration for session named {} found!", session_name)
+                    })?;
+
+                metrics.extend(self.core_metrics.string_keys.clone());
+
+                Ok(CapturedMetrics::Metrics(MetricsSet {
+                    metric_keys: metrics,
+                    wildcard_metric_keys: self.core_metrics.wildcard_pattern_keys.clone(),
+                }))
+            }
         }
     }
 
@@ -302,10 +316,10 @@ mod tests {
 
     use super::*;
     use crate::test_utils::in_histograms;
-    use insta::assert_json_snapshot;
+    use insta::{assert_json_snapshot, rounded_redaction, with_settings};
     use rstest::rstest;
     use ssf::ServiceMock;
-    use std::str::FromStr;
+    use std::{collections::HashSet, str::FromStr};
 
     impl TakeMetrics for ServiceMock<Vec<KeyedMetricReading>> {
         fn take_metrics(&mut self) -> Result<BTreeMap<MetricStringKey, MetricValue>> {
@@ -368,18 +382,18 @@ mod tests {
         let session_configs = vec![
             SessionConfig {
                 name: session_a_name.clone(),
-                captured_metrics: vec![
+                captured_metrics: HashSet::from_iter([
                     MetricStringKey::from_str("foo").unwrap(),
                     MetricStringKey::from_str("bar").unwrap(),
-                ],
+                ]),
             },
             SessionConfig {
                 name: session_b_name.clone(),
-                captured_metrics: vec![
+                captured_metrics: HashSet::from_iter([
                     MetricStringKey::from_str("foo").unwrap(),
                     MetricStringKey::from_str("bar").unwrap(),
                     MetricStringKey::from_str("baz").unwrap(),
-                ],
+                ]),
             },
         ];
 
@@ -419,14 +433,56 @@ mod tests {
     }
 
     #[rstest]
+    #[case(in_histograms(vec![("foo", 1.0), ("cpu_usage_memfaultd_pct", 2.0), ("memory_pct",  3.0)]), "system_and_process_metrics")]
+    #[case(in_histograms(vec![("memory_systemd_pct", 1.0), ("memory_memfaultd_pct", 2.0), ("memory_foo_pct", 2.0)]), "process_metrics")]
+    fn test_sessions_capture_core_metrics(
+        #[case] metrics: impl Iterator<Item = KeyedMetricReading>,
+        #[case] test_name: &str,
+    ) {
+        let session_name = SessionName::from_str("test-session").unwrap();
+        let session_configs = vec![SessionConfig {
+            name: session_name.clone(),
+            captured_metrics: HashSet::from_iter([
+                MetricStringKey::from_str("foo").unwrap(),
+                MetricStringKey::from_str("bar").unwrap(),
+            ]),
+        }];
+
+        let mut metric_report_manager =
+            MetricReportManager::new_with_session_configs(&session_configs);
+
+        assert!(metric_report_manager
+            .start_session(session_name.clone())
+            .is_ok());
+
+        for m in metrics {
+            metric_report_manager
+                .add_metric(m)
+                .expect("Failed to add metric reading");
+        }
+
+        let session_report = metric_report_manager
+            .sessions
+            .get_mut(&session_name)
+            .unwrap();
+        let metrics = session_report.take_metrics();
+
+        with_settings!({sort_maps => true}, {
+            assert_json_snapshot!(format!("{}_{}", test_name, "metrics"),
+                                  metrics,
+                                  {"[].value.**.timestamp" => "[timestamp]", "[].value.**.value" => rounded_redaction(5)})
+        });
+    }
+
+    #[rstest]
     fn test_start_session_twice() {
         let session_name = SessionName::from_str("test-session-start-twice").unwrap();
         let session_configs = vec![SessionConfig {
             name: session_name.clone(),
-            captured_metrics: vec![
+            captured_metrics: HashSet::from_iter([
                 MetricStringKey::from_str("foo").unwrap(),
                 MetricStringKey::from_str("bar").unwrap(),
-            ],
+            ]),
         }];
 
         let mut metric_report_manager =
@@ -471,10 +527,10 @@ mod tests {
         let session_name = SessionName::from_str("test-session").unwrap();
         let session_configs = vec![SessionConfig {
             name: session_name.clone(),
-            captured_metrics: vec![
+            captured_metrics: HashSet::from_iter([
                 MetricStringKey::from_str("foo").unwrap(),
                 MetricStringKey::from_str("bar").unwrap(),
-            ],
+            ]),
         }];
 
         let mut metric_report_manager =

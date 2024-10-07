@@ -70,6 +70,8 @@ pub type ElfPtrSize = u32;
 /// called by users directly. memfaultd is expected to set up the handler with the kernel by writing
 /// the appropriate configuration to /proc/sys/kernel/core_pattern.
 /// See https://mflt.io/linux-coredumps for more information.
+/// `core` man page:
+/// https://man7.org/linux/man-pages/man5/core.5.html
 struct MemfaultCoreHandlerArgs {
     /// use configuration file
     #[argh(option, short = 'c')]
@@ -77,6 +79,12 @@ struct MemfaultCoreHandlerArgs {
 
     #[argh(positional)]
     pid: i32,
+
+    /// populated by the %e in the core_pattern
+    /// This is the value stored in /proc/<pid>/comm
+    /// for the crashing process's PID
+    #[argh(positional)]
+    comm: String,
 
     /// verbose output
     #[argh(switch, short = 'V')]
@@ -121,7 +129,7 @@ pub fn main() -> Result<()> {
             let client = MemfaultdClient::from_config(&config);
             match client {
                 Ok(client) => {
-                    if let Err(e) = client.notify_crash() {
+                    if let Err(e) = client.notify_crash(args.comm) {
                         debug!("Failed to notify memfaultd of crash: {:?}", e);
                     }
 
@@ -231,7 +239,7 @@ pub fn process_corefile(
             let network_config = NetworkConfig::from(config);
             let mar_entry = mar_builder
                 .set_metadata(Metadata::new_coredump(output_file_name, compression.into()))
-                .add_attachment(output_file_path)
+                .add_attachment(output_file_path)?
                 .save(&network_config)?;
 
             debug!("Coredump MAR entry generated: {}", mar_entry.path.display());

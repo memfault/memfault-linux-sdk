@@ -27,7 +27,11 @@ use nom::{
 
 use serde::Serialize;
 
-use crate::metrics::{system_metrics::SystemMetricFamilyCollector, KeyedMetricReading};
+use crate::metrics::{
+    core_metrics::{METRIC_STORAGE_USED_DISK_PCT_PREFIX, METRIC_STORAGE_USED_DISK_PCT_SUFFIX},
+    system_metrics::SystemMetricFamilyCollector,
+    KeyedMetricReading,
+};
 
 pub const DISKSPACE_METRIC_NAMESPACE_LEGACY: &str = "df";
 pub const DISKSPACE_METRIC_NAMESPACE: &str = "disk_space";
@@ -168,14 +172,17 @@ where
 
     /// For a given mounted device, construct metric readings
     /// for how many bytes are used and free on the device
+    /// Also takes 2 pointers used to track how much space
+    /// is used in total on the system
     fn get_metrics_for_mount(&self, mount: &Mount) -> Result<Vec<KeyedMetricReading>> {
         let mount_stats = self
             .disk_space_impl
             .disk_space_info_for_path(mount.mount_point.as_path())?;
 
         let block_size = mount_stats.block_size;
-        let bytes_free = mount_stats.blocks_free * block_size;
-        let bytes_used = (mount_stats.blocks * block_size) - bytes_free;
+        let bytes_total = (mount_stats.blocks * block_size) as f64;
+        let bytes_free = (mount_stats.blocks_free * block_size) as f64;
+        let bytes_used = bytes_total - bytes_free;
 
         let disk_id = mount
             .device
@@ -183,23 +190,48 @@ where
             .ok_or_else(|| eyre!("Couldn't extract basename"))?
             .to_string_lossy();
 
-        let bytes_free_reading = KeyedMetricReading::new_histogram(
-            format!("disk_space/{}/free_bytes", disk_id)
-                .as_str()
-                .parse()
-                .map_err(|e| eyre!("Couldn't parse metric key for bytes free: {}", e))?,
-            bytes_free as f64,
-        );
+        if bytes_total > 0.0 {
+            let bytes_free_reading = KeyedMetricReading::new_histogram(
+                format!("disk_space/{}/free_bytes", disk_id)
+                    .as_str()
+                    .parse()
+                    .map_err(|e| eyre!("Couldn't parse metric key for bytes free: {}", e))?,
+                bytes_free,
+            );
 
-        let bytes_used_reading = KeyedMetricReading::new_histogram(
-            format!("disk_space/{}/used_bytes", disk_id)
+            let bytes_used_reading = KeyedMetricReading::new_histogram(
+                format!("disk_space/{}/used_bytes", disk_id)
+                    .as_str()
+                    .parse()
+                    .map_err(|e| eyre!("Couldn't parse metric key for bytes used: {}", e))?,
+                bytes_used,
+            );
+
+            let storage_disk_pct_reading = KeyedMetricReading::new_histogram(
+                format!(
+                    "{}{}{}",
+                    METRIC_STORAGE_USED_DISK_PCT_PREFIX,
+                    disk_id,
+                    METRIC_STORAGE_USED_DISK_PCT_SUFFIX
+                )
                 .as_str()
                 .parse()
                 .map_err(|e| eyre!("Couldn't parse metric key for bytes used: {}", e))?,
-            bytes_used as f64,
-        );
+                (bytes_used / bytes_total) * 100.0,
+            );
 
-        Ok(vec![bytes_free_reading, bytes_used_reading])
+            Ok(vec![
+                bytes_free_reading,
+                bytes_used_reading,
+                storage_disk_pct_reading,
+            ])
+        } else {
+            Err(eyre!(
+                "Total bytes for {} is not a positive number ({}) - can't calculate metrics.",
+                disk_id,
+                bytes_total,
+            ))
+        }
     }
 
     pub fn get_disk_space_metrics(&mut self) -> Result<Vec<KeyedMetricReading>> {

@@ -2,7 +2,7 @@
     "sessions": [
         {
             "name": "test-session",
-            "captured_metrics": ["cpu.total", "statsd.wefaultd.blendpower"]
+            "captured_metrics": ["cpu.total"]
         }
     ]
 }

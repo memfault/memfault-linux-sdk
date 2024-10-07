@@ -33,6 +33,8 @@ pub use metric_reading::MetricReading;
 mod timeseries;
 
 mod metric_value;
+pub use metric_value::construct_histogram_value;
+pub use metric_value::Histogram as HistogramValue;
 pub use metric_value::MetricValue;
 
 pub type MetricTimestamp = DateTime<Utc>;
@@ -55,5 +57,7 @@ pub mod statsd_server;
 pub use statsd_server::StatsDServer;
 
 mod system_metrics;
+pub use system_metrics::DiskSpaceMetricsConfig;
+pub use system_metrics::ProcessMetricsConfig;
 pub use system_metrics::SystemMetricsCollector;
 pub use system_metrics::BUILTIN_SYSTEM_METRIC_NAMESPACES;

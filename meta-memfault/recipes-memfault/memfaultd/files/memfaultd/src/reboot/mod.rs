@@ -266,7 +266,7 @@ fn capture_pstore_content(pstore_dir: &Path, config: &Config) -> Result<()> {
         zip::CompressionMethod::Deflated,
     )?;
 
-    let mar_entry = mar_builder.add_attachment(zip_path).save(&config.into())?;
+    let mar_entry = mar_builder.add_attachment(zip_path)?.save(&config.into())?;
     debug!("Saved pstore to {:?}", mar_entry.path);
     Ok(())
 }

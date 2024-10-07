@@ -20,7 +20,9 @@ expression: manifest
   },
   "producer": {
     "id": "memfaultd",
-    "version": "tests"
+    "version": "tests",
+    "os_version": "tests",
+    "os_name": "tests"
   },
   "type": "linux-logs",
   "metadata": {

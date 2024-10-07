@@ -30,6 +30,7 @@
 //! See additional Linux kernel documentation on /proc/stat here:
 //! https://docs.kernel.org/filesystems/proc.html#miscellaneous-kernel-statistics-in-proc-stat
 use std::{
+    collections::HashMap,
     fs::File,
     io::{BufRead, BufReader},
     iter::zip,
@@ -38,13 +39,15 @@ use std::{
 };
 
 use chrono::Utc;
+use log::debug;
 use nom::{
     bytes::complete::tag, character::complete::space1, multi::count, number::complete::double,
     sequence::preceded, IResult,
 };
 
 use crate::metrics::{
-    system_metrics::SystemMetricFamilyCollector, KeyedMetricReading, MetricReading, MetricStringKey,
+    core_metrics::METRIC_CPU_USAGE_PCT, system_metrics::SystemMetricFamilyCollector,
+    KeyedMetricReading, MetricReading, MetricStringKey,
 };
 use eyre::{eyre, ErrReport, Result};
 
@@ -140,12 +143,12 @@ impl CpuMetricCollector {
                 ["user", "nice", "system", "idle", "iowait", "irq", "softirq"],
                 delta,
             )
-            .collect::<Vec<(&str, f64)>>();
+            .collect::<HashMap<&str, f64>>();
 
-            let sum: f64 = cpu_states_with_ticks.iter().map(|(_k, v)| v).sum();
+            let sum: f64 = cpu_states_with_ticks.values().sum();
             let timestamp = Utc::now();
 
-            let readings = cpu_states_with_ticks
+            let mut readings = cpu_states_with_ticks
                 .iter()
                 .map(|(key, value)| -> Result<KeyedMetricReading, ErrReport> {
                     Ok(KeyedMetricReading::new(
@@ -161,11 +164,24 @@ impl CpuMetricCollector {
                         },
                     ))
                 })
-                .collect::<Result<Vec<KeyedMetricReading>>>();
-            match readings {
-                Ok(readings) => Ok(Some(readings)),
-                Err(e) => Err(e),
+                .collect::<Result<Vec<KeyedMetricReading>>>()?;
+
+            if sum > 0.0 {
+                let cpu_usage_pct = ((sum - cpu_states_with_ticks["idle"]) / sum) * 100.0;
+                let cpu_usage_pct_key =
+                    MetricStringKey::from_str(METRIC_CPU_USAGE_PCT).map_err(|e| {
+                        eyre!("Failed to construct MetricStringKey for used memory: {}", e)
+                    })?;
+
+                readings.push(KeyedMetricReading::new_histogram(
+                    cpu_usage_pct_key,
+                    cpu_usage_pct,
+                ));
+            } else {
+                debug!("Sum of time spent in all CPU states is <= 0 - this is probably incorrect.")
             }
+
+            Ok(Some(readings))
         } else {
             Ok(None)
         }
@@ -227,24 +243,28 @@ mod test {
         matches!(result_a, Ok(None));
 
         let stats = CpuMetricCollector::parse_proc_stat_line_cpu(proc_stat_line_b).unwrap();
-        let result_b = cpu_metric_collector.delta_since_last_reading(stats);
-
-        assert!(result_b.is_ok());
+        let mut result_b = cpu_metric_collector
+            .delta_since_last_reading(stats)
+            .unwrap()
+            .unwrap();
+        result_b.sort_by(|a, b| a.name.cmp(&b.name));
 
         with_settings!({sort_maps => true}, {
             assert_json_snapshot!(format!("{}_{}", test_name, "a_b_metrics"),
-                                  result_b.unwrap(),
+                                  result_b,
                                   {"[].value.**.timestamp" => "[timestamp]", "[].value.**.value" => rounded_redaction(5)})
         });
 
         let stats = CpuMetricCollector::parse_proc_stat_line_cpu(proc_stat_line_c).unwrap();
-        let result_c = cpu_metric_collector.delta_since_last_reading(stats);
-
-        assert!(result_c.is_ok());
+        let mut result_c = cpu_metric_collector
+            .delta_since_last_reading(stats)
+            .unwrap()
+            .unwrap();
+        result_c.sort_by(|a, b| a.name.cmp(&b.name));
 
         with_settings!({sort_maps => true}, {
             assert_json_snapshot!(format!("{}_{}", test_name, "b_c_metrics"),
-                                  result_c.unwrap(),
+                                  result_c,
                                   {"[].value.**.timestamp" => "[timestamp]", "[].value.**.value" => rounded_redaction(5)})
         });
     }

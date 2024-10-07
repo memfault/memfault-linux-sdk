@@ -1,0 +1,11 @@
+---
+source: memfaultd/src/metrics/crashfree_interval.rs
+expression: metrics_mock.take_metrics().unwrap()
+---
+{
+  "operational_crashes": 4.0,
+  "operational_crashes_collectd": 1.0,
+  "operational_crashes_memfaultd": 3.0,
+  "operational_crashfree_hours": 1.0,
+  "operational_hours": 1.0
+}

@@ -23,6 +23,12 @@ impl MetricStringKey {
         &self.inner
     }
 
+    pub fn with_suffix(&self, suffix: &str) -> Self {
+        Self {
+            inner: (self.inner.clone() + suffix),
+        }
+    }
+
     pub fn metric_string_key_parser<T, E: ParseError<T>>(input: T) -> IResult<T, T, E>
     where
         T: InputTakeAtPosition,

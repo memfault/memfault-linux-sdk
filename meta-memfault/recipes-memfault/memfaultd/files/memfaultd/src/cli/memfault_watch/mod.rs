@@ -182,7 +182,7 @@ fn run_from_args(args: MemfaultWatchArgs) -> Result<i32> {
         let mar_builder = MarEntryBuilder::new(&mar_staging_path)?;
         let mar_entry = mar_builder
             .set_metadata(metadata)
-            .add_attachment(stdio_log_file_path)
+            .add_attachment(stdio_log_file_path)?
             .save(&network_config)?;
 
         info!("MFW MAR entry generated: {}", mar_entry.path.display());
@@ -190,7 +190,8 @@ fn run_from_args(args: MemfaultWatchArgs) -> Result<i32> {
         let client = MemfaultdClient::from_config(&config)
             .map_err(|report| eyre!("Failed to create Memfaultd client from config! {report}"))?;
 
-        if client.notify_crash().is_err() {
+        // TODO: Add /proc/comm value for the crashing process here
+        if client.notify_crash("TODO".to_string()).is_err() {
             error!("Unable to contact memfaultd. Is it running?");
         } else {
             debug!("Notified memfaultd about crash!");

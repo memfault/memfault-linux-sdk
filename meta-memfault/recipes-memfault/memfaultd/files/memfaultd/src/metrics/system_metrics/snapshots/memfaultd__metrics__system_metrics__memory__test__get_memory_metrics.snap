@@ -1,33 +1,24 @@
 ---
 source: memfaultd/src/metrics/system_metrics/memory.rs
-expression: "MemoryMetricsCollector::parse_meminfo_memory_stats(meminfo).unwrap()"
+expression: "MemInfoParserImpl::parse_meminfo_stats(meminfo)"
 ---
-[
-  {
-    "name": "memory/memory/free",
-    "value": {
-      "Histogram": {
-        "value": 248090624.0,
-        "timestamp": "[timestamp]"
-      }
-    }
-  },
-  {
-    "name": "memory/memory/used",
-    "value": {
-      "Histogram": {
-        "value": 75599872.0,
-        "timestamp": "[timestamp]"
-      }
-    }
-  },
-  {
-    "name": "memory_pct",
-    "value": {
-      "Histogram": {
-        "value": 20.17622,
-        "timestamp": "[timestamp]"
-      }
-    }
-  }
-]
+{
+  "Active": 22188032.0,
+  "AnonPages": 19955712.0,
+  "Buffers": 4653056.0,
+  "Cached": 53379072.0,
+  "Dirty": 0.0,
+  "Inactive": 52637696.0,
+  "KReclaimable": 14364672.0,
+  "Mapped": 30380032.0,
+  "MemAvailable": 299098112.0,
+  "MemFree": 248090624.0,
+  "MemTotal": 374697984.0,
+  "Mlocked": 0.0,
+  "Shmem": 11534336.0,
+  "SwapCached": 0.0,
+  "SwapFree": 0.0,
+  "SwapTotal": 0.0,
+  "Unevictable": 3145728.0,
+  "Writeback": 0.0
+}

@@ -3,21 +3,26 @@
 // See License.txt for details
 use std::{
     cmp::max,
+    collections::HashMap,
+    io::Read,
     iter::once,
+    str::{from_utf8, FromStr},
     sync::mpsc::{channel, Receiver, Sender},
     time::Duration,
 };
 
-use eyre::Result;
-use log::trace;
+use eyre::{eyre, Result};
+use log::{trace, warn};
+use serde::{Deserialize, Serialize};
 use tiny_http::{Method, Request, Response};
 
 use crate::{
+    cli::NotifyCrashRequest,
     http_server::{HttpHandler, HttpHandlerResult},
     metrics::{
         core_metrics::{
-            METRIC_OPERATIONAL_CRASHES, METRIC_OPERATIONAL_CRASHFREE_HOURS,
-            METRIC_OPERATIONAL_HOURS,
+            METRIC_OPERATIONAL_CRASHES, METRIC_OPERATIONAL_CRASHES_PROCESS_PREFIX,
+            METRIC_OPERATIONAL_CRASHFREE_HOURS, METRIC_OPERATIONAL_HOURS,
         },
         KeyedMetricReading,
     },
@@ -30,8 +35,9 @@ pub struct CrashFreeIntervalTracker<T: TimeMeasure> {
     last_interval_mark: T,
     last_crashfree_interval_mark: T,
     crash_count: u32,
-    sender: Sender<T>,
-    receiver: Receiver<T>,
+    process_crash_count: HashMap<String, u64>,
+    sender: Sender<CrashInfo<T>>,
+    receiver: Receiver<CrashInfo<T>>,
     interval: Duration,
     elapsed_intervals_key: MetricStringKey,
     crashfree_intervals_key: MetricStringKey,
@@ -63,6 +69,7 @@ where
             sender,
             receiver,
             crash_count: 0,
+            process_crash_count: HashMap::new(),
             interval,
             elapsed_intervals_key: MetricStringKey::from(elapsed_intervals_key),
             crashfree_intervals_key: MetricStringKey::from(crashfree_intervals_key),
@@ -87,14 +94,19 @@ where
     /// This allows us to have instant updates on crashes and hourly updates on the metrics, but
     /// also allows us to periodically update the metrics so that we don't have to wait for a crash.
     pub fn wait_and_update(&mut self, wait_duration: Duration) -> Result<()> {
-        if let Ok(crash_ts) = self.receiver.recv_timeout(wait_duration) {
+        if let Ok(crash_info) = self.receiver.recv_timeout(wait_duration) {
             // Drain the receiver to get all crashes that happened since the last update
             self.receiver
                 .try_iter()
-                .chain(once(crash_ts))
-                .for_each(|ts| {
+                .chain(once(crash_info))
+                .for_each(|info| {
                     self.crash_count += 1;
-                    self.last_crashfree_interval_mark = max(self.last_crashfree_interval_mark, ts);
+                    self.last_crashfree_interval_mark =
+                        max(self.last_crashfree_interval_mark, info.timestamp);
+                    *self
+                        .process_crash_count
+                        .entry(info.process_name)
+                        .or_insert(0) += 1;
                 });
         }
 
@@ -119,7 +131,7 @@ where
         let crashes = self.crash_count;
         self.crash_count = 0;
 
-        let metrics = vec![
+        let mut metrics = vec![
             KeyedMetricReading::add_to_counter(
                 self.elapsed_intervals_key.clone(),
                 count_op_interval as f64,
@@ -130,6 +142,26 @@ where
             ),
             KeyedMetricReading::add_to_counter(self.crash_count_key.clone(), crashes as f64),
         ];
+
+        let process_crash_metrics = self.process_crash_count.drain().flat_map(
+            |(process_name, crash_count)| -> Result<KeyedMetricReading> {
+                let operation_crashes_process_key = MetricStringKey::from_str(
+                    format!(
+                        "{}{}",
+                        METRIC_OPERATIONAL_CRASHES_PROCESS_PREFIX, process_name
+                    )
+                    .as_str(),
+                )
+                .map_err(|e| eyre!("Couldn't construct MetricStringKey: {}", e))?;
+                Ok(KeyedMetricReading::add_to_counter(
+                    operation_crashes_process_key,
+                    crash_count as f64,
+                ))
+            },
+        );
+
+        metrics.extend(process_crash_metrics);
+
         trace!("Crashfree hours metrics: {:?}", metrics);
 
         self.metrics_mbox.send_and_forget(metrics)?;
@@ -143,9 +175,12 @@ where
         })
     }
 
-    pub fn capture_crash(&self) {
+    pub fn capture_crash(&self, process_name: String) {
         self.sender
-            .send(T::now())
+            .send(CrashInfo {
+                process_name,
+                timestamp: T::now(),
+            })
             .expect("Failed to send crash timestamp");
     }
 
@@ -174,7 +209,25 @@ where
 }
 
 struct CrashFreeIntervalHttpHandler<T> {
-    channel: Sender<T>,
+    channel: Sender<CrashInfo<T>>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct CrashInfo<T> {
+    process_name: String,
+    timestamp: T,
+}
+
+impl<T> CrashFreeIntervalHttpHandler<T>
+where
+    T: TimeMeasure + Copy + Ord + std::ops::Add<Duration, Output = T> + Send + Sync,
+{
+    fn parse_notify_crash_request(stream: &mut dyn Read) -> Result<NotifyCrashRequest> {
+        let mut buf = vec![];
+        stream.read_to_end(&mut buf)?;
+        let reading = serde_json::from_str(from_utf8(&buf)?)?;
+        Ok(reading)
+    }
 }
 
 impl<T> HttpHandler for CrashFreeIntervalHttpHandler<T>
@@ -183,9 +236,23 @@ where
 {
     fn handle_request(&self, request: &mut Request) -> HttpHandlerResult {
         if request.url() == "/v1/crash/report" && request.method() == &Method::Post {
-            self.channel
-                .send(T::now())
-                .expect("Crashfree channel closed");
+            match Self::parse_notify_crash_request(request.as_reader()) {
+                Ok(NotifyCrashRequest { process_name }) => {
+                    self.channel
+                        .send(CrashInfo {
+                            process_name,
+                            timestamp: T::now(),
+                        })
+                        .expect("Crashfree channel closed");
+                }
+                Err(e) => {
+                    warn!("Failed to parse notify crash request: {}", e);
+                    return HttpHandlerResult::Error(format!(
+                        "Failed to notify crash request: {}",
+                        e
+                    ));
+                }
+            }
             HttpHandlerResult::Response(Response::from_string("OK").boxed())
         } else {
             HttpHandlerResult::NotHandled
@@ -197,6 +264,7 @@ where
 mod tests {
     use std::{collections::BTreeMap, time::Duration};
 
+    use insta::assert_json_snapshot;
     use rstest::rstest;
     use ssf::ServiceMock;
 
@@ -279,7 +347,7 @@ mod tests {
         );
 
         TestInstant::sleep(Duration::from_secs(3600));
-        crashfree_tracker.capture_crash();
+        crashfree_tracker.capture_crash("memfaultd".to_string());
         TestInstant::sleep(Duration::from_secs(3600));
 
         crashfree_tracker
@@ -320,7 +388,7 @@ mod tests {
         assert_operational_metrics(metrics_mock.take_metrics().unwrap(), 0, 0);
 
         // Crash at t0 + 30min
-        crashfree_tracker.capture_crash();
+        crashfree_tracker.capture_crash("memfaultd".to_string());
 
         // After 30' we should be ready to mark an operational hour
         TestInstant::sleep(Duration::from_secs(1800));
@@ -359,7 +427,7 @@ mod tests {
 
         // Crash at interval + 170'
         TestInstant::sleep(Duration::from_secs(170 * 60));
-        crashfree_tracker.capture_crash();
+        crashfree_tracker.capture_crash("memfaultd".to_string());
 
         // Another 10' to the heartbeat mark
         // We will count 0 operational hour here. That is a consequence of the heartbeat being larger than the hour
@@ -372,7 +440,7 @@ mod tests {
 
         // However, doing the crash at interval +10' then waiting for 170' will record 2 crashfree hours
         TestInstant::sleep(Duration::from_secs(10 * 60));
-        crashfree_tracker.capture_crash();
+        crashfree_tracker.capture_crash("memfaultd".to_string());
         TestInstant::sleep(Duration::from_secs(170 * 60));
         crashfree_tracker
             .wait_and_update(Duration::from_secs(0))
@@ -380,12 +448,29 @@ mod tests {
         assert_operational_metrics(metrics_mock.take_metrics().unwrap(), 3, 2);
     }
 
+    #[rstest]
+    fn test_process_crash_counter() {
+        let mut metrics_mock = ServiceMock::new();
+        let mut crashfree_tracker =
+            CrashFreeIntervalTracker::<TestInstant>::new_hourly(metrics_mock.mbox.clone());
+
+        crashfree_tracker.capture_crash("memfaultd".to_string());
+        crashfree_tracker.capture_crash("memfaultd".to_string());
+        crashfree_tracker.capture_crash("memfaultd".to_string());
+        crashfree_tracker.capture_crash("collectd".to_string());
+
+        TestInstant::sleep(Duration::from_secs(3600));
+        crashfree_tracker
+            .wait_and_update(Duration::from_secs(0))
+            .unwrap();
+        assert_json_snapshot!(metrics_mock.take_metrics().unwrap());
+    }
+
     fn assert_operational_metrics(
         metrics: BTreeMap<MetricStringKey, MetricValue>,
         expected_op_hours: u32,
         expected_crashfree_hours: u32,
     ) {
-        assert_eq!(metrics.len(), 3);
         let op_hours = metrics
             .iter()
             .find(|(name, _)| name.as_str() == METRIC_OPERATIONAL_HOURS)

@@ -33,12 +33,20 @@ use nom::{
     IResult,
 };
 
-use crate::metrics::{system_metrics::SystemMetricFamilyCollector, KeyedMetricReading};
+use crate::metrics::{
+    core_metrics::{
+        METRIC_CPU_USAGE_PROCESS_PCT_PREFIX, METRIC_CPU_USAGE_PROCESS_PCT_SUFFIX,
+        METRIC_MEMORY_PROCESS_PCT_PREFIX,
+    },
+    system_metrics::SystemMetricFamilyCollector,
+    KeyedMetricReading,
+};
 use crate::util::time_measure::TimeMeasure;
 
 const PROC_DIR: &str = "/proc/";
 pub const PROCESSES_METRIC_NAMESPACE: &str = "processes";
 
+#[derive(Clone)]
 pub enum ProcessMetricsConfig {
     Auto,
     Processes(HashSet<String>),
@@ -63,18 +71,25 @@ pub struct ProcessMetricsCollector<T: TimeMeasure> {
     processes: HashMap<u64, ProcessReading<T>>,
     clock_ticks_per_ms: f64,
     bytes_per_page: f64,
+    mem_total: f64,
 }
 
 impl<T> ProcessMetricsCollector<T>
 where
     T: TimeMeasure + Copy + Send + Sync + 'static,
 {
-    pub fn new(config: ProcessMetricsConfig, clock_ticks_per_ms: f64, bytes_per_page: f64) -> Self {
+    pub fn new(
+        config: ProcessMetricsConfig,
+        clock_ticks_per_ms: f64,
+        bytes_per_page: f64,
+        mem_total: f64,
+    ) -> Self {
         Self {
             config,
             processes: HashMap::new(),
             clock_ticks_per_ms,
             bytes_per_page,
+            mem_total,
         }
     }
 
@@ -289,6 +304,27 @@ where
             current.pagefaults_major - previous.pagefaults_major,
         );
 
+        let cpu_usage_process_pct_reading = KeyedMetricReading::new_histogram(
+            format!(
+                "{}{}{}",
+                METRIC_CPU_USAGE_PROCESS_PCT_PREFIX,
+                current.name,
+                METRIC_CPU_USAGE_PROCESS_PCT_SUFFIX,
+            )
+            .as_str()
+            .parse()
+            .map_err(|e| eyre!("Couldn't parse metric key: {}", e))?,
+            cputime_sys_pct + cputime_user_pct,
+        );
+
+        let memory_process_pct_reading = KeyedMetricReading::new_histogram(
+            format!("{}{}_pct", METRIC_MEMORY_PROCESS_PCT_PREFIX, current.name)
+                .as_str()
+                .parse()
+                .map_err(|e| eyre!("Couldn't parse metric key: {}", e))?,
+            current.rss / self.mem_total,
+        );
+
         Ok(vec![
             rss_reading,
             vm_reading,
@@ -297,6 +333,8 @@ where
             utime_reading,
             pagefaults_minor_reading,
             pagefaults_major_reading,
+            cpu_usage_process_pct_reading,
+            memory_process_pct_reading,
         ])
     }
 
@@ -384,6 +422,7 @@ mod tests {
             ProcessMetricsConfig::Processes(HashSet::from_iter(["memfaultd".to_string()])),
             100.0,
             4096.0,
+            1000000000.0,
         );
 
         let line = "55270 (memfaultd) S 1 55270 55270 0 -1 4194368 825 0 0 0 155 102 0 0 20 0 19 0 18548522 1411293184 4397 18446744073709551615 1 1 0 0 0 0 0 4096 17987 0 0 0 17 7 0 0 0 0 0 0 0 0 0 0 0 0 0";
@@ -403,6 +442,7 @@ mod tests {
             ProcessMetricsConfig::Processes(HashSet::from_iter(["memfaultd".to_string()])),
             100.0,
             4096.0,
+            1000000000.0,
         );
 
         let first_reading =
@@ -449,7 +489,12 @@ mod tests {
         #[case] use_auto: bool,
     ) {
         let mut collector = if use_auto {
-            ProcessMetricsCollector::<TestInstant>::new(ProcessMetricsConfig::Auto, 100.0, 4096.0)
+            ProcessMetricsCollector::<TestInstant>::new(
+                ProcessMetricsConfig::Auto,
+                100.0,
+                4096.0,
+                1000000000.0,
+            )
         } else {
             // If auto is not used, the configuration should capture metrics from both processes
             ProcessMetricsCollector::<TestInstant>::new(
@@ -459,6 +504,7 @@ mod tests {
                 ])),
                 100.0,
                 4096.0,
+                1000000000.0,
             )
         };
 

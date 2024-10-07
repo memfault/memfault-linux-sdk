@@ -10,11 +10,11 @@ use std::time::Duration;
 use std::{fs, thread};
 use std::{path::PathBuf, sync::Mutex};
 
+use chrono::{DateTime, Utc};
 use eyre::{eyre, Context, Result};
 use flate2::Compression;
 use log::{error, trace, warn};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use tiny_http::{Header, Method, Request, Response, ResponseBox, StatusCode};
 
 use crate::config::Config;
@@ -30,9 +30,16 @@ use crate::{metrics::MetricsMBox, util::rate_limiter::RateLimiter};
 
 pub const CRASH_LOGS_URL: &str = "/api/v1/crash-logs";
 
-use super::log_entry::LogEntry;
-#[cfg(feature = "log-to-metrics")]
+#[cfg(feature = "regex")]
 use super::log_to_metrics::LogToMetrics;
+
+#[cfg(feature = "regex")]
+use super::log_level_mapper::LogLevelMapper;
+
+#[cfg(feature = "regex")]
+use crate::config::LevelMappingConfig;
+
+use super::log_entry::LogEntry;
 
 pub struct LogCollector<H: HeadroomCheck + Send + 'static> {
     inner: Arc<Mutex<Option<Inner<H>>>>,
@@ -53,8 +60,7 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
         log_config: LogCollectorConfig,
         mut on_log_completion: R,
         headroom_limiter: H,
-        #[cfg_attr(not(feature = "log-to-metrics"), allow(unused_variables))]
-        metrics_mbox: MetricsMBox,
+        #[cfg_attr(not(feature = "regex"), allow(unused_variables))] metrics_mbox: MetricsMBox,
     ) -> Result<Self> {
         fs::create_dir_all(&log_config.log_tmp_path).wrap_err_with(|| {
             format!(
@@ -65,7 +71,12 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
 
         // Collect any leftover logfiles in the tmp folder
         let next_cid = recover_old_logs(&log_config.log_tmp_path, &mut on_log_completion)?;
-
+        #[cfg(feature = "regex")]
+        let level_mapper = if log_config.level_mapping_config.enable {
+            Some(LogLevelMapper::try_from(&log_config.level_mapping_config)?)
+        } else {
+            None
+        };
         let in_memory_lines = if log_config.in_memory_lines > Self::MAX_IN_MEMORY_LINES {
             warn!(
                 "Too many lines captured in coredump ({}), clamping to {}",
@@ -88,10 +99,12 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
                 )?,
                 rate_limiter: RateLimiter::new(log_config.max_lines_per_minute),
                 headroom_limiter,
-                #[cfg(feature = "log-to-metrics")]
+                #[cfg(feature = "regex")]
                 log_to_metrics: LogToMetrics::new(log_config.log_to_metrics_rules, metrics_mbox),
                 log_queue: CircularQueue::new(in_memory_lines),
                 storage_config: log_config.storage_config,
+                #[cfg(feature = "regex")]
+                level_mapper,
             }))),
         })
     }
@@ -107,14 +120,7 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
                     Ok(mut inner_opt) => {
                         match &mut *inner_opt {
                             Some(inner) => {
-                                let log_val = match serde_json::to_value(line) {
-                                    Ok(val) => val,
-                                    Err(e) => {
-                                        warn!("Error converting log to json: {}", e);
-                                        continue;
-                                    }
-                                };
-                                if let Err(e) = inner.process_log_record(log_val) {
+                                if let Err(e) = inner.process_log_record(line) {
                                     warn!("Error writing log: {:?}", e);
                                 }
                             }
@@ -194,15 +200,15 @@ impl<H: HeadroomCheck + Send> Drop for LogCollector<H> {
 /// The log collector keeps one Inner struct behind a Arc<Mutex<>> so it can be
 /// shared by multiple threads.
 struct Inner<H: HeadroomCheck> {
-    // We use an Option<Value> here because we have no typed-guarantee that every
-    // log message will include a `ts` key.
-    rate_limiter: RateLimiter<Option<Value>>,
+    rate_limiter: RateLimiter<DateTime<Utc>>,
     log_file_control: LogFileControlImpl,
     headroom_limiter: H,
-    #[cfg(feature = "log-to-metrics")]
+    #[cfg(feature = "regex")]
     log_to_metrics: LogToMetrics,
-    log_queue: CircularQueue<Value>,
+    log_queue: CircularQueue<LogEntry>,
     storage_config: StorageConfig,
+    #[cfg(feature = "regex")]
+    level_mapper: Option<LogLevelMapper>,
 }
 
 impl<H: HeadroomCheck> Inner<H> {
@@ -210,17 +216,21 @@ impl<H: HeadroomCheck> Inner<H> {
     // mutex on the Inner object.
     // Be careful to not try to acquire other mutexes here to avoid a
     // dead-lock. Everything we need should be in Inner.
-    fn process_log_record(&mut self, log: Value) -> Result<()> {
-        let log_timestamp = log.get("ts");
+    #[cfg_attr(not(feature = "regex"), allow(unused_mut))]
+    fn process_log_record(&mut self, mut log: LogEntry) -> Result<()> {
+        #[cfg(feature = "regex")]
+        if let Some(level_mapper) = &self.level_mapper.as_mut() {
+            level_mapper.map_log(&mut log)?;
+        }
 
-        #[cfg(feature = "log-to-metrics")]
+        #[cfg(feature = "regex")]
         if let Err(e) = self.log_to_metrics.process(&log) {
             warn!("Error processing log to metrics: {:?}", e);
         }
 
         if !self
             .headroom_limiter
-            .check(log_timestamp, &mut self.log_file_control)?
+            .check(&log.ts, &mut self.log_file_control)?
         {
             return Ok(());
         }
@@ -236,11 +246,12 @@ impl<H: HeadroomCheck> Inner<H> {
 
         let logfile = self.log_file_control.current_log()?;
         self.rate_limiter
-            .run_within_limits(log_timestamp.cloned(), |rate_limited_calls| {
+            .run_within_limits(log.ts, |rate_limited_calls| {
                 // Print a message if some previous calls were rate limited.
                 if let Some(limited) = rate_limited_calls {
                     logfile.write_log(
                         limited.latest_call,
+                        "WARN",
                         format!("Memfaultd rate limited {} messages.", limited.count),
                     )?;
                 }
@@ -262,7 +273,11 @@ impl<H: HeadroomCheck> Inner<H> {
     }
 
     pub fn get_log_queue(&mut self) -> Result<Vec<String>> {
-        let logs = self.log_queue.iter().map(|v| v.to_string()).collect();
+        let logs = self
+            .log_queue
+            .iter()
+            .map(serde_json::to_string)
+            .collect::<Result<Vec<String>, _>>()?;
 
         Ok(logs)
     }
@@ -285,7 +300,7 @@ pub struct LogCollectorConfig {
     max_lines_per_minute: NonZeroU32,
 
     /// Rules to convert logs to metrics
-    #[cfg_attr(not(feature = "log-to-metrics"), allow(dead_code))]
+    #[cfg_attr(not(feature = "regex"), allow(dead_code))]
     log_to_metrics_rules: Vec<LogToMetricRule>,
 
     /// Maximum number of lines to keep in memory
@@ -293,6 +308,9 @@ pub struct LogCollectorConfig {
 
     /// Whether or not to persist log lines
     storage_config: StorageConfig,
+
+    #[cfg(feature = "regex")]
+    level_mapping_config: LevelMappingConfig,
 }
 
 impl From<&Config> for LogCollectorConfig {
@@ -312,6 +330,8 @@ impl From<&Config> for LogCollectorConfig {
                 .unwrap_or_default(),
             in_memory_lines: config.config_file.coredump.log_lines,
             storage_config: config.config_file.logs.storage,
+            #[cfg(feature = "regex")]
+            level_mapping_config: config.config_file.logs.level_mapping.clone(),
         }
     }
 }
@@ -383,16 +403,19 @@ mod tests {
     use std::{io::Write, path::PathBuf, time::Duration};
     use std::{mem::replace, num::NonZeroU32};
 
-    use crate::logs::{
-        completed_log::CompletedLog,
-        log_file::{LogFile, LogFileControl},
-    };
     use crate::test_utils::setup_logger;
+    use crate::{
+        config::LevelMappingConfig,
+        logs::{
+            completed_log::CompletedLog,
+            log_file::{LogFile, LogFileControl},
+        },
+    };
     use crate::{logs::headroom::HeadroomCheck, util::circular_queue::CircularQueue};
+    use chrono::{DateTime, Duration as ChronoDuration, Utc};
     use eyre::Context;
     use flate2::Compression;
     use rstest::{fixture, rstest};
-    use serde_json::{json, Value};
     use ssf::ServiceMock;
     use tempfile::{tempdir, TempDir};
     use tiny_http::{Method, TestRequest};
@@ -404,7 +427,7 @@ mod tests {
 
     #[rstest]
     fn write_logs_to_disk(mut fixture: LogFixture) {
-        fixture.write_log(json!({"ts": 0, "MESSAGE": "xxx"}));
+        fixture.write_log(test_line());
         assert_eq!(fixture.count_log_files(), 1);
         assert_eq!(fixture.on_log_completion_calls(), 0);
     }
@@ -414,16 +437,20 @@ mod tests {
     #[case(100)]
     #[case(150)]
     fn circular_log_queue(#[case] mut log_count: usize, mut fixture: LogFixture) {
-        for i in 0..log_count {
-            fixture.write_log(json!({"ts": i, "MESSAGE": "xxx"}));
+        let delta = ChronoDuration::seconds(1);
+        let starting_time_str = "2024-09-11T12:34:56Z";
+        let mut time = starting_time_str.parse::<DateTime<Utc>>().unwrap();
+        for _ in 0..log_count {
+            time = time.checked_add_signed(delta).unwrap();
+            let log = LogEntry::new_with_message_and_ts("test", time);
+            fixture.write_log(log);
         }
 
         let log_queue = fixture.get_log_queue();
 
         // Assert that the last value in the queue has the correct timestamp
         let last_val = log_queue.back().unwrap();
-        let ts = last_val.get("ts").unwrap().as_u64().unwrap();
-        assert_eq!(ts, log_count as u64 - 1);
+        assert_eq!(last_val.ts, time);
 
         // Clamp the log_count to the maximum size of the queue
         log_count = min(log_count, IN_MEMORY_LINES);
@@ -441,6 +468,10 @@ mod tests {
             log_to_metrics_rules: vec![],
             in_memory_lines: 1000,
             storage_config: StorageConfig::Persist,
+            level_mapping_config: LevelMappingConfig {
+                enable: false,
+                regex: None,
+            },
         };
 
         let mut collector = LogCollector::open(
@@ -469,7 +500,7 @@ mod tests {
 
     #[rstest]
     fn do_not_create_newfile_on_close(mut fixture: LogFixture) {
-        fixture.write_log(json!({"ts": 0, "MESSAGE": "xxx"}));
+        fixture.write_log(test_line());
         fixture.collector.close_internal().expect("error closing");
         // 0 because the fixture "on_log_completion" moves the file out
         assert_eq!(fixture.count_log_files(), 0);
@@ -477,7 +508,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case(StorageConfig::Persist, 25)]
+    #[case(StorageConfig::Persist, 60)]
     #[case(StorageConfig::Disabled, 0)]
     fn log_persistence(
         #[case] storage_config: StorageConfig,
@@ -487,7 +518,7 @@ mod tests {
     ) {
         fixture.set_log_config(storage_config);
 
-        fixture.write_log(json!({"ts": 0, "MESSAGE": "xxx"}));
+        fixture.write_log(test_line());
         fixture.flush_log_writes().unwrap();
 
         assert_eq!(fixture.count_log_files(), 1);
@@ -496,7 +527,7 @@ mod tests {
 
     #[rstest]
     fn forced_rotation_with_nonempty_log(mut fixture: LogFixture) {
-        fixture.write_log(json!({"ts": 0, "MESSAGE": "xxx"}));
+        fixture.write_log(test_line());
 
         fixture.collector.flush_logs().unwrap();
 
@@ -561,12 +592,16 @@ mod tests {
 
     #[rstest]
     fn http_handler_log_get(mut fixture: LogFixture) {
+        let date_str = "2024-09-11T12:34:56Z";
         let logs = vec![
-            json!({"ts": 0, "MESSAGE": "xxx"}),
-            json!({"ts": 1, "MESSAGE": "yyy"}),
-            json!({"ts": 2, "MESSAGE": "zzz"}),
+            LogEntry::new_with_message_and_ts("xxx", date_str.parse::<DateTime<Utc>>().unwrap()),
+            LogEntry::new_with_message_and_ts("yyy", date_str.parse::<DateTime<Utc>>().unwrap()),
+            LogEntry::new_with_message_and_ts("zzz", date_str.parse::<DateTime<Utc>>().unwrap()),
         ];
-        let log_strings = logs.iter().map(|l| l.to_string()).collect::<Vec<_>>();
+        let log_strings = logs
+            .iter()
+            .map(|l| serde_json::to_string(l).unwrap())
+            .collect::<Vec<_>>();
 
         for log in &logs {
             fixture.write_log(log.clone());
@@ -641,7 +676,7 @@ mod tests {
             std::fs::read_dir(&self.logs_dir).unwrap().count()
         }
 
-        fn write_log(&mut self, line: Value) {
+        fn write_log(&mut self, line: LogEntry) {
             self.collector
                 .with_mut_inner(|inner| inner.process_log_record(line))
                 .unwrap();
@@ -665,7 +700,7 @@ mod tests {
             self.on_log_completion_receiver.try_iter().count()
         }
 
-        fn get_log_queue(&mut self) -> CircularQueue<Value> {
+        fn get_log_queue(&mut self) -> CircularQueue<LogEntry> {
             self.collector
                 .with_mut_inner(|inner| Ok(replace(&mut inner.log_queue, CircularQueue::new(100))))
                 .unwrap()
@@ -691,7 +726,7 @@ mod tests {
     impl HeadroomCheck for StubHeadroomLimiter {
         fn check<L: LogFile>(
             &mut self,
-            _log_timestamp: Option<&Value>,
+            _log_timestamp: &DateTime<Utc>,
             _log_file_control: &mut impl LogFileControl<L>,
         ) -> eyre::Result<bool> {
             Ok(true)
@@ -708,6 +743,10 @@ mod tests {
             log_to_metrics_rules: vec![],
             in_memory_lines: IN_MEMORY_LINES,
             storage_config: StorageConfig::Persist,
+            level_mapping_config: LevelMappingConfig {
+                enable: false,
+                regex: None,
+            },
         };
 
         let (on_log_completion_sender, on_log_completion_receiver) = channel();
@@ -747,7 +786,8 @@ mod tests {
         }
     }
 
-    fn test_line() -> Value {
-        json!({"ts": 0, "MESSAGE": "xxx"})
+    fn test_line() -> LogEntry {
+        let date_str = "2024-09-11T12:34:56Z";
+        LogEntry::new_with_message_and_ts("xxx", date_str.parse::<DateTime<Utc>>().unwrap())
     }
 }

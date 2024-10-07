@@ -9,6 +9,7 @@ use reqwest::{
     header::ACCEPT,
     StatusCode,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{
     config::Config,
@@ -21,6 +22,11 @@ use crate::{
 pub struct MemfaultdClient {
     base_url: String,
     client: Client,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct NotifyCrashRequest {
+    pub process_name: String,
 }
 
 pub struct DeleteToken(String);
@@ -111,9 +117,10 @@ impl MemfaultdClient {
         }
     }
 
-    pub fn notify_crash(&self) -> Result<()> {
+    pub fn notify_crash(&self, comm: String) -> Result<()> {
         self.client
             .post(format!("{}{}", self.base_url, "/v1/crash/report"))
+            .json(&NotifyCrashRequest { process_name: comm })
             .send()?;
         Ok(())
     }

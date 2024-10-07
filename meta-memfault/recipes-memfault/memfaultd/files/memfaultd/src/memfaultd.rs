@@ -46,7 +46,6 @@ use crate::{
 use crate::{mar::MarStagingCleaner, service_manager::get_service_manager};
 use crate::{reboot::RebootReasonTracker, util::disk_size::DiskSize};
 
-#[cfg(feature = "collectd")]
 use crate::collectd::CollectdHandler;
 
 #[cfg(feature = "logging")]
@@ -147,7 +146,6 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     );
     http_handlers.push(Box::new(session_event_handler));
 
-    #[cfg(feature = "collectd")]
     {
         let collectd_handler = CollectdHandler::new(
             config.config_file.enable_data_collection,
@@ -177,7 +175,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     }
 
     // Start statsd server
-    if config.statsd_server_enabled() {
+    if config.statsd_server_enabled() && config.config_file.enable_data_collection {
         if let Ok(bind_address) = config.statsd_server_address() {
             let metrics_mailbox = metrics_mbox.clone();
             spawn(move || {
@@ -190,12 +188,21 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     }
 
     // Start system metric collector thread
-    if config.builtin_system_metric_collection_enabled() {
+    if config.builtin_system_metric_collection_enabled()
+        && config.config_file.enable_data_collection
+    {
         let poll_interval = config.system_metric_poll_interval();
-        let system_metric_config = config.system_metric_config();
         let mbox = metrics_mbox.clone();
+        let processes_config = config.system_metric_monitored_processes();
+        let network_interfaces_config = config.system_metric_network_interfaces_config().cloned();
+        let disk_space_config = config.system_metric_disk_space_config();
         spawn(move || {
-            let mut sys_metric_collector = SystemMetricsCollector::new(system_metric_config, mbox);
+            let mut sys_metric_collector = SystemMetricsCollector::new(
+                processes_config,
+                network_interfaces_config,
+                disk_space_config,
+                mbox,
+            );
             sys_metric_collector.run(poll_interval)
         });
     }
@@ -220,7 +227,8 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
 
     // Start a thread to update battery metrics
     // periodically if enabled by configuration
-    if config.battery_monitor_periodic_update_enabled() {
+    if config.battery_monitor_periodic_update_enabled() && config.config_file.enable_data_collection
+    {
         let battery_monitor_interval = config.battery_monitor_interval();
         let battery_info_command_str = config.battery_monitor_battery_info_command().to_string();
         spawn(move || {
@@ -243,23 +251,26 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     }
     // Connected time monitor is only enabled if config is defined
     if let Some(connectivity_monitor_config) = config.connectivity_monitor_config() {
-        let mut connectivity_monitor = ConnectivityMonitor::<Instant, TcpConnectionChecker>::new(
-            connectivity_monitor_config,
-            metric_report_manager.mbox().into(),
-        );
-        spawn(move || {
-            let mut next_connectivity_reading_time =
-                Instant::now() + connectivity_monitor.interval_seconds();
-            loop {
-                while Instant::now() < next_connectivity_reading_time {
-                    sleep(next_connectivity_reading_time - Instant::now());
+        if config.config_file.enable_data_collection {
+            let mut connectivity_monitor =
+                ConnectivityMonitor::<Instant, TcpConnectionChecker>::new(
+                    connectivity_monitor_config,
+                    metric_report_manager.mbox().into(),
+                );
+            spawn(move || {
+                let mut next_connectivity_reading_time =
+                    Instant::now() + connectivity_monitor.interval_seconds();
+                loop {
+                    while Instant::now() < next_connectivity_reading_time {
+                        sleep(next_connectivity_reading_time - Instant::now());
+                    }
+                    next_connectivity_reading_time += connectivity_monitor.interval_seconds();
+                    if let Err(e) = connectivity_monitor.update_connected_time() {
+                        warn!("Failed to update connected time metrics: {}", e);
+                    }
                 }
-                next_connectivity_reading_time += connectivity_monitor.interval_seconds();
-                if let Err(e) = connectivity_monitor.update_connected_time() {
-                    warn!("Failed to update connected time metrics: {}", e);
-                }
-            }
-        });
+            });
+        }
     }
     // Schedule a task to dump the metrics when a sync is forced
     {
@@ -315,7 +326,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         }));
     }
     // Schedule a task to compute operational and crashfree hours
-    {
+    if config.config_file.enable_data_collection {
         let mut crashfree_tracker =
             CrashFreeIntervalTracker::<Instant>::new_hourly(metric_report_manager.mbox().into());
         http_handlers.push(crashfree_tracker.http_handler());
@@ -351,6 +362,13 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                 }
                 #[cfg(feature = "systemd")]
                 LogSource::Journald => Box::new(start_journald_provider(config.tmp_dir())),
+                #[cfg(not(feature = "systemd"))]
+                LogSource::Journald => {
+                    warn!("logs.source configuration set to \"journald\", but memfaultd was not compiled with the systemd feature. Logs will not be collected.");
+                    // This match arm still needs to evaluate to Box<dyn Iterator<Item = LogEntry> + Send>
+                    // Empty iterator typechecks and is effectively a no-op.
+                    Box::new([].into_iter())
+                }
             };
 
             let mar_cleaner = mar_cleaner.clone();
@@ -373,7 +391,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                     .to_owned();
                 let mar_builder = MarEntryBuilder::new(&mar_staging_path)?
                     .set_metadata(Metadata::new_log(file_name, cid, next_cid, compression))
-                    .add_attachment(path);
+                    .add_attachment(path)?;
 
                 mar_cleaner.clean(mar_builder.estimated_entry_size())?;
 

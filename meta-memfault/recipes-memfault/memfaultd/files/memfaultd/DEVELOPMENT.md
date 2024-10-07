@@ -16,7 +16,7 @@ apt install libsystemd-dev libconfig-dev
 #### macOS
 
 ```sh
-brew install libconfig
+brew install pkg-config libconfig
 ```
 
 (note: `libsystemd` is not available on macOS and the build system will not try

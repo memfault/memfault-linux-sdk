@@ -132,7 +132,11 @@ impl HttpHandler for SessionEventHandler {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, path::Path, str::FromStr};
+    use std::{
+        collections::{BTreeMap, HashSet},
+        path::Path,
+        str::FromStr,
+    };
 
     use insta::assert_json_snapshot;
     use rstest::{fixture, rstest};
@@ -354,11 +358,11 @@ mod tests {
     fn fixture() -> Fixture {
         let session_config = SessionConfig {
             name: SessionName::from_str("test-session").unwrap(),
-            captured_metrics: vec![
+            captured_metrics: HashSet::from_iter([
                 MetricStringKey::from_str("foo").unwrap(),
                 MetricStringKey::from_str("bar").unwrap(),
                 MetricStringKey::from_str("baz").unwrap(),
-            ],
+            ]),
         };
 
         let jig =

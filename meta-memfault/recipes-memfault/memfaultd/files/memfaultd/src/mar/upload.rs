@@ -24,6 +24,8 @@
 //! +-----------------+-----+-----+--------+------+
 //! | logs            |     |     | x      | x    |
 //! +-----------------+-----+-----+--------+------+
+//! | CDR             |     |     | x      | x    |
+//! +-----------------+-----+-----+--------+------+
 
 use std::fs::{remove_dir_all, File};
 use std::io::BufReader;
@@ -416,6 +418,31 @@ mod tests {
             monitoring_resolution: Resolution::Off,
         };
         let expected_files = should_upload.then(|| vec!["<entry>/manifest.json"]);
+        upload_and_verify(mar_fixture, client, sampling_config, expected_files);
+    }
+
+    #[rstest]
+    // Verify that CDRs are uploaded based on the debugging resolution
+    #[case::off(Resolution::Off, false)]
+    #[case::low(Resolution::Low, false)]
+    #[case::normal(Resolution::Normal, true)]
+    #[case::high(Resolution::High, true)]
+    fn uploading_custom_data_recordings(
+        #[case] resolution: Resolution,
+        #[case] should_upload: bool,
+        _setup_logger: (),
+        client: MockNetworkClient,
+        mut mar_fixture: MarCollectorFixture,
+    ) {
+        let data = vec![1, 3, 3, 7];
+        mar_fixture.create_custom_data_recording_entry(data);
+
+        let sampling_config = Sampling {
+            debugging_resolution: resolution,
+            logging_resolution: Resolution::Off,
+            monitoring_resolution: Resolution::Off,
+        };
+        let expected_files = should_upload.then(|| vec!["<entry>/data", "<entry>/manifest.json"]);
         upload_and_verify(mar_fixture, client, sampling_config, expected_files);
     }
 
