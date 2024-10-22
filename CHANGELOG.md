@@ -6,13 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.1] - 2024-10-21
+
+This is a patch release to fix a bug in our release process that caused the
+Cargo lock file to get out of sync with our other published crates. This only
+affected users building with `--locked`. No other changes were made.
+
+### Fixed
+
+- Fixed a bug in our release process that allowed the Cargo lock file to get out
+  of sync with our other published crates. This caused a build failure when
+  building with `--locked`.
+
 ## [1.15.0] - 2024-09-30
 
 ### Added
 
 - Add a new per-process `operational_crashes` metric. This is similar to the
   system wide `operational_crashes` metric, but is broken down by service. The
-  metric will be named `operational_crashes_<process name>`, where `<process name>` is the name of the executable binary for the crashed process.
+  metric will be named `operational_crashes_<process name>`, where
+  `<process name>` is the name of the executable binary for the crashed process.
 - Add a builtin log level extractor for all logs that are ingested by
   `memfaultd`. This allows you to define regex for each log level so that the
   level reported to Memfault matches the level inside the log message. This is
@@ -31,21 +44,19 @@ and this project adheres to
 
 - The builtin system metric configuration is now enabled by default. This means
   that `memfaultd` will now collect metrics on CPU, memory, disk usage, and much
-  more out of the box. Note that this means 
-  some metrics previously reported via 
-  `collectd` will now have different keys.
-  We hope this will make it more clear what each
-  metric actually represents on a device -
-  if this causes issues with your Project configuration
-  please don't hesitate to reach out to us for 
+  more out of the box. Note that this means some metrics previously reported via
+  `collectd` will now have different keys. We hope this will make it more clear
+  what each metric actually represents on a device - if this causes issues with
+  your Project configuration please don't hesitate to reach out to us for
   support!
 - `memfaultd`'s internal `statsd` server is now enabled by default. This allows
   you to send custom metrics to `memfaultd` using the StatsD protocol. without
   having the first route them through `collectd`.
 - We've made some changes to increase performance in our log processing
   pipeline. This should result in a lower CPU usage when processing logs.
-- Previously a small number of log messages written by `memfaultd` did not have a level. We've
-  updated them to now have a level matching the severity of each message.
+- Previously a small number of log messages written by `memfaultd` did not have
+  a level. We've updated them to now have a level matching the severity of each
+  message.
 - The `journald` log source is now the default log collector. This will use our
   internal processor for grabbing logs directly from the systemd journal. If you
   are not using systemd, you can still use the `fluent-bit` log source.
@@ -57,10 +68,10 @@ and this project adheres to
 - Previously `memfaultd` would panic if a MAR attachment was not an absolute
   path or was not a file. This has been changed to simply log an error and
   continue.
-- Fixed a bug in which some metrics captured before enabling data 
-  collection were uploadedto Memfault once data collection was enabled. 
-  No data captured on devices for which data collection was always disabled 
-  would be uploaded as a result of this bug.
+- Fixed a bug in which some metrics captured before enabling data collection
+  were uploadedto Memfault once data collection was enabled. No data captured on
+  devices for which data collection was always disabled would be uploaded as a
+  result of this bug.
 
 ## [1.14.0] - 2024-08-21
 
@@ -1090,3 +1101,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.14.0-kirkstone
 [1.15.0]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.15.0-kirkstone
+[1.15.1]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.15.1-kirkstone
