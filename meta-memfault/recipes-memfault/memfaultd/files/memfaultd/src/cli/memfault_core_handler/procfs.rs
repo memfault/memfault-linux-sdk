@@ -22,9 +22,7 @@ pub fn read_proc_mem<P: Read + Seek>(
     vaddr: ElfPtrSize,
     size: ElfPtrSize,
 ) -> Result<Vec<u8>> {
-    // Ignore unnecessary cast here as it is needed on 32-bit systems.
-    #[allow(clippy::unnecessary_cast)]
-    proc_mem_stream.seek(SeekFrom::Start(vaddr as u64))?;
+    proc_mem_stream.seek(SeekFrom::Start(vaddr as _))?;
     let mut buf = vec![0; size as usize];
     proc_mem_stream.read_exact(&mut buf)?;
     Ok(buf)

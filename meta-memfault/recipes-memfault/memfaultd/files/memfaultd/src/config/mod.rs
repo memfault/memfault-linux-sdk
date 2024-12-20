@@ -4,6 +4,7 @@
 use eyre::eyre;
 use std::collections::HashSet;
 use std::net::SocketAddr;
+use std::num::NonZeroU32;
 use std::time::Duration;
 use std::{
     path::{Path, PathBuf},
@@ -59,7 +60,7 @@ pub struct Config {
     pub device_info: DeviceInfo,
     pub config_file: MemfaultdConfig,
     pub config_file_path: PathBuf,
-    cached_device_config: Arc<RwLock<DiskBacked<DeviceConfig>>>,
+    pub cached_device_config: Arc<RwLock<DiskBacked<DeviceConfig>>>,
 }
 
 const LOGS_SUBDIRECTORY: &str = "logs";
@@ -260,6 +261,36 @@ impl Config {
             Some(statsd_server_config) => Ok(statsd_server_config.bind_address),
             None => Err(eyre!("No StatsD server bind_address configured!")),
         }
+    }
+
+    // Returns true if Gauge metrics should be aggregated via
+    // a running average rather than simply saving the most
+    // recently reported value.
+    //
+    // Note: This config is only meant to be used for compatibility
+    // with legacy implementations that sent Gauge StatsD metrics to
+    // collectd which ultimately forwarded them to memfaultd where they
+    // were averaged together. New implementations should use the Histogram
+    // Metric type for Metrics where the desired aggregation is averaging.
+    pub fn statsd_server_legacy_gauge_aggregation_enabled(&self) -> bool {
+        match &self.config_file.metrics.statsd_server {
+            // This config is irrelevant if the built-in StatsD server is enabled
+            None => false,
+            Some(statsd_server_config) => statsd_server_config
+                .legacy_gauge_aggregation
+                .unwrap_or(false),
+        }
+    }
+
+    pub fn hrt_enabled(&self) -> bool {
+        self.config_file.metrics.high_resolution_telemetry.enable
+    }
+
+    pub fn hrt_max_samples_per_min(&self) -> NonZeroU32 {
+        self.config_file
+            .metrics
+            .high_resolution_telemetry
+            .max_samples_per_minute
     }
 
     pub fn builtin_system_metric_collection_enabled(&self) -> bool {

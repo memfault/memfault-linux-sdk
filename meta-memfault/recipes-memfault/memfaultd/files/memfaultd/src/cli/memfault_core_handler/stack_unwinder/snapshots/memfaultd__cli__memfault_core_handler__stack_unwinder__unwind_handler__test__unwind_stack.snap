@@ -1,0 +1,51 @@
+---
+source: memfaultd/src/cli/memfault_core_handler/stack_unwinder/unwind_handler.rs
+expression: stacktrace
+snapshot_kind: text
+---
+{
+  "version": "1",
+  "signal": "SIGSEGV",
+  "cmdline": "simple_exe",
+  "symbols": [
+    {
+      "pc_range": {
+        "start": "0x75959a428000",
+        "end": "0x75959a5bd000"
+      },
+      "build_id": "abcd1234",
+      "compiled_offset": "0x28000",
+      "runtime_offset": "0x75959a428000",
+      "path": "test_path"
+    },
+    {
+      "pc_range": {
+        "start": "0x63010b1cf000",
+        "end": "0x63010b1d0000"
+      },
+      "build_id": "abcd1234",
+      "compiled_offset": "0x1000",
+      "runtime_offset": "0x63010b1cf000",
+      "path": "test_path"
+    }
+  ],
+  "threads": [
+    {
+      "active": true,
+      "pcs": [
+        "0x63010b1cf161",
+        "0x63010b1cf191",
+        "0x63010b1cf1bf",
+        "0x63010b1cf1f4",
+        "0x75959a429d8f",
+        "0x75959a429e3f",
+        "0x63010b1cf084"
+      ]
+    }
+  ],
+  "core_handler_logs": [
+    "Ranger",
+    "Daisy",
+    "Carlton"
+  ]
+}

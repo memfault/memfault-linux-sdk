@@ -2,6 +2,7 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 //! Collect Network Interface metric readings from /proc/net/dev
+//! and /proc/net/wireless
 //!
 //! Example /proc/net/dev output:
 //! Inter-|   Receive                                                |  Transmit
@@ -12,6 +13,8 @@
 //!
 //! Kernel docs:
 //! https://docs.kernel.org/filesystems/proc.html#networking-info-in-proc-net
+//! Extra information about /proc/net/wireless
+//! https://hewlettpackard.github.io/wireless-tools/Linux.Wireless.Extensions.html
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -21,12 +24,13 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use chrono::Utc;
+use log::debug;
 use nom::bytes::complete::tag;
-use nom::character::complete::{alphanumeric1, multispace0, multispace1, u64};
-use nom::sequence::terminated;
+use nom::character::complete::{alphanumeric1, i64, multispace0, multispace1, u64};
 use nom::{
+    combinator::opt,
     multi::count,
-    sequence::{pair, preceded},
+    sequence::{pair, preceded, terminated},
     IResult,
 };
 
@@ -34,8 +38,7 @@ use crate::metrics::core_metrics::{
     METRIC_CONNECTIVITY_INTERFACE_RECV_BYTES_PREFIX,
     METRIC_CONNECTIVITY_INTERFACE_RECV_BYTES_SUFFIX,
     METRIC_CONNECTIVITY_INTERFACE_SENT_BYTES_PREFIX,
-    METRIC_CONNECTIVITY_INTERFACE_SENT_BYTES_SUFFIX, METRIC_CONNECTIVITY_RECV_BYTES,
-    METRIC_CONNECTIVITY_SENT_BYTES,
+    METRIC_CONNECTIVITY_INTERFACE_SENT_BYTES_SUFFIX,
 };
 use crate::{
     metrics::{
@@ -48,6 +51,7 @@ use crate::{
 use eyre::{eyre, ErrReport, Result};
 
 const PROC_NET_DEV_PATH: &str = "/proc/net/dev";
+const PROC_NET_WIRELESS_PATH: &str = "/proc/net/wireless";
 pub const NETWORK_INTERFACE_METRIC_NAMESPACE: &str = "interface";
 pub const METRIC_INTERFACE_BYTES_PER_SECOND_RX_SUFFIX: &str = "bytes_per_second/rx";
 pub const METRIC_INTERFACE_BYTES_PER_SECOND_TX_SUFFIX: &str = "bytes_per_second/tx";
@@ -110,6 +114,41 @@ where
         }
     }
 
+    pub fn get_wireless_interface_metrics(&mut self) -> Result<Vec<KeyedMetricReading>> {
+        let path = Path::new(PROC_NET_WIRELESS_PATH);
+        if !path.exists() {
+            // Return early if wireless extension is not enabled
+            return Ok(vec![]);
+        }
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        let mut wireless_metric_readings = vec![];
+        for line in reader.lines() {
+            if let Ok((interface_id, net_stats)) = Self::parse_proc_net_wireless_line(line?.trim())
+            {
+                // Ignore unmonitored interfaces
+                if self.interface_is_monitored(&interface_id) {
+                    let level = net_stats
+                        .get(1)
+                        .ok_or(eyre!("Missing level for {}", interface_id))?;
+                    let rssi_key = MetricStringKey::from_str(
+                        format!("interfaces/{}/rssi", interface_id).as_str(),
+                    )
+                    .map_err(|e| {
+                        eyre!("Couldn't build link metric key for {}: {}", interface_id, e)
+                    })?;
+
+                    wireless_metric_readings
+                        .extend([KeyedMetricReading::new_histogram(rssi_key, *level as f64)]);
+                }
+            } else {
+                debug!("Couldn't parse /proc/net/wireless line");
+            }
+        }
+
+        Ok(wireless_metric_readings)
+    }
+
     pub fn get_network_interface_metrics(&mut self) -> Result<Vec<KeyedMetricReading>> {
         // Track if any lines in /proc/net/dev are parse-able
         // so we can alert user if none are
@@ -132,7 +171,7 @@ where
 
                 // Ignore unmonitored interfaces
                 if self.interface_is_monitored(&interface_id) {
-                    if let Ok(Some(mut readings)) = self.calculate_network_metrics(
+                    if let Ok(mut readings) = self.calculate_network_metrics(
                         interface_id.to_string(),
                         ProcNetDevReading {
                             stats: net_stats,
@@ -146,17 +185,6 @@ where
                 }
             }
         }
-
-        net_metric_readings.extend([
-            KeyedMetricReading::new_counter(
-                MetricStringKey::from(METRIC_CONNECTIVITY_RECV_BYTES),
-                total_bytes_rx as f64,
-            ),
-            KeyedMetricReading::new_counter(
-                MetricStringKey::from(METRIC_CONNECTIVITY_SENT_BYTES),
-                total_bytes_tx as f64,
-            ),
-        ]);
 
         // Check if we were able to parse at least one CPU metric reading
         if no_parseable_lines {
@@ -203,6 +231,26 @@ where
         Ok((interface_id.to_string(), net_stats))
     }
 
+    fn parse_wireless_status(input: &str) -> IResult<&str, u64> {
+        preceded(multispace1, u64)(input)
+    }
+
+    fn parse_wireless_stats(input: &str) -> IResult<&str, Vec<i64>> {
+        count(terminated(preceded(multispace1, i64), opt(tag("."))), 2)(input)
+    }
+
+    /// Parse the output of a line of /proc/net/wireless, returning
+    /// a pair of the network interface that the parsed line corresponds
+    /// to and the 2 signed integer values for "link" and "level"
+    fn parse_proc_net_wireless_line(line: &str) -> Result<(String, Vec<i64>)> {
+        let (_remaining, (interface_id, (_status, wireless_stats))) = pair(
+            Self::parse_net_if,
+            pair(Self::parse_wireless_status, Self::parse_wireless_stats),
+        )(line)
+        .map_err(|e| eyre!("Failed to parse /proc/net/wireless line: {}", e))?;
+        Ok((interface_id.to_string(), wireless_stats))
+    }
+
     /// We need to account for potential rollovers in the
     /// /proc/net/dev counters, handled by this function
     fn counter_delta_with_overflow(current: u64, previous: u64) -> u64 {
@@ -230,7 +278,7 @@ where
         current_reading: ProcNetDevReading<T>,
         total_bytes_rx: &mut u64,
         total_bytes_tx: &mut u64,
-    ) -> Result<Option<Vec<KeyedMetricReading>>> {
+    ) -> Result<Vec<KeyedMetricReading>> {
         // Check to make sure there was a previous reading to calculate a delta with
         if let Some(ProcNetDevReading {
             stats: previous_net_stats,
@@ -288,7 +336,8 @@ where
                 .as_str(),
             )
             .map_err(|e| eyre!("Couldn't construct metric key: {}", e))?;
-            let interface_core_metrics = [
+
+            let _interface_core_metrics = [
                 KeyedMetricReading::new_counter(interface_rx_key, interface_bytes_rx as f64),
                 KeyedMetricReading::new_counter(interface_tx_key, interface_bytes_tx as f64),
             ];
@@ -348,18 +397,9 @@ where
                     ))
                 })
                 .collect::<Result<Vec<KeyedMetricReading>>>();
-            match readings {
-                Ok(mut readings) => {
-                    // Add core metrics for interface
-                    // calculated earlier to returned Vec of metric
-                    // readings
-                    readings.extend(interface_core_metrics);
-                    Ok(Some(readings))
-                }
-                Err(e) => Err(e),
-            }
+            Ok(readings?)
         } else {
-            Ok(None)
+            Ok(vec![])
         }
     }
 }
@@ -373,7 +413,10 @@ where
     }
 
     fn collect_metrics(&mut self) -> Result<Vec<KeyedMetricReading>> {
-        self.get_network_interface_metrics()
+        let mut network_metrics = self.get_network_interface_metrics()?;
+        let net_wireless_metrics = self.get_wireless_interface_metrics()?;
+        network_metrics.extend(net_wireless_metrics);
+        Ok(network_metrics)
     }
 }
 
@@ -391,9 +434,22 @@ mod test {
     #[case("wlan1:    2707      25    0    0    0     0          0         0     2707      25    0    0    0     0       0          0", "wlan1")]
     fn test_parse_netdev_line(#[case] proc_net_dev_line: &str, #[case] test_name: &str) {
         assert_json_snapshot!(test_name, 
-                              NetworkInterfaceMetricCollector::<TestInstant>::parse_proc_net_dev_line(proc_net_dev_line).unwrap(), 
+                              NetworkInterfaceMetricCollector::<TestInstant>::parse_proc_net_dev_line(proc_net_dev_line).unwrap(),
                               {"[].value.**.timestamp" => "[timestamp]", "[].value.**.value" => rounded_redaction(5)})
     }
+    #[rstest]
+    #[case("wlan0: 0000   56.  -54.  -256        0      0      0      0     38        0")]
+    #[case("wlan0: 0000   56  -54  -256        0      0      0      0     38        0")]
+    fn test_parse_netwireless_line(#[case] proc_net_dev_line: &str) {
+        let result = NetworkInterfaceMetricCollector::<TestInstant>::parse_proc_net_wireless_line(
+            proc_net_dev_line,
+        );
+        assert!(result.is_ok());
+        let (interface, stats) = result.unwrap();
+        assert_eq!(interface, "wlan0");
+        assert_eq!(stats, [56, -54]);
+    }
+
     #[rstest]
     // Missing a colon after wlan0
     #[case("wlan0   2707      25    0    0    0     0          0         0     2707      25    0    0    0     0       0          0")]
@@ -442,7 +498,7 @@ mod test {
         };
         let result_a =
             net_metric_collector.calculate_network_metrics(net_if, reading_a, &mut 0, &mut 0);
-        matches!(result_a, Ok(None));
+        assert!(result_a.unwrap().is_empty());
 
         TestInstant::sleep(Duration::from_secs(10));
 
@@ -531,7 +587,7 @@ mod test {
             &mut total_bytes_rx,
             &mut total_bytes_tx,
         );
-        matches!(result_a, Ok(None));
+        assert!(result_a.unwrap().is_empty());
 
         TestInstant::sleep(Duration::from_secs(10));
 
@@ -550,7 +606,7 @@ mod test {
             &mut total_bytes_rx,
             &mut total_bytes_tx,
         );
-        matches!(result_b, Ok(None));
+        assert!(result_b.unwrap().is_empty());
 
         TestInstant::sleep(Duration::from_secs(30));
 

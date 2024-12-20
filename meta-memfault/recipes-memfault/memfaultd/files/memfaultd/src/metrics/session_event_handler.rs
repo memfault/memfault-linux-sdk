@@ -134,6 +134,7 @@ impl HttpHandler for SessionEventHandler {
 mod tests {
     use std::{
         collections::{BTreeMap, HashSet},
+        num::NonZeroU32,
         path::Path,
         str::FromStr,
     };
@@ -149,7 +150,8 @@ mod tests {
         http_server::{HttpHandler, HttpHandlerResult},
         mar::manifest::{Manifest, Metadata},
         metrics::{
-            KeyedMetricReading, MetricReportManager, MetricStringKey, MetricValue, SessionName,
+            hrt::HRT_DEFAULT_MAX_SAMPLES_PER_MIN, KeyedMetricReading, MetricReportManager,
+            MetricStringKey, MetricValue, SessionName,
         },
         test_utils::in_histograms,
     };
@@ -365,10 +367,11 @@ mod tests {
             ]),
         };
 
-        let jig =
-            SharedServiceThread::spawn_with(MetricReportManager::new_with_session_configs(&[
-                session_config,
-            ]));
+        let jig = SharedServiceThread::spawn_with(MetricReportManager::new_with_session_configs(
+            true,
+            NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN).unwrap(),
+            &[session_config],
+        ));
 
         let tempdir = TempDir::new().unwrap();
         let handler = SessionEventHandler::new(
@@ -398,7 +401,7 @@ mod tests {
         let manifest: Manifest = serde_json::from_str(&manifest_string).unwrap();
 
         if let Metadata::LinuxMetricReport { .. } = manifest.metadata {
-            assert_json_snapshot!(test_name, manifest.metadata);
+            assert_json_snapshot!(test_name, manifest.metadata, {".metadata.duration_ms" => 0, ".metadata.boottime_duration_ms" => 0});
         } else {
             panic!("Unexpected metadata type");
         }

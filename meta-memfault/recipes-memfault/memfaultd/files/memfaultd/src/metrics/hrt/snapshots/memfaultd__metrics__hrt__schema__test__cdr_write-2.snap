@@ -1,0 +1,19 @@
+---
+source: memfaultd/src/metrics/hrt/schema.rs
+expression: manifest.metadata
+---
+{
+  "type": "custom-data-recording",
+  "metadata": {
+    "start_time": {
+      "timestamp": "1991-03-25T00:00:00Z"
+    },
+    "duration_ms": 0,
+    "mimetypes": [
+      "application/vnd.memfault.hrt.v1"
+    ],
+    "reason": "hrt",
+    "recording_file_name": "hrt.json.gz",
+    "compression": "gzip"
+  }
+}

@@ -1,5 +1,0 @@
----
-source: memfaultd/src/http_server/response.rs
-expression: "serde_json::to_string(&HttpResponse::Ok).unwrap()"
----
-{"status":"ok"}

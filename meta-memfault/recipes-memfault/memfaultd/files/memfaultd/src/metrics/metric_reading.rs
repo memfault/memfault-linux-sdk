@@ -3,14 +3,15 @@
 // See License.txt for details
 use std::str::FromStr;
 
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use eyre::{eyre, ErrReport};
 use nom::{
     branch::alt,
+    bytes::complete::take_while_m_n,
     character::complete::char,
-    combinator::value,
+    combinator::{map_res, value},
     number::complete::double,
-    sequence::separated_pair,
+    sequence::{separated_pair, terminated},
     Finish,
     {bytes::complete::tag, IResult},
 };
@@ -63,6 +64,11 @@ pub enum MetricReading {
         value: String,
         timestamp: MetricTimestamp,
     },
+    /// Used for RSSI specifically to handle averaging log scale values
+    Rssi {
+        value: f64,
+        timestamp: MetricTimestamp,
+    },
 }
 
 impl MetricReading {
@@ -88,6 +94,17 @@ impl MetricReading {
             }
             StatsDMetricType::Timer => Ok((remaining, MetricReading::Counter { value, timestamp })),
             StatsDMetricType::Gauge => Ok((remaining, MetricReading::Gauge { value, timestamp })),
+        }
+    }
+
+    pub fn timestamp(&self) -> DateTime<Utc> {
+        match self {
+            Self::Counter { timestamp, .. } => *timestamp,
+            Self::Histogram { timestamp, .. } => *timestamp,
+            Self::Gauge { timestamp, .. } => *timestamp,
+            Self::ReportTag { timestamp, .. } => *timestamp,
+            Self::TimeWeightedAverage { timestamp, .. } => *timestamp,
+            Self::Rssi { timestamp, .. } => *timestamp,
         }
     }
 }
@@ -176,8 +193,14 @@ impl KeyedMetricReading {
     /// Helper that handles `nom` details for parsing a StatsD string as
     /// a KeyedMetricReading
     fn parse_statsd(input: &str) -> IResult<&str, KeyedMetricReading> {
-        let (remaining, (name, value)) =
-            separated_pair(MetricStringKey::parse, tag(":"), MetricReading::parse)(input)?;
+        let is_valid_ascii = |c: char| c.is_ascii() && c != ':';
+
+        let (value_str, name) = map_res(
+            terminated(take_while_m_n(0, 128, is_valid_ascii), char(':')),
+            MetricStringKey::from_str,
+        )(input)?;
+
+        let (remaining, value) = MetricReading::parse(value_str)?;
         Ok((remaining, KeyedMetricReading { name, value }))
     }
 
@@ -269,15 +292,16 @@ mod tests {
     #[case("cpu3_idle:100.9898|g")]
     #[case("some_negative_gauge:-87.55|g")]
     #[case("test_timer:3600000|ms")]
+    #[case("test Counter:1|c")]
+    #[case("{test_counter:1.0|c}")]
+    #[case("\"test_counter\":1.0|c}")]
     fn parse_valid_statsd_reading(#[case] reading_str: &str, _setup_logger: ()) {
         assert!(KeyedMetricReading::from_str(reading_str).is_ok())
     }
 
     #[rstest]
-    #[case("test Counter:1|c")]
-    #[case("{test_counter:1.0|c}")]
-    #[case("\"test_counter\":1.0|c}")]
     #[case("test_gauge:\"string-value\"|g")]
+    #[case(":\"string-value\"|g")]
     #[case("test_gauge:string-value|g")]
     fn fail_on_invalid_statsd_reading(#[case] reading_str: &str, _setup_logger: ()) {
         assert!(KeyedMetricReading::from_str(reading_str).is_err())

@@ -11,6 +11,7 @@ expression: builder.unwrap().get_metadata()
       "operational_crashes": 0.0
     },
     "duration_ms": 0,
+    "boottime_duration_ms": 0,
     "report_type": {
       "session": "test-session-start-twice"
     }

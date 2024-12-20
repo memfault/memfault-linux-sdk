@@ -2,6 +2,7 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 use std::process::Command;
+use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -15,12 +16,13 @@ use eyre::Result;
 use eyre::{eyre, Context};
 use log::{error, info, trace, warn};
 
-use ssf::SharedServiceThread;
+use ssf::{Scheduler, ServiceThread};
 
+use crate::config::Resolution;
 use crate::metrics::{
-    BatteryMonitor, BatteryReadingHandler, ConnectivityMonitor, KeyedMetricReading,
-    MetricReportType, MetricsMBox, PeriodicMetricReportDumper, ReportSyncEventHandler,
-    SessionEventHandler, SystemMetricsCollector,
+    BatteryMonitor, BatteryReadingHandler, ConnectivityMonitor, DumpHrtMessage,
+    DumpMetricReportMessage, KeyedMetricReading, MetricReportType, MetricsMBox,
+    ReportSyncEventHandler, ReportsToDump, SessionEventHandler, SystemMetricsCollector,
 };
 
 use crate::{
@@ -117,9 +119,13 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         vec![Box::new(MarExportHandler::new(config.mar_staging_path()))];
 
     // Metric store
-    let metric_report_manager = SharedServiceThread::spawn_with(match config.session_configs() {
-        Some(session_configs) => MetricReportManager::new_with_session_configs(session_configs),
-        None => MetricReportManager::new(),
+    let metric_report_manager = ServiceThread::spawn_with(match config.session_configs() {
+        Some(session_configs) => MetricReportManager::new_with_session_configs(
+            config.hrt_enabled(),
+            config.hrt_max_samples_per_min(),
+            session_configs,
+        ),
+        None => MetricReportManager::new(config.hrt_enabled(), config.hrt_max_samples_per_min()),
     });
     let metrics_mbox: MetricsMBox = metric_report_manager.mbox().into();
 
@@ -155,31 +161,46 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         http_handlers.push(Box::new(collectd_handler));
     }
 
-    // Start a thread to dump the metrics precisely every heartbeat interval
+    let mut scheduler = Scheduler::default();
+
+    // Schedule dump jobs for both heartbeat, daily heartbeat, and HRT
     {
         let net_config = NetworkConfig::from(&config);
         let mar_staging_path = config.mar_staging_path();
         let heartbeat_interval = config.config_file.heartbeat_interval;
-        let metric_report_manager = metric_report_manager.shared();
-        spawn(move || {
-            let periodic_metric_report_dumper = PeriodicMetricReportDumper::new(
+        let mailbox = metric_report_manager.mbox();
+
+        let heartbeat_message = DumpMetricReportMessage::new(
+            ReportsToDump::Report(MetricReportType::Heartbeat),
+            mar_staging_path.clone(),
+            net_config.clone(),
+        );
+        scheduler.schedule_message_subscription(heartbeat_message, &mailbox, &heartbeat_interval);
+
+        let hrt_message = DumpHrtMessage::new(mar_staging_path.clone(), net_config.clone());
+        scheduler.schedule_message_subscription(hrt_message, &mailbox, &heartbeat_interval);
+
+        if config.config_file.metrics.enable_daily_heartbeats {
+            let daily_message = DumpMetricReportMessage::new(
+                ReportsToDump::Report(MetricReportType::DailyHeartbeat),
                 mar_staging_path,
                 net_config,
-                metric_report_manager,
-                heartbeat_interval,
-                MetricReportType::Heartbeat,
             );
-
-            periodic_metric_report_dumper.start();
-        });
+            scheduler.schedule_message_subscription(
+                daily_message,
+                &mailbox,
+                &DAILY_HEARTBEAT_INTERVAL,
+            );
+        }
     }
 
     // Start statsd server
     if config.statsd_server_enabled() && config.config_file.enable_data_collection {
         if let Ok(bind_address) = config.statsd_server_address() {
+            let legacy_gauge_aggregation = config.statsd_server_legacy_gauge_aggregation_enabled();
             let metrics_mailbox = metrics_mbox.clone();
             spawn(move || {
-                let statsd_server = StatsDServer::new(metrics_mailbox);
+                let statsd_server = StatsDServer::new(legacy_gauge_aggregation, metrics_mailbox);
                 if let Err(e) = statsd_server.run(bind_address) {
                     warn!("Couldn't start StatsD server: {}", e);
                 };
@@ -204,24 +225,6 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                 mbox,
             );
             sys_metric_collector.run(poll_interval)
-        });
-    }
-
-    // Start a thread to dump metrics every 24 hours
-    if config.config_file.metrics.enable_daily_heartbeats {
-        let net_config = NetworkConfig::from(&config);
-        let mar_staging_path = config.mar_staging_path();
-        let metric_report_manager = metric_report_manager.shared();
-        spawn(move || {
-            let periodic_metric_report_dumper = PeriodicMetricReportDumper::new(
-                mar_staging_path,
-                net_config,
-                metric_report_manager,
-                DAILY_HEARTBEAT_INTERVAL,
-                MetricReportType::DailyHeartbeat,
-            );
-
-            periodic_metric_report_dumper.start();
         });
     }
 
@@ -277,16 +280,19 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         {
             let net_config = NetworkConfig::from(&config);
             let mar_staging_path = config.mar_staging_path();
-            let metric_report_manager = metric_report_manager.shared();
+            let dump_metrics_mbox = metric_report_manager.mbox();
             sync_tasks.push(Box::new(move |forced| match forced {
-                true => metric_report_manager
-                    .lock()
-                    .expect("Mutex poisoned")
-                    .dump_report_to_mar_entry(
-                        &mar_staging_path,
-                        &net_config,
-                        &MetricReportType::Heartbeat,
-                    ),
+                true => {
+                    trace!("Dumping heartbeat metrics");
+                    dump_metrics_mbox
+                        .send_and_wait_for_reply(DumpMetricReportMessage::new(
+                            ReportsToDump::Report(MetricReportType::Heartbeat),
+                            mar_staging_path.clone(),
+                            net_config.clone(),
+                        ))
+                        .map_err(|e| eyre!("Couldn't send message to dump_metrics_mbox: {}", e))?
+                        .map_err(|e| eyre!("Error dumping metrics: {}", e))
+                }
                 false => Ok(()),
             }));
         }
@@ -294,18 +300,36 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         {
             let net_config = NetworkConfig::from(&config);
             let mar_staging_path = config.mar_staging_path();
-            let metric_report_manager = metric_report_manager.shared();
+            let dump_metrics_mbox = metric_report_manager.mbox();
             sync_tasks.push(Box::new(move |forced| match forced {
                 true => {
                     trace!("Dumping daily heartbeat metrics");
-                    metric_report_manager
-                        .lock()
-                        .expect("Mutex poisoined")
-                        .dump_report_to_mar_entry(
-                            &mar_staging_path,
-                            &net_config,
-                            &MetricReportType::DailyHeartbeat,
-                        )
+                    dump_metrics_mbox
+                        .send_and_wait_for_reply(DumpMetricReportMessage::new(
+                            ReportsToDump::Report(MetricReportType::DailyHeartbeat),
+                            mar_staging_path.clone(),
+                            net_config.clone(),
+                        ))
+                        .map_err(|e| eyre!("Couldn't send message to dump_metrics_mbox: {}", e))?
+                        .map_err(|e| eyre!("Error dumping metrics: {}", e))
+                }
+                false => Ok(()),
+            }));
+        }
+
+        {
+            let net_config = NetworkConfig::from(&config);
+            let mar_staging_path = config.mar_staging_path();
+            let dump_metrics_mbox = metric_report_manager.mbox();
+            sync_tasks.push(Box::new(move |forced| match forced {
+                true => {
+                    trace!("Dumping HRT metrics");
+                    let hrt_message =
+                        DumpHrtMessage::new(mar_staging_path.clone(), net_config.clone());
+                    dump_metrics_mbox
+                        .send_and_wait_for_reply(hrt_message)
+                        .map_err(|e| eyre!("Couldn't send message to dump_metrics_mbox: {}", e))?
+                        .map_err(|e| eyre!("Error dumping metrics: {}", e))
                 }
                 false => Ok(()),
             }));
@@ -316,13 +340,30 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         let net_config = NetworkConfig::from(&config);
         let mar_staging_path = config.mar_staging_path();
 
-        let metric_report_manager = metric_report_manager.shared();
+        let dump_metrics_mbox = metric_report_manager.mbox();
         shutdown_tasks.push(Box::new(move || {
-            MetricReportManager::dump_metric_reports(
-                &metric_report_manager,
-                &mar_staging_path,
-                &net_config,
-            )
+            dump_metrics_mbox
+                .send_and_forget(DumpMetricReportMessage::new(
+                    ReportsToDump::All,
+                    mar_staging_path.clone(),
+                    net_config.clone(),
+                ))
+                .map_err(|e| eyre!("Couldn't send message to dump_metrics_mbox: {}", e))
+        }));
+    }
+    // Schedule a task to dump HRT when shutting down
+    {
+        let net_config = NetworkConfig::from(&config);
+        let mar_staging_path = config.mar_staging_path();
+        let dump_metrics_mbox = metric_report_manager.mbox();
+        shutdown_tasks.push(Box::new(move || {
+            dump_metrics_mbox
+                .send_and_wait_for_reply(DumpHrtMessage::new(
+                    mar_staging_path.clone(),
+                    net_config.clone(),
+                ))
+                .map_err(|e| eyre!("Couldn't send message to dump_metrics_mbox: {}", e))?
+                .map_err(|e| eyre!("Error dumping HRT: {}", e))
         }));
     }
     // Schedule a task to compute operational and crashfree hours
@@ -339,6 +380,10 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
             }
         });
     }
+
+    // Only set to a non-None value when we build with the logging feature
+    #[allow(unused_mut, /* reason = "Is unused when logging is disabled." */)]
+    let mut logging_resolution_sender: Option<Sender<Resolution>> = None;
 
     #[cfg(feature = "logging")]
     {
@@ -412,12 +457,27 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                     get_disk_space(&tmp_folder)
                 })
             };
-            let mut log_collector = LogCollector::open(
+
+            let logging_resolution = config
+                .cached_device_config
+                .read()
+                .expect("RwLock Poisoned")
+                .get()
+                .sampling
+                .logging_resolution;
+
+            let (mut log_collector, sender) = LogCollector::open(
                 log_config,
+                logging_resolution,
                 on_log_completion,
                 headroom_limiter,
                 metric_report_manager.mbox().into(),
             )?;
+
+            // Store the Sender in a variable that can be accessed
+            // outside this logging code block
+            logging_resolution_sender = Some(sender);
+
             log_collector.spawn_collect_from(log_receiver);
 
             let crash_log_handler = log_collector.crash_log_handler();
@@ -463,6 +523,13 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     } else {
         config.config_file.upload_interval
     };
+
+    // Start the scheduler
+    let failed_send_fn = Box::new(|e| {
+        error!("Failed to run scheduled job: {}", e);
+    });
+    scheduler.run(failed_send_fn);
+
     loop_with_exponential_error_backoff(
         || {
             // Reset the forced sync flag before doing any work so we can detect
@@ -490,7 +557,23 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                     }
                     Ok(UpdateStatus::Updated) => {
                         info!("Device config updated");
-                        last_device_config_refresh = Some(Instant::now())
+                        last_device_config_refresh = Some(Instant::now());
+                        if let Some(sender) = &logging_resolution_sender {
+                            if let Err(e) = sender.send(
+                                config
+                                    .cached_device_config
+                                    .read()
+                                    .expect("RwLock Poisoned")
+                                    .get()
+                                    .sampling
+                                    .logging_resolution,
+                            ) {
+                                warn!(
+                                    "Error sending updated device config to log collector: {}",
+                                    e
+                                );
+                            }
+                        }
                     }
                     Ok(UpdateStatus::Unchanged) => {
                         trace!("Device config unchanged");

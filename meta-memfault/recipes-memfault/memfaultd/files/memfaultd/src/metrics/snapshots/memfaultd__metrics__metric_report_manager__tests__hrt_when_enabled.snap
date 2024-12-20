@@ -1,0 +1,57 @@
+---
+source: memfaultd/src/metrics/metric_report_manager.rs
+expression: hrt_report_serialized
+---
+{
+  "schema_version": 1,
+  "producer": {
+    "id": "memfaultd",
+    "version": "[version]"
+  },
+  "start_time": "[start_time]",
+  "duration_ms": "[duration]",
+  "rollups": [
+    {
+      "metadata": {
+        "string_key": "bar",
+        "metric_type": "gauge",
+        "data_type": "double",
+        "internal": false
+      },
+      "data": [
+        {
+          "t": "[timestamp]",
+          "value": 2.0
+        }
+      ]
+    },
+    {
+      "metadata": {
+        "string_key": "baz",
+        "metric_type": "gauge",
+        "data_type": "double",
+        "internal": false
+      },
+      "data": [
+        {
+          "t": "[timestamp]",
+          "value": 3.0
+        }
+      ]
+    },
+    {
+      "metadata": {
+        "string_key": "foo",
+        "metric_type": "gauge",
+        "data_type": "double",
+        "internal": false
+      },
+      "data": [
+        {
+          "t": "[timestamp]",
+          "value": 1.0
+        }
+      ]
+    }
+  ]
+}

@@ -12,6 +12,8 @@ mod connectivity;
 pub use connectivity::ConnectivityMonitor;
 pub use connectivity::ReportSyncEventHandler;
 
+mod hrt;
+
 mod metric_string_key;
 pub use metric_string_key::MetricStringKey;
 
@@ -38,9 +40,6 @@ pub use metric_value::Histogram as HistogramValue;
 pub use metric_value::MetricValue;
 
 pub type MetricTimestamp = DateTime<Utc>;
-
-mod periodic_metric_report;
-pub use periodic_metric_report::PeriodicMetricReportDumper;
 
 mod crashfree_interval;
 pub use crashfree_interval::CrashFreeIntervalTracker;

@@ -43,20 +43,6 @@ flashing it to an SDCard and updating your device remotely with Memfault OTA.
 [quickstart-qemu]: https://docs.memfault.com/docs/linux/quickstart
 [quickstart-rpi]: https://docs.memfault.com/docs/linux/quickstart-raspberrypi
 
-## Prerequisites
-
-Even though support for a broader diversity of setups is planned, this first
-versions of our SDK makes the following assumptions:
-
-- Your project uses [Yocto][yocto-homepage] as a build system.
-- It uses [SWUpdate][swupdate-homepage] for OTA (optional if you don't plan to
-  integrate with OTA).
-
-If your project diverges from these assumptions, please [get in
-touch][get-in-touch]. It will likely still work without major changes.
-
-[get-in-touch]: https://memfault.com/contact/
-
 ## Getting Started
 
 Take a look at our [getting-started guide][docs-linux-getting-started] to set up
@@ -68,9 +54,6 @@ guide][docs-linux-ota].
 
 Metrics are also supported through [collectd][collectd-homepage]. Read more
 about it in the [Linux Metrics integration guide][docs-linux-metrics].
-
-[swupdate-homepage]: https://swupdate.org/
-[yocto-homepage]: https://www.yoctoproject.org/
 
 ## Documentation and Features
 
@@ -88,6 +71,11 @@ An integration example can be found under
 [`/meta-memfault-example`](/meta-memfault-example). The central part of the SDK
 lives in a Yocto layer in [`/meta-memfault`](/meta-memfault).
 
+For non-Yocto systems, see the [standalone `memfaultd` repo][memfaultd-repo] for
+the source code of our Rust daemon that can be cross-compiled for your device.
+
+[memfaultd-repo]: https://github.com/memfault/memfaultd
+
 ### OTA Updates
 
 To provide OTA Updates, the Memfault Cloud implements an API endpoint compatible
@@ -99,6 +87,7 @@ Read more about [Linux OTA management using Memfault][docs-linux-ota].
 
 [docs-linux-ota]: https://mflt.io/linux-ota-integration-guide
 [hawkbit-ddi]: https://www.eclipse.org/hawkbit/apis/ddi_api/
+[swupdate-homepage]: https://swupdate.org/
 
 ### Metrics
 

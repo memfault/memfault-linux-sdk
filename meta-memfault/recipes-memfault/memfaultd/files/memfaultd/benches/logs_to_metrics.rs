@@ -27,7 +27,7 @@ fn log_line_from_str(line: &str) -> LogEntry {
 }
 
 fn send_logs(num_log_lines: u64) {
-    let report_manager = MetricReportManager::new();
+    let report_manager = MetricReportManager::default();
     let report_service = ServiceJig::prepare(report_manager);
 
     let rules = vec![LogToMetricRule::CountMatching {
