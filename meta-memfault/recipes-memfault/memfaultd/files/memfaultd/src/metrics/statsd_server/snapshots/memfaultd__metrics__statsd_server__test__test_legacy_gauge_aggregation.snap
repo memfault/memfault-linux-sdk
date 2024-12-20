@@ -1,0 +1,7 @@
+---
+source: memfaultd/src/metrics/statsd_server/mod.rs
+expression: fixture_legacy_gauge_aggregation.mock.take_metrics().unwrap()
+---
+{
+  "test-gauge": 1.5
+}

@@ -33,14 +33,7 @@ use nom::{
     IResult,
 };
 
-use crate::metrics::{
-    core_metrics::{
-        METRIC_CPU_USAGE_PROCESS_PCT_PREFIX, METRIC_CPU_USAGE_PROCESS_PCT_SUFFIX,
-        METRIC_MEMORY_PROCESS_PCT_PREFIX,
-    },
-    system_metrics::SystemMetricFamilyCollector,
-    KeyedMetricReading,
-};
+use crate::metrics::{system_metrics::SystemMetricFamilyCollector, KeyedMetricReading};
 use crate::util::time_measure::TimeMeasure;
 
 const PROC_DIR: &str = "/proc/";
@@ -304,26 +297,8 @@ where
             current.pagefaults_major - previous.pagefaults_major,
         );
 
-        let cpu_usage_process_pct_reading = KeyedMetricReading::new_histogram(
-            format!(
-                "{}{}{}",
-                METRIC_CPU_USAGE_PROCESS_PCT_PREFIX,
-                current.name,
-                METRIC_CPU_USAGE_PROCESS_PCT_SUFFIX,
-            )
-            .as_str()
-            .parse()
-            .map_err(|e| eyre!("Couldn't parse metric key: {}", e))?,
-            cputime_sys_pct + cputime_user_pct,
-        );
-
-        let memory_process_pct_reading = KeyedMetricReading::new_histogram(
-            format!("{}{}_pct", METRIC_MEMORY_PROCESS_PCT_PREFIX, current.name)
-                .as_str()
-                .parse()
-                .map_err(|e| eyre!("Couldn't parse metric key: {}", e))?,
-            current.rss / self.mem_total,
-        );
+        let _cpu_usage_process_pct = cputime_sys_pct + cputime_user_pct;
+        let _memory_process_pct = current.rss / self.mem_total;
 
         Ok(vec![
             rss_reading,
@@ -333,8 +308,6 @@ where
             utime_reading,
             pagefaults_minor_reading,
             pagefaults_major_reading,
-            cpu_usage_process_pct_reading,
-            memory_process_pct_reading,
         ])
     }
 

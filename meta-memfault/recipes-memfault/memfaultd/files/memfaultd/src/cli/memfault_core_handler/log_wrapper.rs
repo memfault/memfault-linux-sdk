@@ -16,15 +16,19 @@ pub const CAPTURE_LOG_MAX_LEVEL: LevelFilter = LevelFilter::Debug;
 /// Logger wrapper to capture all error and warning logs that happen during coredump capture.
 pub struct CoreHandlerLogWrapper {
     log: Box<dyn Log>,
-    capture_logs_tx: SyncSender<String>,
+    core_handler_logs_tx: SyncSender<String>,
     level: LevelFilter,
 }
 
 impl CoreHandlerLogWrapper {
-    pub fn new(log: Box<dyn Log>, capture_logs_tx: SyncSender<String>, level: LevelFilter) -> Self {
+    pub fn new(
+        log: Box<dyn Log>,
+        core_handler_logs_tx: SyncSender<String>,
+        level: LevelFilter,
+    ) -> Self {
         Self {
             log,
-            capture_logs_tx,
+            core_handler_logs_tx,
             level,
         }
     }
@@ -43,7 +47,7 @@ impl Log for CoreHandlerLogWrapper {
             // Panicking is not a great option because this isn't critical functionality. Logging
             // the error isn't an option because we'd risk infinite recursion since we're already
             // inside the logger.
-            let _ = self.capture_logs_tx.try_send(entry);
+            let _ = self.core_handler_logs_tx.try_send(entry);
         }
 
         if record.level() <= self.level {

@@ -93,6 +93,7 @@ fn should_upload(metadata: &Metadata, sampling: &Sampling) -> bool {
             }
         }
         Metadata::CustomDataRecording { .. } => sampling.debugging_resolution >= Resolution::Normal,
+        Metadata::Stacktrace { .. } => sampling.debugging_resolution >= Resolution::Normal,
     }
 }
 
@@ -487,6 +488,7 @@ mod tests {
         mut mar_fixture: MarCollectorFixture,
     ) {
         let duration = Duration::from_secs(1);
+        let boottime_duration = Some(Duration::from_secs(1));
         let metrics: HashMap<MetricStringKey, MetricValue> = vec![(
             MetricStringKey::from_str("foo").unwrap(),
             MetricValue::Number(1.0),
@@ -494,7 +496,7 @@ mod tests {
         .into_iter()
         .collect();
 
-        mar_fixture.create_metric_report_entry(metrics, duration, report_type);
+        mar_fixture.create_metric_report_entry(metrics, duration, boottime_duration, report_type);
 
         let sampling_config = Sampling {
             debugging_resolution: Resolution::Off,

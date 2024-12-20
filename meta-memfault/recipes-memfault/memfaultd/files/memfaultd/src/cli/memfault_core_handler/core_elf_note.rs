@@ -243,7 +243,7 @@ pub struct MappedFile<'a> {
 /// Parsed CORE::NT_FILE note.
 pub struct FileNote<'a> {
     page_size: usize,
-    mapped_files: Vec<MappedFile<'a>>,
+    pub mapped_files: Vec<MappedFile<'a>>,
     /// The input data was incomplete, so the mapped_files list is not complete.
     incomplete: bool,
 }

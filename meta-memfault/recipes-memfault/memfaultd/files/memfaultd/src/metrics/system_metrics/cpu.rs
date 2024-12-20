@@ -148,7 +148,7 @@ impl CpuMetricCollector {
             let sum: f64 = cpu_states_with_ticks.values().sum();
             let timestamp = Utc::now();
 
-            let mut readings = cpu_states_with_ticks
+            let readings = cpu_states_with_ticks
                 .iter()
                 .map(|(key, value)| -> Result<KeyedMetricReading, ErrReport> {
                     Ok(KeyedMetricReading::new(
@@ -167,16 +167,11 @@ impl CpuMetricCollector {
                 .collect::<Result<Vec<KeyedMetricReading>>>()?;
 
             if sum > 0.0 {
-                let cpu_usage_pct = ((sum - cpu_states_with_ticks["idle"]) / sum) * 100.0;
-                let cpu_usage_pct_key =
+                let _cpu_usage_pct = ((sum - cpu_states_with_ticks["idle"]) / sum) * 100.0;
+                let _cpu_usage_pct_key =
                     MetricStringKey::from_str(METRIC_CPU_USAGE_PCT).map_err(|e| {
                         eyre!("Failed to construct MetricStringKey for used memory: {}", e)
                     })?;
-
-                readings.push(KeyedMetricReading::new_histogram(
-                    cpu_usage_pct_key,
-                    cpu_usage_pct,
-                ));
             } else {
                 debug!("Sum of time spent in all CPU states is <= 0 - this is probably incorrect.")
             }
@@ -209,7 +204,7 @@ mod test {
     #[rstest]
     #[case("cpu 1000 5 0 0 2 0 0", "test_basic_line")]
     fn test_process_valid_proc_stat_line(#[case] proc_stat_line: &str, #[case] test_name: &str) {
-        assert_json_snapshot!(test_name, 
+        assert_json_snapshot!(test_name,
                               CpuMetricCollector::parse_proc_stat_line_cpu(proc_stat_line).unwrap(), 
                               {"[].value.**.timestamp" => "[timestamp]", "[].value.**.value" => rounded_redaction(5)})
     }

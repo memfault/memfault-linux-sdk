@@ -27,11 +27,7 @@ use nom::{
 
 use serde::Serialize;
 
-use crate::metrics::{
-    core_metrics::{METRIC_STORAGE_USED_DISK_PCT_PREFIX, METRIC_STORAGE_USED_DISK_PCT_SUFFIX},
-    system_metrics::SystemMetricFamilyCollector,
-    KeyedMetricReading,
-};
+use crate::metrics::{system_metrics::SystemMetricFamilyCollector, KeyedMetricReading};
 
 pub const DISKSPACE_METRIC_NAMESPACE_LEGACY: &str = "df";
 pub const DISKSPACE_METRIC_NAMESPACE: &str = "disk_space";
@@ -62,14 +58,9 @@ impl DiskSpaceInfoForPath for NixStatvfs {
             .map_err(|e| eyre!("Failed to get statfs info for {}: {}", p.display(), e))?;
 
         Ok(DiskSpaceInfo {
-            // Ignore unnecessary cast for these
-            // as it is needed on 32-bit systems.
-            #[allow(clippy::unnecessary_cast)]
-            block_size: statfs.block_size() as u64,
-            #[allow(clippy::unnecessary_cast)]
-            blocks: statfs.blocks() as u64,
-            #[allow(clippy::unnecessary_cast)]
-            blocks_free: statfs.blocks_free() as u64,
+            block_size: statfs.block_size() as _,
+            blocks: statfs.blocks() as _,
+            blocks_free: statfs.blocks_free() as _,
         })
     }
 }
@@ -207,24 +198,9 @@ where
                 bytes_used,
             );
 
-            let storage_disk_pct_reading = KeyedMetricReading::new_histogram(
-                format!(
-                    "{}{}{}",
-                    METRIC_STORAGE_USED_DISK_PCT_PREFIX,
-                    disk_id,
-                    METRIC_STORAGE_USED_DISK_PCT_SUFFIX
-                )
-                .as_str()
-                .parse()
-                .map_err(|e| eyre!("Couldn't parse metric key for bytes used: {}", e))?,
-                (bytes_used / bytes_total) * 100.0,
-            );
+            let _storage_disk_pct = (bytes_used / bytes_total) * 100.0;
 
-            Ok(vec![
-                bytes_free_reading,
-                bytes_used_reading,
-                storage_disk_pct_reading,
-            ])
+            Ok(vec![bytes_free_reading, bytes_used_reading])
         } else {
             Err(eyre!(
                 "Total bytes for {} is not a positive number ({}) - can't calculate metrics.",

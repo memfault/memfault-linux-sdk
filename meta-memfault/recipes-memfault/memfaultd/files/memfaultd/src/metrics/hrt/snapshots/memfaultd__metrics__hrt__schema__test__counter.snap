@@ -1,0 +1,8 @@
+---
+source: memfaultd/src/metrics/hrt/schema.rs
+expression: json!(datum)
+---
+{
+  "t": 1234,
+  "value": 123.0
+}

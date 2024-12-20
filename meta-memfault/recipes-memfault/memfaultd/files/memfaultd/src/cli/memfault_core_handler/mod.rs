@@ -8,6 +8,7 @@ mod core_elf_note;
 mod core_reader;
 mod core_transformer;
 mod core_writer;
+mod elf_utils;
 mod find_dynamic;
 mod find_elf_headers;
 mod find_stack;
@@ -15,29 +16,34 @@ mod log_wrapper;
 mod memory_range;
 mod procfs;
 mod r_debug;
+mod stack_unwinder;
 #[cfg(test)]
 mod test_utils;
 
+use self::arch::{coredump_thread_filter_supported, stacktrace_supported};
+use self::core_reader::CoreReader;
 use self::log_wrapper::CoreHandlerLogWrapper;
+use self::log_wrapper::CAPTURE_LOG_CHANNEL_SIZE;
 use self::procfs::{proc_mem_stream, read_proc_cmdline, ProcMapsImpl};
-use self::{arch::coredump_thread_filter_supported, log_wrapper::CAPTURE_LOG_CHANNEL_SIZE};
 use self::{core_elf_memfault_note::CoredumpMetadata, core_transformer::CoreTransformerOptions};
 use self::{core_reader::CoreReaderImpl, core_transformer::CoreTransformerLogFetcher};
 use self::{core_writer::CoreWriterImpl, log_wrapper::CAPTURE_LOG_MAX_LEVEL};
-use crate::cli;
-use crate::config::{Config, CoredumpCompression};
+use crate::config::{Config, CoredumpCaptureStrategy, CoredumpCompression};
 use crate::mar::manifest::{CompressionAlgorithm, Metadata};
 use crate::mar::mar_entry_builder::MarEntryBuilder;
 use crate::network::NetworkConfig;
 use crate::util::disk_size::get_disk_space;
 use crate::util::io::{ForwardOnlySeeker, StreamPositionTracker};
 use crate::util::persistent_rate_limiter::PersistentRateLimiter;
+use crate::{cli, util::fs::DEFAULT_GZIP_COMPRESSION_LEVEL};
 use argh::FromArgs;
+use core_elf_note::iterate_elf_notes;
 use eyre::{eyre, Result, WrapErr};
 use flate2::write::GzEncoder;
 use kernlog::KernelLog;
 use log::{debug, error, info, warn, LevelFilter, Log};
 use prctl::set_dumpable;
+use stack_unwinder::{EhFrameFinderImpl, UnwindHandler};
 use std::io::BufWriter;
 use std::path::Path;
 use std::thread::scope;
@@ -86,6 +92,18 @@ struct MemfaultCoreHandlerArgs {
     #[argh(positional)]
     comm: String,
 
+    /// thread ID of the crashing thread.
+    ///
+    /// Populated by the %I in the core_pattern.
+    #[argh(positional)]
+    tid: i32,
+
+    /// signal number that caused the crash
+    ///
+    /// Populated by the %s in the core_pattern
+    #[argh(positional)]
+    signal: i32,
+
     /// verbose output
     #[argh(switch, short = 'V')]
     verbose: bool,
@@ -97,7 +115,7 @@ pub fn main() -> Result<()> {
 
     let args: MemfaultCoreHandlerArgs = argh::from_env();
 
-    let (capture_logs_tx, capture_logs_rx) = sync_channel(CAPTURE_LOG_CHANNEL_SIZE);
+    let (core_handler_logs_tx, core_handler_logs_rx) = sync_channel(CAPTURE_LOG_CHANNEL_SIZE);
     let log_level = if args.verbose {
         LevelFilter::Trace
     } else {
@@ -105,7 +123,7 @@ pub fn main() -> Result<()> {
     };
     // When the kernel executes a core dump handler, the stdout/stderr go nowhere.
     // Let's log to the kernel log to aid debugging:
-    init_kernel_logger(log_level, capture_logs_tx)?;
+    init_kernel_logger(log_level, core_handler_logs_tx)?;
 
     if let Err(e) = dumpable_result {
         warn!("Failed to set dumpable: {}", e);
@@ -121,7 +139,7 @@ pub fn main() -> Result<()> {
     }
 
     let (app_logs_tx, app_logs_rx) = sync_channel(1);
-    let log_fetcher = CoreTransformerLogFetcher::new(capture_logs_rx, app_logs_rx);
+    let log_fetcher = CoreTransformerLogFetcher::new(core_handler_logs_rx, app_logs_rx);
 
     // Asynchronously notify memfaultd that a crash occurred and fetch any crash logs.
     scope(|s| {
@@ -150,7 +168,7 @@ pub fn main() -> Result<()> {
                 }
             }
         });
-        process_corefile(&config, args.pid, log_fetcher)
+        process_corefile(&config, args.pid, log_fetcher, args.tid, args.signal)
             .wrap_err(format!("Error processing coredump for PID {}", args.pid))
     })
 }
@@ -159,6 +177,8 @@ pub fn process_corefile(
     config: &Config,
     pid: i32,
     log_fetcher: CoreTransformerLogFetcher,
+    tid: i32,
+    signal: i32,
 ) -> Result<()> {
     let rate_limiter = if !config.config_file.enable_dev_mode {
         config.coredump_rate_limiter_file_path();
@@ -192,13 +212,10 @@ pub fn process_corefile(
     let mar_builder = MarEntryBuilder::new(&mar_staging_path)?;
     let compression = config.config_file.coredump.compression;
     let capture_strategy = config.config_file.coredump.capture_strategy;
-    let output_file_name = generate_tmp_file_name(compression);
-    let output_file_path = mar_builder.make_attachment_path_in_entry_dir(&output_file_name);
 
     let cmd_line_file_name = format!("/proc/{}/cmdline", pid);
     let mut cmd_line_file = File::open(cmd_line_file_name)?;
     let cmd_line = read_proc_cmdline(&mut cmd_line_file)?;
-    let metadata = CoredumpMetadata::new(config, cmd_line);
     let thread_filter_supported = coredump_thread_filter_supported();
     let transformer_options = CoreTransformerOptions {
         max_size,
@@ -206,51 +223,114 @@ pub fn process_corefile(
         thread_filter_supported,
     };
 
-    let output_file = BufWriter::new(File::create(&output_file_path)?);
-    let output_stream: Box<dyn Write> = match compression {
-        CoredumpCompression::Gzip => {
-            Box::new(GzEncoder::new(output_file, flate2::Compression::default()))
-        }
-        CoredumpCompression::None => Box::new(output_file),
-    };
-    let output_stream = StreamPositionTracker::new(output_stream);
-
     let input_stream = ForwardOnlySeeker::new(BufReader::new(std::io::stdin()));
     let proc_maps = ProcMapsImpl::new(pid);
-    let core_reader = CoreReaderImpl::new(input_stream)?;
-    let core_writer = CoreWriterImpl::new(
-        core_reader.elf_header(),
-        output_stream,
-        proc_mem_stream(pid)?,
-    );
-    let mut core_transformer = core_transformer::CoreTransformer::new(
-        core_reader,
-        core_writer,
-        proc_mem_stream(pid)?,
-        transformer_options,
-        metadata,
-        proc_maps,
-        log_fetcher,
-    )?;
+    let mut core_reader = CoreReaderImpl::new(input_stream)?;
+    let proc_mem = proc_mem_stream(pid)?;
 
-    match core_transformer.run_transformer() {
-        Ok(()) => {
-            info!("Successfully captured coredump");
-            let network_config = NetworkConfig::from(config);
-            let mar_entry = mar_builder
-                .set_metadata(Metadata::new_coredump(output_file_name, compression.into()))
-                .add_attachment(output_file_path)?
-                .save(&network_config)?;
+    match capture_strategy {
+        CoredumpCaptureStrategy::Threads { .. } | CoredumpCaptureStrategy::KernelSelection => {
+            let metadata = CoredumpMetadata::new(config, cmd_line);
+            let output_file_name = generate_tmp_file_name(compression);
+            let output_file_path = mar_builder.make_attachment_path_in_entry_dir(&output_file_name);
+            let output_file = BufWriter::new(File::create(&output_file_path)?);
+            let output_stream: Box<dyn Write> = match compression {
+                CoredumpCompression::Gzip => {
+                    Box::new(GzEncoder::new(output_file, DEFAULT_GZIP_COMPRESSION_LEVEL))
+                }
+                CoredumpCompression::None => Box::new(output_file),
+            };
+            let output_stream = StreamPositionTracker::new(output_stream);
+            let core_writer = CoreWriterImpl::new(
+                core_reader.elf_header(),
+                output_stream,
+                proc_mem_stream(pid)?,
+            );
+            let mut core_transformer = core_transformer::CoreTransformer::new(
+                core_reader,
+                core_writer,
+                proc_mem,
+                transformer_options,
+                metadata,
+                proc_maps,
+                log_fetcher,
+            )?;
 
-            debug!("Coredump MAR entry generated: {}", mar_entry.path.display());
+            match core_transformer.run_transformer() {
+                Ok(()) => {
+                    info!("Successfully captured coredump");
+                    let network_config = NetworkConfig::from(config);
+                    let mar_entry = mar_builder
+                        .set_metadata(Metadata::new_coredump(output_file_name, compression.into()))
+                        .add_attachment(output_file_path)?
+                        .save(&network_config)?;
 
-            if let Some(rate_limiter) = rate_limiter {
-                rate_limiter.save()?;
+                    debug!("Coredump MAR entry generated: {}", mar_entry.path.display());
+
+                    if let Some(rate_limiter) = rate_limiter {
+                        rate_limiter.save()?;
+                    }
+
+                    Ok(())
+                }
+                Err(e) => Err(eyre!("Failed to capture coredump: {}", e)),
+            }
+        }
+        CoredumpCaptureStrategy::Stacktrace => {
+            if !stacktrace_supported() {
+                return Err(eyre!(
+                    "Stacktrace capture not supported on this architecture"
+                ));
             }
 
-            Ok(())
+            let output_file_name = "stacktrace.json.gz";
+            let output_file_path = mar_builder.make_attachment_path_in_entry_dir(output_file_name);
+            let output_file = BufWriter::new(File::create(&output_file_path)?);
+            let output_stream = GzEncoder::new(output_file, DEFAULT_GZIP_COMPRESSION_LEVEL);
+
+            let program_headers = core_reader.read_program_headers()?;
+            let all_notes = core_reader.read_all_note_segments(&program_headers);
+            let parsed_notes = all_notes
+                .iter()
+                .flat_map(|(_, data)| iterate_elf_notes(data))
+                .collect::<Vec<_>>();
+
+            let mut unwind_handler = UnwindHandler::new(proc_mem, output_stream);
+            let eh_frame_finder = EhFrameFinderImpl::new(proc_maps)?;
+
+            match unwind_handler.build_stacktrace(
+                eh_frame_finder,
+                &parsed_notes,
+                cmd_line,
+                log_fetcher.core_handler_logs_rx,
+                tid,
+                signal,
+            ) {
+                Ok(()) => {
+                    info!("Successfully captured stacktrace");
+                    let network_config = NetworkConfig::from(config);
+                    let mar_entry = mar_builder
+                        .set_metadata(Metadata::new_stacktrace(
+                            output_file_name.to_string(),
+                            Some(CompressionAlgorithm::Gzip),
+                        ))
+                        .add_attachment(output_file_path)?
+                        .save(&network_config)?;
+
+                    debug!(
+                        "Stacktrace MAR entry generated: {}",
+                        mar_entry.path.display()
+                    );
+
+                    if let Some(rate_limiter) = rate_limiter {
+                        rate_limiter.save()?;
+                    }
+
+                    Ok(())
+                }
+                Err(e) => Err(eyre!("Failed to build stacktrace: {}", e)),
+            }
         }
-        Err(e) => Err(eyre!("Failed to capture coredump: {}", e)),
     }
 }
 
@@ -285,7 +365,7 @@ impl From<CoredumpCompression> for CompressionAlgorithm {
     }
 }
 
-fn init_kernel_logger(level: LevelFilter, capture_logs_tx: SyncSender<String>) -> Result<()> {
+fn init_kernel_logger(level: LevelFilter, core_handler_logs_tx: SyncSender<String>) -> Result<()> {
     // kernlog::init() reads from the KERNLOG_LEVEL to set the level. There's no public interface
     // to set it otherwise, so: if this environment variable is not set, set it according to the
     // --verbose flag:
@@ -301,7 +381,7 @@ fn init_kernel_logger(level: LevelFilter, capture_logs_tx: SyncSender<String>) -
 
     let logger = Box::new(CoreHandlerLogWrapper::new(
         logger,
-        capture_logs_tx,
+        core_handler_logs_tx,
         CAPTURE_LOG_MAX_LEVEL,
     ));
     log::set_boxed_logger(logger)

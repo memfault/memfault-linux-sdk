@@ -2,11 +2,14 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 use eyre::{eyre, Result};
-use log::{debug, error};
+use log::{debug, error, warn};
 use ssf::{Handler, Service};
+use std::mem::replace;
+use std::num::NonZeroU32;
 use std::{
     collections::{hash_map::Entry, BTreeMap, HashMap},
     path::Path,
+    str::FromStr,
     sync::{Arc, Mutex},
 };
 
@@ -15,6 +18,7 @@ use crate::{
     mar::{MarEntryBuilder, Metadata},
     metrics::{
         core_metrics::{CoreMetricKeys, METRIC_OPERATIONAL_CRASHES},
+        hrt::HrtReport,
         metric_reading::KeyedMetricReading,
         metric_report::{CapturedMetrics, MetricsSet},
         MetricReport, MetricReportType, MetricStringKey, MetricValue, SessionEventMessage,
@@ -23,34 +27,47 @@ use crate::{
     network::NetworkConfig,
 };
 
+use super::hrt::HRT_DEFAULT_MAX_SAMPLES_PER_MIN;
+use super::{hrt::write_report_to_disk, DumpHrtMessage, DumpMetricReportMessage, ReportsToDump};
+
 pub struct MetricReportManager {
     heartbeat: MetricReport,
     daily_heartbeat: MetricReport,
+    hrt: Option<HrtReport>,
     sessions: HashMap<SessionName, MetricReport>,
     session_configs: Vec<SessionConfig>,
     core_metrics: CoreMetricKeys,
+    hrt_max_samples_per_min: NonZeroU32,
 }
 
 impl MetricReportManager {
     /// Creates a MetricReportManager with no sessions
     /// configured
-    pub fn new() -> Self {
+    pub fn new(hrt_enabled: bool, hrt_max_samples_per_min: NonZeroU32) -> Self {
         Self {
             heartbeat: MetricReport::new_heartbeat(),
             daily_heartbeat: MetricReport::new_daily_heartbeat(),
+            hrt: hrt_enabled.then(|| HrtReport::new(hrt_max_samples_per_min)),
             sessions: HashMap::new(),
             session_configs: vec![],
             core_metrics: CoreMetricKeys::get_session_core_metrics(),
+            hrt_max_samples_per_min,
         }
     }
 
-    pub fn new_with_session_configs(session_configs: &[SessionConfig]) -> Self {
+    pub fn new_with_session_configs(
+        hrt_enabled: bool,
+        hrt_max_samples_per_min: NonZeroU32,
+        session_configs: &[SessionConfig],
+    ) -> Self {
         Self {
             heartbeat: MetricReport::new_heartbeat(),
             daily_heartbeat: MetricReport::new_daily_heartbeat(),
+            hrt: hrt_enabled.then(|| HrtReport::new(hrt_max_samples_per_min)),
             sessions: HashMap::new(),
             session_configs: session_configs.to_vec(),
             core_metrics: CoreMetricKeys::get_session_core_metrics(),
+            hrt_max_samples_per_min,
         }
     }
 
@@ -108,20 +125,29 @@ impl MetricReportManager {
     /// Adds a metric reading to all ongoing metric reports
     /// that capture that metric
     pub fn add_metric(&mut self, m: KeyedMetricReading) -> Result<()> {
+        if let Some(hrt_report) = &mut self.hrt {
+            hrt_report.add_metric(&m);
+        }
         self.report_iter()
             .try_for_each(|report| report.add_metric(m.clone()))
     }
 
     /// Increment a counter metric by 1
     pub fn increment_counter(&mut self, name: &str) -> Result<()> {
-        self.report_iter()
-            .try_for_each(|report| report.increment_counter(name))
+        self.add_metric(KeyedMetricReading::new_counter(
+            MetricStringKey::from_str(name)
+                .map_err(|e| eyre!("Couldn't construct metric key: {}", e))?,
+            1.0,
+        ))
     }
 
     /// Increment a counter by a specified amount
     pub fn add_to_counter(&mut self, name: &str, value: f64) -> Result<()> {
-        self.report_iter()
-            .try_for_each(|report| report.add_to_counter(name, value))
+        self.add_metric(KeyedMetricReading::new_counter(
+            MetricStringKey::from_str(name)
+                .map_err(|e| eyre!("Couldn't construct metric key: {}", e))?,
+            value,
+        ))
     }
 
     /// Adds a metric reading to a specific metric report
@@ -258,7 +284,11 @@ impl MetricReportManager {
 
 impl Default for MetricReportManager {
     fn default() -> Self {
-        Self::new()
+        Self::new(
+            true,
+            NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN)
+                .expect("Default HRT rate limit should be nonzero"),
+        )
     }
 }
 
@@ -271,6 +301,37 @@ impl Service for MetricReportManager {
 impl Handler<KeyedMetricReading> for MetricReportManager {
     fn deliver(&mut self, m: KeyedMetricReading) -> Result<()> {
         self.add_metric(m)
+    }
+}
+
+impl Handler<DumpMetricReportMessage> for MetricReportManager {
+    fn deliver(&mut self, m: DumpMetricReportMessage) -> Result<()> {
+        let mar_staging_area = m.mar_staging_area();
+        let network_config = m.network_config();
+
+        match m.reports_to_dump() {
+            ReportsToDump::Report(report_type) => {
+                if let Err(e) =
+                    self.dump_report_to_mar_entry(mar_staging_area, network_config, report_type)
+                {
+                    warn!("Failed to dump {:?} metric report: {}", report_type, e)
+                }
+            }
+            ReportsToDump::All => {
+                let mar_builders = self.prepare_all_metric_reports(m.mar_staging_area());
+                for mar_builder in mar_builders {
+                    match mar_builder.save(network_config) {
+                        Ok(mar_entry) => debug!(
+                            "Generated MAR entry from metrics: {}",
+                            mar_entry.path.display()
+                        ),
+                        Err(e) => warn!("Error building MAR entry: {}", e),
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -302,6 +363,17 @@ impl Handler<SessionEventMessage> for MetricReportManager {
     }
 }
 
+impl Handler<DumpHrtMessage> for MetricReportManager {
+    fn deliver(&mut self, m: DumpHrtMessage) -> <DumpHrtMessage as ssf::Message>::Reply {
+        if let Some(hrt) = &mut self.hrt {
+            // Replace the HRT report with a new one and write it to disk
+            let hrt_report = replace(hrt, HrtReport::new(self.hrt_max_samples_per_min));
+            write_report_to_disk(hrt_report, m.mar_staging_area(), m.network_config())?;
+        }
+        Ok(())
+    }
+}
+
 /// A trait to make it easier to verify (in unit tests) all the code that pushes metrics.
 ///
 /// The implementation should implement some logic to coalesce multiple metrics
@@ -315,7 +387,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::test_utils::in_histograms;
+    use crate::{metrics::hrt::HighResTelemetryV1, test_utils::in_histograms};
     use insta::{assert_json_snapshot, rounded_redaction, with_settings};
     use rstest::rstest;
     use ssf::ServiceMock;
@@ -323,7 +395,7 @@ mod tests {
 
     impl TakeMetrics for ServiceMock<Vec<KeyedMetricReading>> {
         fn take_metrics(&mut self) -> Result<BTreeMap<MetricStringKey, MetricValue>> {
-            let mut metric_service = MetricReportManager::new();
+            let mut metric_service = MetricReportManager::default();
             for m in self.take_messages().into_iter().flatten() {
                 metric_service.deliver(m)?;
             }
@@ -344,7 +416,7 @@ mod tests {
         #[case] metrics: impl Iterator<Item = KeyedMetricReading>,
         #[case] test_name: &str,
     ) {
-        let mut metric_report_manager = MetricReportManager::new();
+        let mut metric_report_manager = MetricReportManager::default();
         for m in metrics {
             metric_report_manager
                 .add_metric(m)
@@ -356,12 +428,49 @@ mod tests {
             .heartbeat
             .prepare_metric_report(tempdir.path())
             .unwrap();
-        assert_json_snapshot!(test_name, builder.unwrap().get_metadata(), {".metadata.duration_ms" => 0});
+        assert_json_snapshot!(test_name, builder.unwrap().get_metadata(), {".metadata.duration_ms" => 0, ".metadata.boottime_duration_ms" => 0});
     }
 
     #[rstest]
+    #[case(in_histograms(vec![("foo", 1.0), ("bar",  2.0), ("baz", 3.0)]))]
+    fn test_no_hrt_when_disabled(#[case] metrics: impl Iterator<Item = KeyedMetricReading>) {
+        let mut metric_report_manager =
+            MetricReportManager::new(false, NonZeroU32::new(1).unwrap());
+        for m in metrics {
+            metric_report_manager
+                .add_metric(m)
+                .expect("Failed to add metric reading");
+        }
+
+        assert!(metric_report_manager.hrt.is_none());
+    }
+
+    #[rstest]
+    #[case(in_histograms(vec![("foo", 1.0), ("bar",  2.0), ("baz", 3.0)]))]
+    fn test_hrt_when_enabled(#[case] metrics: impl Iterator<Item = KeyedMetricReading>) {
+        let mut metric_report_manager = MetricReportManager::new(
+            true,
+            NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN)
+                .expect("Default HRT rate limit should be nonzero"),
+        );
+        for m in metrics {
+            metric_report_manager
+                .add_metric(m)
+                .expect("Failed to add metric reading");
+        }
+
+        assert!(metric_report_manager.hrt.is_some());
+        let mut hrt_report_serialized =
+            HighResTelemetryV1::try_from(metric_report_manager.hrt.unwrap()).unwrap();
+        hrt_report_serialized.sort_rollups();
+        with_settings!({sort_maps => true}, {
+            assert_json_snapshot!(hrt_report_serialized,
+                                  {".producer.version" => "[version]", ".start_time" => "[start_time]", ".rollups[].data[].t" => "[timestamp]", ".duration_ms" => "[duration]", ".boottime_duration_ms" => "[duration]"});
+        });
+    }
+    #[rstest]
     fn test_unconfigured_session_name_fails() {
-        let mut metric_report_manager = MetricReportManager::new();
+        let mut metric_report_manager = MetricReportManager::default();
         assert!(metric_report_manager
             .start_session(SessionName::from_str("test-session").unwrap())
             .is_err())
@@ -397,8 +506,12 @@ mod tests {
             },
         ];
 
-        let mut metric_report_manager =
-            MetricReportManager::new_with_session_configs(&session_configs);
+        let mut metric_report_manager = MetricReportManager::new_with_session_configs(
+            true,
+            NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN)
+                .expect("Zero value passed to non-zero constructor"),
+            &session_configs,
+        );
 
         assert!(metric_report_manager.start_session(session_a_name).is_ok());
         assert!(metric_report_manager.start_session(session_b_name).is_ok());
@@ -448,8 +561,12 @@ mod tests {
             ]),
         }];
 
-        let mut metric_report_manager =
-            MetricReportManager::new_with_session_configs(&session_configs);
+        let mut metric_report_manager = MetricReportManager::new_with_session_configs(
+            true,
+            NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN)
+                .expect("Zero value passed to non-zero constructor"),
+            &session_configs,
+        );
 
         assert!(metric_report_manager
             .start_session(session_name.clone())
@@ -485,8 +602,12 @@ mod tests {
             ]),
         }];
 
-        let mut metric_report_manager =
-            MetricReportManager::new_with_session_configs(&session_configs);
+        let mut metric_report_manager = MetricReportManager::new_with_session_configs(
+            true,
+            NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN)
+                .expect("Zero value passed to non-zero constructor"),
+            &session_configs,
+        );
 
         let metrics_a = in_histograms(vec![("foo", 1.0), ("bar", 2.0)]);
         assert!(metric_report_manager
@@ -519,7 +640,7 @@ mod tests {
             .prepare_metric_report(tempdir.path())
             .unwrap();
 
-        assert_json_snapshot!(builder.unwrap().get_metadata(), {".metadata.duration_ms" => 0});
+        assert_json_snapshot!(builder.unwrap().get_metadata(), {".metadata.duration_ms" => 0, ".metadata.boottime_duration_ms" => 0});
     }
 
     #[rstest]
@@ -533,8 +654,12 @@ mod tests {
             ]),
         }];
 
-        let mut metric_report_manager =
-            MetricReportManager::new_with_session_configs(&session_configs);
+        let mut metric_report_manager = MetricReportManager::new_with_session_configs(
+            true,
+            NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN)
+                .expect("Zero value passed to non-zero constructor"),
+            &session_configs,
+        );
 
         let metrics = in_histograms(vec![("foo", 5.0), ("bar", 3.5)]);
         assert!(metric_report_manager.start_session(session_name).is_ok());
@@ -565,6 +690,6 @@ mod tests {
         tempdir: &TempDir,
     ) {
         let builder = metric_report.prepare_metric_report(tempdir.path()).unwrap();
-        assert_json_snapshot!(snapshot_name, builder.unwrap().get_metadata(), {".metadata.duration_ms" => 0});
+        assert_json_snapshot!(snapshot_name, builder.unwrap().get_metadata(), {".metadata.duration_ms" => 0, ".metadata.boottime_duration_ms" => 0});
     }
 }

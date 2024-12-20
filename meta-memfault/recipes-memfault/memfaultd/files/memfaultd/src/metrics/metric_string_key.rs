@@ -1,11 +1,6 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use nom::{
-    combinator::map_res,
-    error::ParseError,
-    {AsChar, IResult, InputTakeAtPosition},
-};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt::{Debug, Formatter};
 use std::str::FromStr;
@@ -27,21 +22,6 @@ impl MetricStringKey {
         Self {
             inner: (self.inner.clone() + suffix),
         }
-    }
-
-    pub fn metric_string_key_parser<T, E: ParseError<T>>(input: T) -> IResult<T, T, E>
-    where
-        T: InputTakeAtPosition,
-        <T as InputTakeAtPosition>::Item: AsChar,
-    {
-        input.split_at_position_complete(|item| {
-            let c = item.as_char();
-            !(c.is_alphanumeric() || c == '_' || c == '/' || c == '.' || c == '-')
-        })
-    }
-
-    pub fn parse(input: &str) -> IResult<&str, Self> {
-        map_res(Self::metric_string_key_parser, Self::from_str)(input)
     }
 }
 

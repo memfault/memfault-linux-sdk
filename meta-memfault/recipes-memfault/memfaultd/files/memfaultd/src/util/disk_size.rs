@@ -89,8 +89,6 @@ impl From<Metadata> for DiskSize {
     }
 }
 
-// We need to cast to u64 here on some platforms.
-#[allow(clippy::unnecessary_cast)]
 pub fn get_disk_space(path: &Path) -> Result<DiskSize> {
     let mut stat: libc::statvfs = unsafe { mem::zeroed() };
     let cpath = CString::new(path.as_os_str().as_bytes()).map_err(|_| eyre!("Invalid path"))?;
@@ -98,13 +96,16 @@ pub fn get_disk_space(path: &Path) -> Result<DiskSize> {
     if unsafe { libc::statvfs(cpath.as_ptr() as *const _, &mut stat) } != 0 {
         Err(eyre!("Unable to call statvfs"))
     } else {
+        let f_frsize: u64 = stat.f_frsize as _;
+        let f_blocks: u64 = stat.f_blocks as _;
+        let bytes = f_frsize * f_blocks;
         Ok(DiskSize {
             // Note that we use f_bavail/f_favail instead of f_bfree/f_bavail.
             // f_bfree is the number of free blocks available to the
             // superuser, but we want to stop before getting to that
             // point. [bf]avail is what is available to normal users.
-            bytes: stat.f_frsize as u64 * stat.f_bavail as u64,
-            inodes: stat.f_favail as u64,
+            bytes,
+            inodes: stat.f_favail as _,
         })
     }
 }

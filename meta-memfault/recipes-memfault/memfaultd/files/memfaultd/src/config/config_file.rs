@@ -81,9 +81,12 @@ pub enum CoredumpCaptureStrategy {
     /// Keep in the coredump what the kernel selected to be included in the coredump.
     /// See https://man7.org/linux/man-pages/man5/core.5.html for more details.
     KernelSelection,
+    #[serde(rename = "stacktrace")]
+    /// Capture a stack trace only without locals or registers
+    Stacktrace,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub struct CoredumpConfig {
     pub compression: CoredumpCompression,
     #[serde(rename = "coredump_max_size_kib", with = "kib_to_usize")]
@@ -200,6 +203,13 @@ pub struct MetricReportConfig {
     pub enable_daily_heartbeats: bool,
     pub system_metric_collection: SystemMetricConfig,
     pub statsd_server: Option<StatsDServerConfig>,
+    pub high_resolution_telemetry: HrtConfig,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct HrtConfig {
+    pub enable: bool,
+    pub max_samples_per_minute: NonZeroU32,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -229,6 +239,7 @@ pub struct SessionConfig {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct StatsDServerConfig {
     pub bind_address: SocketAddr,
+    pub legacy_gauge_aggregation: Option<bool>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

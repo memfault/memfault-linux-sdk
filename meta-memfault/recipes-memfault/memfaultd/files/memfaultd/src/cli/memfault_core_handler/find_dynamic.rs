@@ -12,12 +12,13 @@ use libc::PATH_MAX;
 use log::{debug, warn};
 use scroll::Pread;
 
-use crate::cli::memfault_core_handler::core_reader::read_program_headers;
 use crate::cli::memfault_core_handler::elf;
 use crate::cli::memfault_core_handler::memory_range::MemoryRange;
 use crate::cli::memfault_core_handler::procfs::read_proc_mem;
 use crate::cli::memfault_core_handler::r_debug::{LinkMap, RDebug, RDebugIter};
 use crate::cli::memfault_core_handler::ElfPtrSize;
+
+use super::elf_utils::read_program_headers;
 
 /// This function attempts to find the ranges of memory in which the dynamic linker has stored the
 /// information about the loaded shared objects. This is needed for our backend processing and
@@ -198,9 +199,7 @@ fn read_main_exec_program_headers<P: Read + Seek>(
     phdr: &ProgramHeader,
     main_reloc_addr: ElfPtrSize,
 ) -> Result<Vec<ProgramHeader>> {
-    // Ignore unnecessary cast here as it is needed on 32-bit systems.
-    #[allow(clippy::unnecessary_cast)]
-    proc_mem_stream.seek(SeekFrom::Start((main_reloc_addr + phdr.p_vaddr) as u64))?;
+    proc_mem_stream.seek(SeekFrom::Start((main_reloc_addr + phdr.p_vaddr) as _))?;
     let count = phdr.p_memsz / (SIZEOF_PHDR as ElfPtrSize);
     read_program_headers(proc_mem_stream, count as usize)
 }
@@ -218,9 +217,7 @@ fn read_main_executable_phdr<P: Read + Seek>(
     phdr_vaddr: ElfPtrSize,
     phdr_num: ElfPtrSize,
 ) -> Result<ProgramHeader> {
-    // Ignore unnecessary cast here as it is needed on 32-bit systems.
-    #[allow(clippy::unnecessary_cast)]
-    proc_mem_stream.seek(SeekFrom::Start(phdr_vaddr as u64))?;
+    proc_mem_stream.seek(SeekFrom::Start(phdr_vaddr as _))?;
     read_program_headers(proc_mem_stream, phdr_num as usize)?
         .into_iter()
         .find(|ph| ph.p_type == PT_PHDR)

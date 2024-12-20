@@ -135,6 +135,13 @@ pub enum Metadata {
         metrics: HashMap<MetricStringKey, MetricValue>,
         #[serde(rename = "duration_ms", with = "milliseconds_to_duration")]
         duration: Duration,
+        #[serde(
+            default,
+            rename = "boottime_duration_ms",
+            skip_serializing_if = "Option::is_none",
+            with = "optional_milliseconds_to_duration"
+        )]
+        boottime_duration: Option<Duration>,
         report_type: MetricReportType,
     },
     #[serde(rename = "linux-memfault-watch-logs")]
@@ -155,6 +162,13 @@ pub enum Metadata {
         mime_types: Vec<String>,
         reason: String,
         recording_file_name: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        compression: Option<CompressionAlgorithm>,
+    },
+    #[serde(rename = "linux-stacktrace")]
+    Stacktrace {
+        stacktrace_file_name: String,
+        compression: Option<CompressionAlgorithm>,
     },
 }
 
@@ -245,11 +259,13 @@ impl Metadata {
     pub fn new_metric_report(
         metrics: HashMap<MetricStringKey, MetricValue>,
         duration: Duration,
+        boottime_duration: Option<Duration>,
         report_type: MetricReportType,
     ) -> Self {
         Self::LinuxMetricReport {
             metrics,
             duration,
+            boottime_duration,
             report_type,
         }
     }
@@ -260,6 +276,7 @@ impl Metadata {
         mime_types: Vec<String>,
         reason: String,
         recording_file_name: String,
+        compression: Option<CompressionAlgorithm>,
     ) -> Self {
         let start_time = start_time.map(|timestamp| CdrTimestamp { timestamp });
 
@@ -269,6 +286,17 @@ impl Metadata {
             mime_types,
             reason,
             recording_file_name,
+            compression,
+        }
+    }
+
+    pub fn new_stacktrace(
+        stacktrace_file_name: String,
+        compression: Option<CompressionAlgorithm>,
+    ) -> Self {
+        Self::Stacktrace {
+            stacktrace_file_name,
+            compression,
         }
     }
 }
@@ -347,6 +375,10 @@ impl Manifest {
                 recording_file_name,
                 ..
             } => vec![recording_file_name.clone()],
+            Metadata::Stacktrace {
+                stacktrace_file_name,
+                ..
+            } => vec![stacktrace_file_name.clone()],
         }
     }
 }
@@ -482,6 +514,7 @@ mod tests {
                     ("n2".parse().unwrap(), MetricValue::Number(42.0)),
                 ]),
                 duration: std::time::Duration::from_secs(42),
+                boottime_duration: Some(Duration::from_secs(42)),
                 report_type: MetricReportType::Heartbeat,
             },
         );

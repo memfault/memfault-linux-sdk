@@ -192,22 +192,21 @@ struct RebootReasonSource {
 }
 
 fn read_reboot_reason_and_clear_file_pstore(config: &Config) -> Option<RebootReason> {
-    let result = if Path::new(PSTORE_DMESG_FILE).exists() {
+    if Path::new(PSTORE_DMESG_FILE).exists() {
+        // Only capture pstore content in the event of a kernel panic
+        let pstore_dir = Path::new(PSTORE_DIR);
+        if config.config_file.reboot.capture_pstore && config.config_file.enable_data_collection {
+            if let Err(e) = capture_pstore_content(pstore_dir, config) {
+                error!("Failed to generate MAR with pstore content: {}", e);
+            }
+        }
+
+        clean_pstore(PSTORE_DIR);
+
         Some(RebootReason::from(RebootReasonCode::KernelPanic))
     } else {
         None
-    };
-
-    // Only capture pstore content on demand
-    if config.config_file.reboot.capture_pstore && config.config_file.enable_data_collection {
-        if let Err(e) = capture_pstore_content(Path::new(PSTORE_DIR), config) {
-            error!("Failed to generate MAR with pstore content: {}", e);
-        }
     }
-    // Always clean pstore
-    clean_pstore(PSTORE_DIR);
-
-    result
 }
 
 fn read_reboot_reason_and_clear_file_internal(config: &Config) -> Option<RebootReason> {
@@ -254,6 +253,7 @@ fn capture_pstore_content(pstore_dir: &Path, config: &Config) -> Result<()> {
             vec!["application/zip".to_owned()],
             "pstore".to_owned(),
             zip_name.clone(),
+            None,
         ),
     );
 

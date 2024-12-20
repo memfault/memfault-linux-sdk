@@ -187,6 +187,7 @@ impl MarCollectorFixture {
         &mut self,
         metrics: HashMap<MetricStringKey, MetricValue>,
         duration: Duration,
+        boottime_duration: Option<Duration>,
         report_type: MetricReportType,
     ) -> PathBuf {
         let path = self.create_empty_entry();
@@ -196,7 +197,7 @@ impl MarCollectorFixture {
         let manifest = Manifest::new(
             &self.config,
             CollectionTime::test_fixture(),
-            Metadata::new_metric_report(metrics, duration, report_type),
+            Metadata::new_metric_report(metrics, duration, boottime_duration, report_type),
         );
         serde_json::to_writer(BufWriter::new(manifest_file), &manifest).unwrap();
 
@@ -236,6 +237,7 @@ impl MarCollectorFixture {
                 vec!["mime".to_string()],
                 "test".to_string(),
                 data_path.to_str().unwrap().to_string(),
+                None,
             ),
         );
         serde_json::to_writer(BufWriter::new(manifest_file), &manifest).unwrap();

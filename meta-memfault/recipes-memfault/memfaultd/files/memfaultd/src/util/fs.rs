@@ -7,7 +7,10 @@ use std::{
 };
 
 use eyre::{Context, Result};
+use flate2::Compression;
 use log::warn;
+
+pub const DEFAULT_GZIP_COMPRESSION_LEVEL: Compression = Compression::new(4);
 
 /// Takes a directory and returns a vector of all files in that directory, sorted
 /// by creation date:

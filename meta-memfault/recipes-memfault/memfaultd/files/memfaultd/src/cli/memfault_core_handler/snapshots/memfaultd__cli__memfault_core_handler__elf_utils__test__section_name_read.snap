@@ -1,0 +1,35 @@
+---
+source: memfaultd/src/cli/memfault_core_handler/elf_utils.rs
+expression: names
+---
+[
+    "",
+    ".bss",
+    ".comment",
+    ".data",
+    ".dynamic",
+    ".dynstr",
+    ".dynsym",
+    ".eh_frame",
+    ".eh_frame_hdr",
+    ".fini",
+    ".fini_array",
+    ".gnu.hash",
+    ".gnu.version",
+    ".gnu.version_r",
+    ".got",
+    ".init",
+    ".init_array",
+    ".interp",
+    ".note.ABI-tag",
+    ".note.gnu.build-id",
+    ".note.gnu.property",
+    ".plt",
+    ".plt.got",
+    ".plt.sec",
+    ".rela.dyn",
+    ".rela.plt",
+    ".rodata",
+    ".shstrtab",
+    ".text",
+]
