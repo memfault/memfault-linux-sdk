@@ -95,11 +95,16 @@ where
     /// resulting elf file will be written to `output_stream`.
     pub fn run_transformer(&mut self) -> Result<()> {
         let program_headers = self.core_reader.read_program_headers()?;
-        let all_notes = self.read_all_note_segments(&program_headers);
+
+        self.build_elf_coredump(&program_headers)
+    }
+
+    fn build_elf_coredump(&mut self, program_headers: &[ProgramHeader]) -> Result<()> {
+        let all_notes = self.core_reader.read_all_note_segments(program_headers);
 
         let segments_to_capture = match self.options.capture_strategy {
             CoredumpCaptureStrategy::KernelSelection => {
-                self.kernel_selection_segments(&program_headers)
+                self.kernel_selection_segments(program_headers)
             }
             CoredumpCaptureStrategy::Threads { max_thread_size } => {
                 // Fallback to kernel selection if thread filtering is not supported.
@@ -111,8 +116,12 @@ where
                 } else {
                     // Update metadata so capture strategy is reflected properly in the memfault note.
                     self.metadata.capture_strategy = CoredumpCaptureStrategy::KernelSelection;
-                    self.kernel_selection_segments(&program_headers)
+                    self.kernel_selection_segments(program_headers)
                 }
+            }
+            CoredumpCaptureStrategy::Stacktrace => {
+                // The CoreTransformer is not responsible for stack unwinding.
+                unreachable!()
             }
         };
 
@@ -131,23 +140,6 @@ where
         self.core_writer.write()?;
 
         Ok(())
-    }
-
-    /// Add note segments from the core elf to the output elf, verbatim.
-    fn read_all_note_segments<'a>(
-        &mut self,
-        program_headers: &'a [ProgramHeader],
-    ) -> Vec<(&'a ProgramHeader, Vec<u8>)> {
-        program_headers
-            .iter()
-            .filter_map(|ph| match ph.p_type {
-                PT_NOTE => match self.core_reader.read_segment_data(ph) {
-                    Ok(data) => Some((ph, data)),
-                    _ => None,
-                },
-                _ => None,
-            })
-            .collect::<Vec<_>>()
     }
 
     /// All load segments from the original/input core elf as provided by the kernel, verbatim.
@@ -244,10 +236,8 @@ where
     }
 
     fn elf_metadata_ranges_for_mapped_file(&mut self, vaddr_base: u64) -> Result<Vec<MemoryRange>> {
-        // Ignore unnecessary cast here as it is needed on 32-bit systems.
-        #[allow(clippy::unnecessary_cast)]
         self.proc_mem_stream
-            .seek(SeekFrom::Start(vaddr_base as u64))?;
+            .seek(SeekFrom::Start(vaddr_base as _))?;
         find_elf_headers_and_build_id_note_ranges(
             vaddr_base as ElfPtrSize,
             &mut self.proc_mem_stream,
@@ -317,7 +307,7 @@ where
 /// capture logs.
 #[derive(Debug)]
 pub struct CoreTransformerLogFetcher {
-    capture_logs_rx: Receiver<String>,
+    pub core_handler_logs_rx: Receiver<String>,
     app_logs_rx: Receiver<Option<Vec<String>>>,
 }
 
@@ -327,18 +317,18 @@ impl CoreTransformerLogFetcher {
     const APPLICATION_LOGS_TIMEOUT: Duration = Duration::from_millis(500);
 
     pub fn new(
-        capture_logs_rx: Receiver<String>,
+        core_handler_logs_rx: Receiver<String>,
         app_logs_rx: Receiver<Option<Vec<String>>>,
     ) -> Self {
         Self {
-            capture_logs_rx,
+            core_handler_logs_rx,
             app_logs_rx,
         }
     }
 
     /// Fetches all logs that were captured in the coredump handler during execution.
     pub fn get_capture_logs(&self) -> Vec<String> {
-        self.capture_logs_rx.try_iter().collect()
+        self.core_handler_logs_rx.try_iter().collect()
     }
 
     /// Fetches all application logs that were in the circular buffer at time of crash.
@@ -391,21 +381,34 @@ mod test {
     use super::*;
 
     #[rstest]
-    #[case("kernel_selection", CoredumpCaptureStrategy::KernelSelection, true)]
-    #[case("threads_32k", CoredumpCaptureStrategy::Threads { max_thread_size: 32 * 1024 }, true)]
+    #[case(
+        "kernel_selection",
+        CoredumpCaptureStrategy::KernelSelection,
+        true,
+        "elf-core-runtime-ld-paths.elf"
+    )]
+    #[case(
+        "threads_32k",
+        CoredumpCaptureStrategy::Threads { max_thread_size: 32 * 1024 },
+        true,
+        "elf-core-runtime-ld-paths.elf",
+    )]
     #[case(
         "threads_32k_no_filter_support",
         CoredumpCaptureStrategy::Threads { max_thread_size: 32 * 1024 },
-        false
+        false,
+        "elf-core-runtime-ld-paths.elf",
     )]
     fn test_transform(
         #[case] test_case_name: &str,
         #[case] capture_strategy: CoredumpCaptureStrategy,
         #[case] thread_filter_supported: bool,
+        #[case] core_path: &str,
         _setup_logger: (),
     ) {
         let input_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("src/cli/memfault_core_handler/fixtures/elf-core-runtime-ld-paths.elf");
+            .join("src/cli/memfault_core_handler/fixtures/")
+            .join(core_path);
         let input_stream = File::open(&input_path).unwrap();
         let proc_mem_stream = FakeProcMem::new_from_path(&input_path).unwrap();
         let proc_maps = FakeProcMaps::new_from_path(&input_path).unwrap();
@@ -426,7 +429,7 @@ mod test {
             app_logs: None,
         };
 
-        let (_capture_logs_tx, capture_logs_rx) = sync_channel(32);
+        let (_core_handler_logs_tx, core_handler_logs_rx) = sync_channel(32);
         let (app_logs_tx, app_logs_rx) = sync_channel(1);
         app_logs_tx
             .send(Some(vec![
@@ -440,7 +443,7 @@ mod test {
         let mut segments = vec![];
         let mock_core_writer = MockCoreWriter::new(&mut segments);
         let log_rx = CoreTransformerLogFetcher {
-            capture_logs_rx,
+            core_handler_logs_rx,
             app_logs_rx,
         };
         let mut transformer = CoreTransformer::new(
@@ -456,19 +459,27 @@ mod test {
 
         transformer.run_transformer().unwrap();
 
-        // Omit the actual data from the notes:
-        let segments = segments
-            .iter()
-            .map(|(ph, seg)| {
-                let seg = match seg {
-                    SegmentData::ProcessMemory => SegmentData::ProcessMemory,
-                    SegmentData::Buffer(_) => SegmentData::Buffer(vec![]),
-                };
-                (ph, seg)
-            })
-            .collect::<Vec<_>>();
+        match capture_strategy {
+            CoredumpCaptureStrategy::KernelSelection | CoredumpCaptureStrategy::Threads { .. } => {
+                // Omit the actual data from the notes:
+                let segments = segments
+                    .iter()
+                    .map(|(ph, seg)| {
+                        let seg = match seg {
+                            SegmentData::ProcessMemory => SegmentData::ProcessMemory,
+                            SegmentData::Buffer(_) => SegmentData::Buffer(vec![]),
+                        };
+                        (ph, seg)
+                    })
+                    .collect::<Vec<_>>();
 
-        set_snapshot_suffix!("{}", test_case_name);
-        assert_debug_snapshot!(segments);
+                set_snapshot_suffix!("{}", test_case_name);
+                assert_debug_snapshot!(segments);
+            }
+            CoredumpCaptureStrategy::Stacktrace => {
+                // Stacktrace is not supported by the CoreTransformer
+                unreachable!();
+            }
+        }
     }
 }

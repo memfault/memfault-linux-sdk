@@ -65,14 +65,5 @@ expression: result_b
         "timestamp": "[timestamp]"
       }
     }
-  },
-  {
-    "name": "cpu_usage_pct",
-    "value": {
-      "Histogram": {
-        "value": 99.80769,
-        "timestamp": "[timestamp]"
-      }
-    }
   }
 ]

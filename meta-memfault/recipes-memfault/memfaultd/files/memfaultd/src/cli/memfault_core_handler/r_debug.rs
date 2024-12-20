@@ -46,9 +46,7 @@ pub struct RDebugIter<'a, P: Read + Seek> {
 
 impl<'a, P: Read + Seek> RDebugIter<'a, P> {
     pub fn new(proc_mem_stream: &'a mut P, r_debug_addr: ElfPtrSize) -> Result<Self> {
-        // Ignore unnecessary cast here as it is needed on 32-bit systems.
-        #[allow(clippy::unnecessary_cast)]
-        proc_mem_stream.seek(SeekFrom::Start(r_debug_addr as u64))?;
+        proc_mem_stream.seek(SeekFrom::Start(r_debug_addr as _))?;
         let mut r_debug = RDebug::default();
         // SAFETY: From the point of view of this program,
         // RDebug only contains scalar values where any value is allowed.
@@ -66,9 +64,7 @@ impl<'a, P: Read + Seek> RDebugIter<'a, P> {
     /// or None if the end of the linked list has been reached.
     fn read_next(&mut self) -> Result<(ElfPtrSize, LinkMap)> {
         let vaddr = self.l_next;
-        // Ignore unnecessary cast here as it is needed on 32-bit systems.
-        #[allow(clippy::unnecessary_cast)]
-        self.proc_mem_stream.seek(SeekFrom::Start(vaddr as u64))?;
+        self.proc_mem_stream.seek(SeekFrom::Start(vaddr as _))?;
         let mut link_map = LinkMap::default();
         // SAFETY: From the point of view of this program,
         // LinkMap only contains scalar values where any value is allowed.

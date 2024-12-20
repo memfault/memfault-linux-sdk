@@ -6,6 +6,70 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.0] - 2024-12-02
+
+This release includes two major new features:
+
+- A new coredump capture mode to process the coredumps directly on device
+  resulting in even smaller crash signature and guaranteeing that no user data
+  is uploaded;
+- High Resolution Telemetry for Linux, storing every single datapoint and
+  enabling second-by-second data from Linux devices, for even deeper debugging
+  capability.
+
+### Added
+
+- Built-in wireless metric capture - wireless interfaces being monitored by the
+  `metrics.system_metric_collection.network_interfaces` configuration will now
+  have RSSI captured alongside the existing network metrics
+- Added a `boottime_duration_ms` to Metric Reports that indicates the duration
+  of the report independent of whether the CPU was running or not. This is
+  intended to be used for debugging purposes for teams whose devices sleep often
+  while in use.
+- The new on-device stack unwinding option for capturing crash Traces, which can
+  be enabled by setting `coredump.capture_strategy.type` to `stacktrace` in
+  `memfaultd.conf`.
+- High resolution telemetry, which is enabled by default and can be disabled or
+  have its rate limiting configured with the `metrics.high_resolution_telemetry`
+  field.
+- Support for Yocto Scarthgap in `meta-memfault`. This support will be extended
+  to `meta-memfault-example` in an upcoming release. Check out the `scarthgap`
+  branch if you are using that version of Yocto!
+- The built-in system memory metrics now include additional states such as
+  Cached and Buffered.
+- The `metrics.statsd_server` has had a new option, `legacy_gauge_aggregation`, 
+  added that averages Gauge metric readings rather than simply storing the 
+  most recent value. This is meant to allow for a smooth migration from
+  `collectd`'s StatsD server to `memfaultd`'s. New integrations should
+  use the `h` (Histogram) metric type for metrics whose readings should
+  be aggregated via average. 
+
+### Changed
+
+- The default on-device rate limit for logs ingested by `memfaultd` has been
+  increased from 500 lines per minute to 1000 lines per minute
+
+### Fixed 
+- Arbitrary ASCII strings between 1 and 128 in length can 
+  now be used in StatsD metric keys (besides the `:` delimiter),
+  matching the behavior described in the docs.
+
+### Removed
+
+Some built-in metrics were removed, as the naming conventions were not
+consistent. All of these metrics were added in 1.15.0. The list can
+be found below:
+
+- `cpu_usage_pct`
+- `connectivity_recv_bytes`
+- `connectivity_sent_bytes`
+- `connectivity_<interface>_recv_bytes`
+- `connectivity_<interface>_sent_bytes`
+- `memory_used_pct`
+- `memory_<process>_pct`
+- `cpu_usage_<process>_pct`
+- `storage_used_<disk>_pct`
+
 ## [1.15.1] - 2024-10-21
 
 This is a patch release to fix a bug in our release process that caused the
@@ -1103,3 +1167,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.15.0-kirkstone
 [1.15.1]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.15.1-kirkstone
+[1.16.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.16.0-kirkstone

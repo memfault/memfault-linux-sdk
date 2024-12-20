@@ -282,8 +282,70 @@ impl TimeSeries for ReportTag {
         MetricValue::String(self.value.clone())
     }
 }
+pub struct RssiAverage {
+    linear_sum: f64,
+    count: u64,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+}
+
+impl RssiAverage {
+    pub fn new(reading: &MetricReading) -> Result<Self> {
+        match *reading {
+            MetricReading::Rssi { value, timestamp } => {
+                if !value.is_finite() {
+                    return Err(eyre!(FINITENESS_ERROR));
+                }
+                // Need to convert RSSI to a linear scale so we can average readings together
+                let rssi_milliwatts = 10.0_f64.powf(value / 10.0);
+                Ok(Self {
+                    linear_sum: rssi_milliwatts,
+                    count: 1,
+                    start: timestamp,
+                    end: timestamp,
+                })
+            }
+            _ => Err(eyre!("Cannot create a histogram from a non-gauge metric")),
+        }
+    }
+}
+
+impl TimeSeries for RssiAverage {
+    fn aggregate(&mut self, newer: &MetricReading) -> Result<()> {
+        match newer {
+            MetricReading::Rssi { value, timestamp } => {
+                if !value.is_finite() {
+                    return Err(eyre!(FINITENESS_ERROR));
+                }
+                // Need to convert RSSI to a linear scale so we can average readings together
+                let rssi_milliwatts = 10.0_f64.powf(*value / 10.0);
+                self.linear_sum += rssi_milliwatts;
+                self.count += 1;
+                self.start = cmp::min(self.start, *timestamp);
+                self.end = cmp::max(self.end, *timestamp);
+                Ok(())
+            }
+            _ => Err(eyre!(
+                "Cannot aggregate a histogram with a non-gauge metric"
+            )),
+        }
+    }
+
+    fn value(&self) -> MetricValue {
+        if self.count > 0 {
+            let linear_average = self.linear_sum / self.count as f64;
+            let rssi = 10.0 * linear_average.log10();
+            MetricValue::Number(rssi)
+        } else {
+            MetricValue::Number(f64::NAN)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+
+    use approx::assert_relative_eq;
     use chrono::Duration;
     use rstest::rstest;
 
@@ -291,7 +353,7 @@ mod tests {
     use std::{f64::INFINITY, f64::NAN, f64::NEG_INFINITY, str::FromStr};
 
     use super::TimeSeries;
-    use super::{Counter, Gauge, Histogram, TimeWeightedAverage};
+    use super::{Counter, Gauge, Histogram, RssiAverage, TimeWeightedAverage};
 
     #[rstest]
     #[case(1.0, 1000, 2.0, 1.5, 2.0, 1.0, 1000)]
@@ -456,5 +518,34 @@ mod tests {
         gauge.aggregate(&b).unwrap();
         assert_eq!(gauge.end, timestamp2);
         assert_eq!(gauge.value, expected);
+    }
+
+    #[rstest]
+    #[case(-75.0, -80.0, -76.81699)]
+    #[case(-70.0, -80.0, -72.59637)]
+    #[case(-40.0, -40.0, -40.0)]
+    fn test_rssi_aggregation(#[case] a: f64, #[case] b: f64, #[case] expected: f64) {
+        let timestamp = MetricTimestamp::from_str("2021-01-01T00:00:00Z").unwrap();
+        let timestamp2 = MetricTimestamp::from_str("2021-01-01T00:00:43Z").unwrap();
+
+        let a = MetricReading::Rssi {
+            value: a,
+            timestamp,
+        };
+        let b = MetricReading::Rssi {
+            value: b,
+            timestamp: timestamp2,
+        };
+
+        let mut avg_rssi = RssiAverage::new(&a).unwrap();
+
+        avg_rssi.aggregate(&b).unwrap();
+        assert_eq!(avg_rssi.end, timestamp2);
+
+        let rssi = match avg_rssi.value() {
+            MetricValue::Number(rssi) => rssi,
+            _ => unreachable!("This test should only produce a Number MetricValue"),
+        };
+        assert_relative_eq!(rssi, expected, epsilon = 1e-5);
     }
 }

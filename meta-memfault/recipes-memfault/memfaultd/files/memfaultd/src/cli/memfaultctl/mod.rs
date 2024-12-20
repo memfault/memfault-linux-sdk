@@ -373,6 +373,7 @@ pub fn main() -> Result<()> {
                     mime_types,
                     reason,
                     file_name,
+                    None,
                 ))
                 .add_copied_attachment(file_path)?
                 .save(&network_config)

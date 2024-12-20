@@ -9,6 +9,7 @@ expression: builder.unwrap().get_metadata()
       "foo": 2.0
     },
     "duration_ms": 0,
+    "boottime_duration_ms": 0,
     "report_type": "heartbeat"
   }
 }

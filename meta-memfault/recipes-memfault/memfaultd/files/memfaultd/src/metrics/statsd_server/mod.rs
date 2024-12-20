@@ -9,15 +9,20 @@ use log::warn;
 
 use crate::metrics::KeyedMetricReading;
 
+use super::MetricReading;
 use super::MetricsMBox;
 
 pub struct StatsDServer {
+    legacy_gauge_aggregation: bool,
     metrics_mailbox: MetricsMBox,
 }
 
 impl StatsDServer {
-    pub fn new(metrics_mailbox: MetricsMBox) -> StatsDServer {
-        StatsDServer { metrics_mailbox }
+    pub fn new(legacy_gauge_aggregation: bool, metrics_mailbox: MetricsMBox) -> StatsDServer {
+        StatsDServer {
+            legacy_gauge_aggregation,
+            metrics_mailbox,
+        }
     }
 
     pub fn run(&self, listening_address: SocketAddr) -> Result<()> {
@@ -49,7 +54,25 @@ impl StatsDServer {
                 if let Err(e) = &res {
                     warn!("{}", e)
                 };
-                res.ok()
+
+                if self.legacy_gauge_aggregation {
+                    match res {
+                        // If legacy_gauge_aggregation is enabled, convert
+                        // Gauges to Histograms on ingestion
+                        Ok(KeyedMetricReading {
+                            name,
+                            value: MetricReading::Gauge { value, timestamp },
+                        }) => Some(KeyedMetricReading {
+                            name,
+                            value: MetricReading::Histogram { value, timestamp },
+                        }),
+                        // legacy_gauge_aggretation has no affect on non-Gauge
+                        // readings
+                        _ => res.ok(),
+                    }
+                } else {
+                    res.ok()
+                }
             })
             .collect();
 
@@ -98,14 +121,50 @@ mod test {
         });
     }
 
+    #[rstest]
+    #[case("test-gauge:1|g", "test-gauge:2.0|g", "test_legacy_gauge_aggregation")]
+    #[case(
+        "test_counter:1|c\ntest_gauge:2.0|g",
+        "test_counter:1|c\ntest_gauge:10.0|g",
+        "test_counter_and_legacy_gauge_aggregation"
+    )]
+    fn test_process_statsd_message_with_legacy_gauge_aggregation(
+        #[case] statsd_message_a: &str,
+        #[case] statsd_message_b: &str,
+        #[case] test_name: &str,
+        mut fixture_legacy_gauge_aggregation: Fixture,
+    ) {
+        // Process first StatsD test message
+        fixture_legacy_gauge_aggregation
+            .server
+            .process_statsd_message(statsd_message_a);
+
+        // Process second StatsD test message
+        fixture_legacy_gauge_aggregation
+            .server
+            .process_statsd_message(statsd_message_b);
+        with_settings!({sort_maps => true}, {
+        assert_json_snapshot!(test_name, fixture_legacy_gauge_aggregation.mock.take_metrics().unwrap());
+        });
+    }
+
     struct Fixture {
         server: StatsDServer,
         mock: ServiceMock<Vec<KeyedMetricReading>>,
     }
+
     #[fixture]
     fn fixture() -> Fixture {
         let mock = ServiceMock::new();
-        let server = StatsDServer::new(mock.mbox.clone());
+        let server = StatsDServer::new(false, mock.mbox.clone());
+
+        Fixture { server, mock }
+    }
+
+    #[fixture]
+    fn fixture_legacy_gauge_aggregation() -> Fixture {
+        let mock = ServiceMock::new();
+        let server = StatsDServer::new(true, mock.mbox.clone());
 
         Fixture { server, mock }
     }

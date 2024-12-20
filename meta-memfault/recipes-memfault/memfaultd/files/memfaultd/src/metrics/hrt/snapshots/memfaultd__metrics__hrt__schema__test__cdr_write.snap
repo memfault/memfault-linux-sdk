@@ -1,0 +1,33 @@
+---
+source: memfaultd/src/metrics/hrt/schema.rs
+expression: json!(hrt)
+---
+{
+  "duration_ms": 0,
+  "producer": {
+    "id": "memfaultd",
+    "version": "1.2.3"
+  },
+  "rollups": [
+    {
+      "data": [
+        {
+          "t": 1234,
+          "value": 567.0
+        },
+        {
+          "t": 5678,
+          "value": 123.0
+        }
+      ],
+      "metadata": {
+        "data_type": "double",
+        "internal": false,
+        "metric_type": "counter",
+        "string_key": "test"
+      }
+    }
+  ],
+  "schema_version": 1,
+  "start_time": 669859200000
+}

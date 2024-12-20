@@ -1,6 +1,6 @@
 ---
 source: memfaultd/src/metrics/system_metrics/memory.rs
-expression: "MemoryMetricsCollector::parse_meminfo_memory_stats(meminfo).unwrap()"
+expression: memory_metrics_collector.get_memory_metrics().unwrap()
 ---
 [
   {
@@ -22,10 +22,37 @@ expression: "MemoryMetricsCollector::parse_meminfo_memory_stats(meminfo).unwrap(
     }
   },
   {
-    "name": "memory_pct",
+    "name": "memory/memory/slab_recl",
     "value": {
       "Histogram": {
-        "value": 33.78918,
+        "value": 15269888.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/memory/slab_unrecl",
+    "value": {
+      "Histogram": {
+        "value": 18952192.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/memory/buffered",
+    "value": {
+      "Histogram": {
+        "value": 4653056.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/memory/cached",
+    "value": {
+      "Histogram": {
+        "value": 53379072.0,
         "timestamp": "[timestamp]"
       }
     }

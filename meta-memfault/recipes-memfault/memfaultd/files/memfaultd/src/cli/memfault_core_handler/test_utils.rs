@@ -41,7 +41,7 @@ pub struct MockCoreWriter<'a> {
 }
 
 impl<'a> MockCoreWriter<'a> {
-    pub fn new(segments: &mut Vec<(ProgramHeader, SegmentData)>) -> MockCoreWriter {
+    pub fn new(segments: &'a mut Vec<(ProgramHeader, SegmentData)>) -> MockCoreWriter<'a> {
         MockCoreWriter {
             output_size: 0,
             segments,
@@ -127,9 +127,7 @@ impl FakeProcMem {
         ph: &UniversalProgramHeader,
     ) -> eyre::Result<Take<Cursor<Vec<u8>>>> {
         let mut cursor = Cursor::new(data);
-        // Ignore unnecessary cast here as it is needed on 32-bit systems.
-        #[allow(clippy::unnecessary_cast)]
-        cursor.seek(SeekFrom::Start(ph.p_offset as u64))?;
+        cursor.seek(SeekFrom::Start(ph.p_offset as _))?;
         Ok(cursor.take(ph.p_filesz))
     }
 

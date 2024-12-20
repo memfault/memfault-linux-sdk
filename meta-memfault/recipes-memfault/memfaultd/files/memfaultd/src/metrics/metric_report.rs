@@ -17,7 +17,7 @@ use crate::{
         timeseries::{Counter, Gauge, Histogram, TimeSeries, TimeWeightedAverage},
         MetricReading, MetricStringKey, MetricValue, SessionName,
     },
-    util::wildcard_pattern::WildcardPattern,
+    util::{system::get_system_clock, wildcard_pattern::WildcardPattern},
 };
 
 use super::{
@@ -30,7 +30,7 @@ use super::{
         METRIC_INTERFACE_BYTES_PER_SECOND_RX_SUFFIX, METRIC_INTERFACE_BYTES_PER_SECOND_TX_SUFFIX,
         NETWORK_INTERFACE_METRIC_NAMESPACE, THERMAL_METRIC_NAMESPACE,
     },
-    timeseries::ReportTag,
+    timeseries::{ReportTag, RssiAverage},
 };
 
 pub enum CapturedMetrics {
@@ -93,7 +93,7 @@ impl MetricsSet {
 pub const HEARTBEAT_REPORT_TYPE: &str = "heartbeat";
 pub const DAILY_HEARTBEAT_REPORT_TYPE: &str = "daily-heartbeat";
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 pub enum MetricReportType {
     #[serde(rename = "heartbeat")]
     Heartbeat,
@@ -119,6 +119,9 @@ pub struct MetricReport {
     /// Point in time when capture of metrics currently in
     /// report's metric store began
     start: Instant,
+    /// Point in time when capture of metrics currently in
+    /// report's metric store according to CLOCK_BOOTTIME
+    boottime_start: Option<Duration>,
     /// Configuration of which metrics this report should capture
     captured_metrics: CapturedMetrics,
     /// Indicates whether this is a heartbeat metric report or
@@ -131,6 +134,7 @@ pub struct MetricReport {
 
 struct MetricReportSnapshot {
     duration: Duration,
+    boottime_duration: Option<Duration>,
     metrics: HashMap<MetricStringKey, MetricValue>,
 }
 
@@ -139,6 +143,7 @@ impl MetricReport {
         Self {
             metrics: HashMap::new(),
             start: Instant::now(),
+            boottime_start: get_system_clock(crate::util::system::Clock::Boottime).ok(),
             captured_metrics,
             report_type,
             histo_min_max_metrics: histo_min_max_keys(),
@@ -213,6 +218,11 @@ impl MetricReport {
 
     fn take_metric_report_snapshot(&mut self) -> MetricReportSnapshot {
         let duration = std::mem::replace(&mut self.start, Instant::now()).elapsed();
+        let time_since_boot = get_system_clock(crate::util::system::Clock::Boottime).ok();
+        let boottime_duration = match (self.boottime_start, time_since_boot) {
+            (Some(boottime_start), Some(boottime_end)) => Some(boottime_end - boottime_start),
+            _ => None,
+        };
         let metrics = std::mem::take(&mut self.metrics)
             .into_iter()
             .flat_map(|(name, state)| match state.value() {
@@ -231,7 +241,11 @@ impl MetricReport {
             })
             .collect();
 
-        MetricReportSnapshot { duration, metrics }
+        MetricReportSnapshot {
+            duration,
+            boottime_duration,
+            metrics,
+        }
     }
 
     /// Create one metric report MAR entry with all the metrics in the store.
@@ -252,6 +266,7 @@ impl MetricReport {
             Metadata::new_metric_report(
                 snapshot.metrics,
                 snapshot.duration,
+                snapshot.boottime_duration,
                 self.report_type.clone(),
             ),
         )))
@@ -262,6 +277,7 @@ impl MetricReport {
             MetricReading::Histogram { .. } => Ok(Box::new(Histogram::new(event)?)),
             MetricReading::Counter { .. } => Ok(Box::new(Counter::new(event)?)),
             MetricReading::Gauge { .. } => Ok(Box::new(Gauge::new(event)?)),
+            MetricReading::Rssi { .. } => Ok(Box::new(RssiAverage::new(event)?)),
             MetricReading::TimeWeightedAverage { .. } => {
                 Ok(Box::new(TimeWeightedAverage::new(event)?))
             }

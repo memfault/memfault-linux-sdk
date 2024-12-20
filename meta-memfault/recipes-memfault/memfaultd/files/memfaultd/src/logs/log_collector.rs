@@ -5,6 +5,7 @@
 //!
 use std::io::Cursor;
 use std::num::NonZeroU32;
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Duration;
 use std::{fs, thread};
@@ -17,7 +18,7 @@ use log::{error, trace, warn};
 use serde::{Deserialize, Serialize};
 use tiny_http::{Header, Method, Request, Response, ResponseBox, StatusCode};
 
-use crate::config::Config;
+use crate::config::{Config, Resolution};
 use crate::{config::LogToMetricRule, logs::completed_log::CompletedLog};
 use crate::{config::StorageConfig, http_server::ConvenientHeader};
 use crate::{
@@ -58,10 +59,11 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
     /// This callback must move (or delete) the log file!
     pub fn open<R: FnMut(CompletedLog) -> Result<()> + Send + 'static>(
         log_config: LogCollectorConfig,
+        logging_resolution: Resolution,
         mut on_log_completion: R,
         headroom_limiter: H,
         #[cfg_attr(not(feature = "regex"), allow(unused_variables))] metrics_mbox: MetricsMBox,
-    ) -> Result<Self> {
+    ) -> Result<(Self, Sender<Resolution>)> {
         fs::create_dir_all(&log_config.log_tmp_path).wrap_err_with(|| {
             format!(
                 "Unable to create directory to store in-progress logs: {}",
@@ -87,26 +89,37 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
         } else {
             log_config.in_memory_lines
         };
-        Ok(Self {
-            inner: Arc::new(Mutex::new(Some(Inner {
-                log_file_control: LogFileControlImpl::open(
-                    log_config.log_tmp_path,
-                    next_cid,
-                    log_config.log_max_size,
-                    log_config.log_max_duration,
-                    log_config.log_compression_level,
-                    on_log_completion,
-                )?,
-                rate_limiter: RateLimiter::new(log_config.max_lines_per_minute),
-                headroom_limiter,
-                #[cfg(feature = "regex")]
-                log_to_metrics: LogToMetrics::new(log_config.log_to_metrics_rules, metrics_mbox),
-                log_queue: CircularQueue::new(in_memory_lines),
-                storage_config: log_config.storage_config,
-                #[cfg(feature = "regex")]
-                level_mapper,
-            }))),
-        })
+
+        let (logging_resolution_sender, logging_resolution_receiver) = channel::<Resolution>();
+
+        Ok((
+            Self {
+                inner: Arc::new(Mutex::new(Some(Inner {
+                    log_file_control: LogFileControlImpl::open(
+                        log_config.log_tmp_path,
+                        next_cid,
+                        log_config.log_max_size,
+                        log_config.log_max_duration,
+                        log_config.log_compression_level,
+                        on_log_completion,
+                    )?,
+                    rate_limiter: RateLimiter::new(log_config.max_lines_per_minute),
+                    headroom_limiter,
+                    #[cfg(feature = "regex")]
+                    log_to_metrics: LogToMetrics::new(
+                        log_config.log_to_metrics_rules,
+                        metrics_mbox,
+                    ),
+                    log_queue: CircularQueue::new(in_memory_lines),
+                    storage_config: log_config.storage_config,
+                    #[cfg(feature = "regex")]
+                    level_mapper,
+                    logging_resolution,
+                    logging_resolution_receiver,
+                }))),
+            },
+            logging_resolution_sender,
+        ))
     }
 
     /// Spawn a thread to read log records from receiver.
@@ -209,6 +222,8 @@ struct Inner<H: HeadroomCheck> {
     storage_config: StorageConfig,
     #[cfg(feature = "regex")]
     level_mapper: Option<LogLevelMapper>,
+    logging_resolution: Resolution,
+    logging_resolution_receiver: Receiver<Resolution>,
 }
 
 impl<H: HeadroomCheck> Inner<H> {
@@ -264,8 +279,15 @@ impl<H: HeadroomCheck> Inner<H> {
         Ok(())
     }
 
-    fn should_persist(&self) -> bool {
+    fn should_persist(&mut self) -> bool {
+        // Check if there is an updated Resolution for
+        // Logging
+        while let Ok(resolution) = self.logging_resolution_receiver.try_recv() {
+            self.logging_resolution = resolution;
+        }
+
         matches!(self.storage_config, StorageConfig::Persist)
+            || matches!(self.logging_resolution, Resolution::Normal)
     }
 
     fn rotate_if_needed(&mut self) -> Result<bool> {
@@ -474,8 +496,9 @@ mod tests {
             },
         };
 
-        let mut collector = LogCollector::open(
+        let (mut collector, _) = LogCollector::open(
             config,
+            Resolution::Normal,
             |CompletedLog { path, .. }| {
                 remove_file(&path)
                     .with_context(|| format!("rm {path:?}"))
@@ -753,7 +776,7 @@ mod tests {
 
         let on_completion_should_fail = Arc::new(AtomicBool::new(false));
 
-        let collector = {
+        let (collector, _) = {
             let on_completion_should_fail = on_completion_should_fail.clone();
             let on_log_completion = move |CompletedLog { path, cid, .. }| {
                 on_log_completion_sender.send((path.clone(), cid)).unwrap();
@@ -771,6 +794,7 @@ mod tests {
 
             LogCollector::open(
                 config,
+                Resolution::Off,
                 on_log_completion,
                 StubHeadroomLimiter,
                 ServiceMock::new().mbox,

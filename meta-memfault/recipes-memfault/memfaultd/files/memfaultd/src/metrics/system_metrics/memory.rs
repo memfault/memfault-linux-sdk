@@ -42,9 +42,9 @@
 //!
 //! See additional Linux kernel documentation on /proc/meminfo here:
 //! https://www.kernel.org/doc/html/latest/filesystems/proc.html#meminfo
+use std::collections::HashMap;
 use std::fs::read_to_string;
 use std::path::Path;
-use std::{collections::HashMap, str::FromStr};
 
 use eyre::{eyre, Result};
 use nom::{
@@ -56,8 +56,7 @@ use nom::{
 };
 
 use crate::metrics::{
-    core_metrics::METRIC_MEMORY_PCT, system_metrics::SystemMetricFamilyCollector,
-    KeyedMetricReading, MetricStringKey,
+    system_metrics::SystemMetricFamilyCollector, KeyedMetricReading, MetricStringKey,
 };
 
 pub const PROC_MEMINFO_PATH: &str = "/proc/meminfo";
@@ -160,26 +159,56 @@ where
             .remove("MemFree")
             .ok_or_else(|| eyre!("{} is missing required value MemFree", PROC_MEMINFO_PATH))?;
 
+        let slab_unreclaimable = stats
+            .remove("SUnreclaim")
+            .ok_or_else(|| eyre!("{} is missing required value SUnreclaim", PROC_MEMINFO_PATH))?;
+        let slab_reclaimable = stats.remove("SReclaimable").ok_or_else(|| {
+            eyre!(
+                "{} is missing required value SReclaimable",
+                PROC_MEMINFO_PATH
+            )
+        })?;
+
+        let cached = stats
+            .remove("Cached")
+            .ok_or_else(|| eyre!("{} is missing required value Cached", PROC_MEMINFO_PATH))?;
+
+        let buffered = stats
+            .remove("Buffers")
+            .ok_or_else(|| eyre!("{} is missing required value Buffers", PROC_MEMINFO_PATH))?;
+
         // Check that MemTotal is nonzero to avoid dividing by 0
         if total != 0.0 {
             let available = stats.remove("MemAvailable").unwrap_or(free);
 
             let used = total - available;
-
-            let pct_used = (used / total) * 100.0;
-
-            let used_key = MetricStringKey::from_str("memory/memory/used")
-                .map_err(|e| eyre!("Failed to construct MetricStringKey for used memory: {}", e))?;
-            let free_key = MetricStringKey::from_str("memory/memory/free")
-                .map_err(|e| eyre!("Failed to construct MetricStringKey for used memory: {}", e))?;
-
-            let pct_key = MetricStringKey::from_str(METRIC_MEMORY_PCT)
-                .map_err(|e| eyre!("Failed to construct MetricStringKey for used memory: {}", e))?;
+            let _pct_used = (used / total) * 100.0;
 
             Ok(vec![
-                KeyedMetricReading::new_histogram(free_key, free),
-                KeyedMetricReading::new_histogram(used_key, used),
-                KeyedMetricReading::new_histogram(pct_key, pct_used),
+                KeyedMetricReading::new_histogram(
+                    MetricStringKey::from("memory/memory/free"),
+                    free,
+                ),
+                KeyedMetricReading::new_histogram(
+                    MetricStringKey::from("memory/memory/used"),
+                    used,
+                ),
+                KeyedMetricReading::new_histogram(
+                    MetricStringKey::from("memory/memory/slab_recl"),
+                    slab_reclaimable,
+                ),
+                KeyedMetricReading::new_histogram(
+                    MetricStringKey::from("memory/memory/slab_unrecl"),
+                    slab_unreclaimable,
+                ),
+                KeyedMetricReading::new_histogram(
+                    MetricStringKey::from("memory/memory/buffered"),
+                    buffered,
+                ),
+                KeyedMetricReading::new_histogram(
+                    MetricStringKey::from("memory/memory/cached"),
+                    cached,
+                ),
             ])
         } else {
             Err(eyre!("MemTotal is 0, can't calculate memory usage metrics"))
@@ -250,6 +279,10 @@ AnonPages:         19488 kB
 Mapped:            29668 kB
 Shmem:             11264 kB
 KReclaimable:      14028 kB
+Slab:              33420 kB
+SReclaimable:      14912 kB
+SUnreclaim:        18508 kB
+KernelStack:        1904 kB
         ";
 
         with_settings!({sort_maps => true}, {
@@ -282,6 +315,10 @@ AnonPages:         19488 kB
 Mapped:            29668 kB
 Shmem:             11264 kB
 KReclaimable:      14028 kB
+Slab:              33420 kB
+SReclaimable:      14912 kB
+SUnreclaim:        18508 kB
+KernelStack:        1904 kB
         ";
         let mut mock_meminfo_parser = MockMemInfoParser::new();
 
@@ -327,6 +364,10 @@ AnonPages:         19488 kB
 Mapped:            29668 kB
 Shmem:             11264 kB
 KReclaimable:      14028 kB
+Slab:              33420 kB
+SReclaimable:      14912 kB
+SUnreclaim:        18508 kB
+KernelStack:        1904 kB
         ";
 
         let mut mock_meminfo_parser = MockMemInfoParser::new();
@@ -379,6 +420,10 @@ KReclaimable:      14028 kB
     Mapped:            29668 kB
     Shmem:             11264 kB
     KReclaimable:      14028 kB
+    Slab:              33420 kB
+    SReclaimable:      14912 kB
+    SUnreclaim:        18508 kB
+    KernelStack:        1904 kB
             ";
         let mut mock_meminfo_parser = MockMemInfoParser::new();
 

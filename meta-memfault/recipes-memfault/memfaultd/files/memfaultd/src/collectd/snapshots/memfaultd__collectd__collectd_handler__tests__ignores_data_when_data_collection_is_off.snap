@@ -1,5 +1,0 @@
----
-source: memfaultd/src/collectd/collectd_handler.rs
-expression: "serde_json::to_string_pretty(&metrics).expect(\"metric_store should be serializable\")"
----
-{}
