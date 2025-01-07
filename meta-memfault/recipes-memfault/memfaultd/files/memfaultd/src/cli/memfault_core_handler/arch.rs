@@ -124,7 +124,7 @@ cfg_if! {
                 ctx
             }
         }
-    } else if #[cfg(target_arch = "arm")] {
+    } else if #[cfg(all(target_arch = "arm", target_env = "gnu"))] {
         pub use libc::user_regs as ElfGRegSet;
         pub fn get_stack_pointer(regs: &ElfGRegSet) -> usize {
             regs.arm_sp as usize
@@ -146,6 +146,53 @@ cfg_if! {
 
         impl From<&ElfGRegSet> for UnwindFrameContext {
             fn from(regs: &ElfGRegSet) -> Self {
+                todo!()
+            }
+        }
+    } else if #[cfg(all(target_arch = "arm", target_env = "musl"))] {
+        use libc::c_ulong;
+        #[derive(Debug, PartialEq, Eq)]
+        #[repr(C)]
+        pub struct user_regs {
+            pub arm_r0: c_ulong,
+            pub arm_r1: c_ulong,
+            pub arm_r2: c_ulong,
+            pub arm_r3: c_ulong,
+            pub arm_r4: c_ulong,
+            pub arm_r5: c_ulong,
+            pub arm_r6: c_ulong,
+            pub arm_r7: c_ulong,
+            pub arm_r8: c_ulong,
+            pub arm_r9: c_ulong,
+            pub arm_r10: c_ulong,
+            pub arm_fp: c_ulong,
+            pub arm_ip: c_ulong,
+            pub arm_sp: c_ulong,
+            pub arm_lr: c_ulong,
+            pub arm_pc: c_ulong,
+            pub arm_cpsr: c_ulong,
+            pub arm_orig_r0: c_ulong,
+        }
+        pub use user_regs as ElfGRegSet;
+        pub fn get_stack_pointer(regs: &ElfGRegSet) -> usize {
+            regs.arm_sp as usize
+        }
+        pub use elf::header::EM_ARM as ELF_TARGET_MACHINE;
+        pub use elf::header::ELFCLASS32 as ELF_TARGET_CLASS;
+        pub fn get_program_counter(regs: &ElfGRegSet) -> usize {
+            regs.arm_pc as usize
+        }
+        pub fn set_stack_pointer(_regs: &mut HashMap<Register, usize>, _sp: usize)  {
+            todo!()
+        }
+        pub fn get_return_register(_regs: &HashMap<Register, usize>) -> Option<usize> {
+            todo!()
+        }
+        pub const fn return_register_idx() -> Register {
+            todo!()
+        }
+        impl From<&ElfGRegSet> for UnwindFrameContext {
+            fn from(_regs: &ElfGRegSet) -> Self {
                 todo!()
             }
         }
