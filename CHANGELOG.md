@@ -6,7 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.16.0] - 2024-12-02
+## [1.16.1] - 2024-01-06
+
+This is a small release that adds coredump capture support for 32-bit ARM
+targets using [musl libc](https://www.musl-libc.org/).
+
+### Fixed
+
+- The `coredump` feature can now be compiled for the
+  `armv7-unknown-linux-musleabihf` target.
+
+## [1.16.0] - 2024-12-20
 
 This release includes two major new features:
 
@@ -37,28 +47,29 @@ This release includes two major new features:
   branch if you are using that version of Yocto!
 - The built-in system memory metrics now include additional states such as
   Cached and Buffered.
-- The `metrics.statsd_server` has had a new option, `legacy_gauge_aggregation`, 
-  added that averages Gauge metric readings rather than simply storing the 
-  most recent value. This is meant to allow for a smooth migration from
-  `collectd`'s StatsD server to `memfaultd`'s. New integrations should
-  use the `h` (Histogram) metric type for metrics whose readings should
-  be aggregated via average. 
+- The `metrics.statsd_server` has had a new option, `legacy_gauge_aggregation`,
+  added that averages Gauge metric readings rather than simply storing the most
+  recent value. This is meant to allow for a smooth migration from `collectd`'s
+  StatsD server to `memfaultd`'s. New integrations should use the `h`
+  (Histogram) metric type for metrics whose readings should be aggregated via
+  average.
 
 ### Changed
 
 - The default on-device rate limit for logs ingested by `memfaultd` has been
   increased from 500 lines per minute to 1000 lines per minute
 
-### Fixed 
-- Arbitrary ASCII strings between 1 and 128 in length can 
-  now be used in StatsD metric keys (besides the `:` delimiter),
-  matching the behavior described in the docs.
+### Fixed
+
+- Arbitrary ASCII strings between 1 and 128 in length can now be used in StatsD
+  metric keys (besides the `:` delimiter), matching the behavior described in
+  the docs.
 
 ### Removed
 
 Some built-in metrics were removed, as the naming conventions were not
-consistent. All of these metrics were added in 1.15.0. The list can
-be found below:
+consistent. All of these metrics were added in 1.15.0. The list can be found
+below:
 
 - `cpu_usage_pct`
 - `connectivity_recv_bytes`
@@ -1169,3 +1180,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.15.1-kirkstone
 [1.16.0]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.16.0-kirkstone
+[1.16.1]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.16.1-kirkstone
