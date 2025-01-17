@@ -30,7 +30,7 @@ use super::{
         METRIC_INTERFACE_BYTES_PER_SECOND_RX_SUFFIX, METRIC_INTERFACE_BYTES_PER_SECOND_TX_SUFFIX,
         NETWORK_INTERFACE_METRIC_NAMESPACE, THERMAL_METRIC_NAMESPACE,
     },
-    timeseries::{ReportTag, RssiAverage},
+    timeseries::{Bool, ReportTag, RssiAverage},
 };
 
 pub enum CapturedMetrics {
@@ -282,6 +282,7 @@ impl MetricReport {
                 Ok(Box::new(TimeWeightedAverage::new(event)?))
             }
             MetricReading::ReportTag { .. } => Ok(Box::new(ReportTag::new(event)?)),
+            MetricReading::Bool { .. } => Ok(Box::new(Bool::new(event)?)),
         }
     }
 
@@ -299,7 +300,7 @@ mod tests {
     use super::*;
     use crate::{
         metrics::core_metrics::CoreMetricKeys,
-        test_utils::{in_counters, in_histograms},
+        test_utils::{in_bools, in_counters, in_histograms},
     };
     use std::str::FromStr;
 
@@ -358,6 +359,22 @@ mod tests {
         for m in metrics {
             metric_report.add_metric(m).unwrap();
         }
+        let sorted_metrics: BTreeMap<_, _> = metric_report.take_metrics().into_iter().collect();
+        assert_json_snapshot!(test_name, sorted_metrics);
+    }
+
+    #[rstest]
+    #[case(in_bools(vec![("foo", true), ("bar", true), ("foo", false)]), "overwrite_previous_reading")]
+    fn test_boolean_metrics(
+        #[case] metrics: impl Iterator<Item = KeyedMetricReading>,
+        #[case] test_name: &str,
+    ) {
+        let mut metric_report = MetricReport::new_heartbeat();
+
+        for m in metrics {
+            metric_report.add_metric(m).unwrap();
+        }
+
         let sorted_metrics: BTreeMap<_, _> = metric_report.take_metrics().into_iter().collect();
         assert_json_snapshot!(test_name, sorted_metrics);
     }

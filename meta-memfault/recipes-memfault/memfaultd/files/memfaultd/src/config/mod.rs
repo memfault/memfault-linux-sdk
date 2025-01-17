@@ -11,7 +11,6 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use crate::metrics::DiskSpaceMetricsConfig;
 use crate::{
     network::{NetworkClient, NetworkConfig},
     util::{DiskBacked, UnwrapOrDie, UpdateStatus},
@@ -39,7 +38,7 @@ pub use self::{
 
 use crate::{
     mar::{MarEntryBuilder, Metadata},
-    metrics::ProcessMetricsConfig,
+    metrics::{DiskSpaceMetricsConfig, DiskstatsMetricsConfig, ProcessMetricsConfig},
 };
 
 use eyre::{Context, Result};
@@ -331,6 +330,19 @@ impl Config {
         {
             Some(mounts) => DiskSpaceMetricsConfig::Disks(mounts.clone()),
             None => DiskSpaceMetricsConfig::Auto,
+        }
+    }
+
+    pub fn system_metric_diskstats_config(&self) -> DiskstatsMetricsConfig {
+        match self
+            .config_file
+            .metrics
+            .system_metric_collection
+            .diskstats
+            .as_ref()
+        {
+            Some(devices) => DiskstatsMetricsConfig::Devices(devices.clone()),
+            None => DiskstatsMetricsConfig::Auto,
         }
     }
 

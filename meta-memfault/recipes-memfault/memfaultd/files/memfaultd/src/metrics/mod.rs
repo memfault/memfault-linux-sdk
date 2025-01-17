@@ -50,6 +50,9 @@ pub use session_name::SessionName;
 mod session_event_handler;
 pub use session_event_handler::SessionEventHandler;
 
+mod metrics_event_handler;
+pub use metrics_event_handler::MetricsEventHandler;
+
 pub mod core_metrics;
 
 pub mod statsd_server;
@@ -57,6 +60,7 @@ pub use statsd_server::StatsDServer;
 
 mod system_metrics;
 pub use system_metrics::DiskSpaceMetricsConfig;
+pub use system_metrics::DiskstatsMetricsConfig;
 pub use system_metrics::ProcessMetricsConfig;
 pub use system_metrics::SystemMetricsCollector;
 pub use system_metrics::BUILTIN_SYSTEM_METRIC_NAMESPACES;

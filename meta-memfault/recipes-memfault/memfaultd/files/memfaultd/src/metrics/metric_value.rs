@@ -35,6 +35,7 @@ pub enum MetricValue {
     Number(f64),
     String(String),
     Histogram(Histogram),
+    Bool(bool),
 }
 
 impl Serialize for MetricValue {
@@ -46,6 +47,7 @@ impl Serialize for MetricValue {
             MetricValue::Number(v) => serializer.serialize_f64(*v),
             MetricValue::String(v) => serializer.serialize_str(v.as_str()),
             MetricValue::Histogram(histo) => histo.serialize(serializer),
+            MetricValue::Bool(v) => serializer.serialize_bool(*v),
         }
     }
 }

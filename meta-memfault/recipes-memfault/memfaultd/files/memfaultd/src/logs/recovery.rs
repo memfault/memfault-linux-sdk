@@ -136,12 +136,15 @@ pub fn recover_old_logs<R: FnMut(CompletedLog) -> Result<()> + Send + 'static>(
         debug!("Recovering logfile: {:?}", path.display());
 
         if let Err(e) = (on_log_recovery)(CompletedLog {
-            path,
+            path: path.clone(),
             cid,
             next_cid,
             compression: CompressionAlgorithm::Zlib,
         }) {
-            warn!("Unable to recover log file: {}", e);
+            warn!("Unable to recover log file, deleting instead: {}", e);
+            if let Err(e) = remove_file(&path) {
+                warn!("Unable to delete log file: {}", e);
+            }
         }
     }
 

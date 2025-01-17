@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config::Config,
-    http_server::SessionRequest,
+    http_server::{MetricsRequest, SessionRequest},
     mar::{ExportFormat, EXPORT_MAR_URL},
     metrics::{KeyedMetricReading, SessionName},
 };
@@ -191,6 +191,20 @@ impl MemfaultdClient {
         match r.status() {
             StatusCode::OK => Ok(Some(r.json::<CrashLogs>()?.logs)),
             _ => Err(eyre!("Unexpected status code {}", r.status().as_u16())),
+        }
+    }
+
+    pub fn post_metrics(&self, readings: Vec<KeyedMetricReading>) -> Result<()> {
+        let request = MetricsRequest::new(readings);
+        let body = serde_json::to_string(&request)?;
+        let r = self.post_url("/v1/metrics", body)?;
+        match r.status() {
+            StatusCode::OK => Ok(()),
+            _ => Err(eyre!(
+                "Unexpected status code {}: {}",
+                r.status().as_u16(),
+                from_utf8(&r.bytes()?)?
+            )),
         }
     }
 

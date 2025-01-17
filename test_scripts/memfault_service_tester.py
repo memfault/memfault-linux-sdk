@@ -6,7 +6,7 @@ import datetime
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from typing import Literal, TypeAlias, TypeVar, cast
+from typing import Any, Literal, TypeAlias, TypeVar, cast
 from unittest.mock import ANY
 
 import requests
@@ -101,13 +101,13 @@ class MemfaultServiceTester:
         params: Json = None,
         expect_status: int = 200,
         ignore_errors: bool = False,
-    ) -> list[dict[str, Json]]:
+    ) -> list[dict[str, Any]]:
         rv = self.session.get(
             f"{self._project_url}/reports",
             params=params,  # pyright: ignore[reportArgumentType]
         )
         assert rv.status_code == expect_status or ignore_errors
-        return cast(list[dict[str, Json]], rv.json()["data"]) if rv.status_code == 200 else []
+        return cast(list[dict[str, Any]], rv.json()["data"]) if rv.status_code == 200 else []
 
     def poll_reports_until_count(
         self,

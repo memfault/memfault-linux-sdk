@@ -18,7 +18,7 @@ use std::mem::take;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-const MAR_ENTRY_OVERHEAD_SIZE_ESTIMATE: u64 = 4096;
+pub const MAR_ENTRY_OVERHEAD_SIZE_ESTIMATE: u64 = 4096;
 
 /// A tool to build new MAR entries. Use one of the constructor functions and
 /// call save() to write to disk. Any files attached to this MAR entry will

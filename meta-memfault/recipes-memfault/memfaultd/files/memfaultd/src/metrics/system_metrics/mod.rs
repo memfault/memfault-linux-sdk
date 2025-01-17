@@ -43,16 +43,21 @@ use disk_space::{
     DISKSPACE_METRIC_NAMESPACE_LEGACY,
 };
 
+mod diskstats;
+pub use diskstats::DiskstatsMetricsConfig;
+use diskstats::{DiskstatsMetricCollector, DISKSTATS_METRIC_NAMESPACE};
+
 use self::memory::{MemInfoParser, MemInfoParserImpl};
 use super::MetricsMBox;
 
-pub const BUILTIN_SYSTEM_METRIC_NAMESPACES: &[&str; 7] = &[
+pub const BUILTIN_SYSTEM_METRIC_NAMESPACES: &[&str; 8] = &[
     CPU_METRIC_NAMESPACE,
     MEMORY_METRIC_NAMESPACE,
     THERMAL_METRIC_NAMESPACE,
     NETWORK_INTERFACE_METRIC_NAMESPACE,
     PROCESSES_METRIC_NAMESPACE,
     DISKSPACE_METRIC_NAMESPACE,
+    DISKSTATS_METRIC_NAMESPACE,
     // Include in list of namespaces so that
     // legacy collectd from the "df" plugin
     // are still filtered out
@@ -74,6 +79,7 @@ impl SystemMetricsCollector {
         processes_config: ProcessMetricsConfig,
         network_interfaces_config: Option<HashSet<String>>,
         disk_space_config: DiskSpaceMetricsConfig,
+        diskstats_config: DiskstatsMetricsConfig,
         metrics_mbox: MetricsMBox,
     ) -> Self {
         // CPU, Memory, and Thermal metrics are captured by default
@@ -110,6 +116,15 @@ impl SystemMetricsCollector {
             DiskSpaceMetricsConfig::Disks(disks) if disks.is_empty() => {}
             disk_space_metrics_config => metric_family_collectors.push(Box::new(
                 DiskSpaceMetricCollector::new(NixStatvfs::new(), disk_space_metrics_config),
+            )),
+        };
+
+        // Check if diskstats metrics have been manually configured
+        match diskstats_config {
+            // Monitoring no devices means this collector is disabled
+            DiskstatsMetricsConfig::Devices(devices) if devices.is_empty() => {}
+            diskstats_config => metric_family_collectors.push(Box::new(
+                DiskstatsMetricCollector::<Instant>::new(diskstats_config),
             )),
         };
 

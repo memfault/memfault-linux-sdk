@@ -1,0 +1,24 @@
+---
+source: memfaultd/src/metrics/system_metrics/diskstats.rs
+expression: result_b
+---
+[
+  {
+    "name": "diskstats/sda/reads_per_second",
+    "value": {
+      "Histogram": {
+        "value": 10.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "diskstats/sda/writes_per_second",
+    "value": {
+      "Histogram": {
+        "value": 20.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  }
+]

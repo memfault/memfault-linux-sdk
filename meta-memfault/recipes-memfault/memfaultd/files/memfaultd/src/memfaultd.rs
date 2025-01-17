@@ -18,12 +18,12 @@ use log::{error, info, trace, warn};
 
 use ssf::{Scheduler, ServiceThread};
 
-use crate::config::Resolution;
 use crate::metrics::{
     BatteryMonitor, BatteryReadingHandler, ConnectivityMonitor, DumpHrtMessage,
     DumpMetricReportMessage, KeyedMetricReading, MetricReportType, MetricsMBox,
     ReportSyncEventHandler, ReportsToDump, SessionEventHandler, SystemMetricsCollector,
 };
+use crate::{config::Resolution, metrics::MetricsEventHandler};
 
 use crate::{
     config::Config,
@@ -161,6 +161,12 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         http_handlers.push(Box::new(collectd_handler));
     }
 
+    let metrics_event_handler = MetricsEventHandler::new(
+        metrics_mbox.clone(),
+        config.config_file.enable_data_collection,
+    );
+    http_handlers.push(Box::new(metrics_event_handler));
+
     let mut scheduler = Scheduler::default();
 
     // Schedule dump jobs for both heartbeat, daily heartbeat, and HRT
@@ -217,11 +223,13 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         let processes_config = config.system_metric_monitored_processes();
         let network_interfaces_config = config.system_metric_network_interfaces_config().cloned();
         let disk_space_config = config.system_metric_disk_space_config();
+        let diskstats_config = config.system_metric_diskstats_config();
         spawn(move || {
             let mut sys_metric_collector = SystemMetricsCollector::new(
                 processes_config,
                 network_interfaces_config,
                 disk_space_config,
+                diskstats_config,
                 mbox,
             );
             sys_metric_collector.run(poll_interval)
@@ -391,6 +399,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         #[cfg(feature = "systemd")]
         use crate::logs::journald_provider::start_journald_provider;
         use crate::logs::log_entry::LogEntry;
+        use crate::mar::MAR_ENTRY_OVERHEAD_SIZE_ESTIMATE;
         use log::debug;
 
         let fluent_bit_config = FluentBitConfig::from(&config);
@@ -434,11 +443,17 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                     .to_str()
                     .ok_or(eyre!("Invalid log filename."))?
                     .to_owned();
+
+                // Create a rough size for the new MAR entry
+                let mut estimated_entry_size = DiskSize::from(path.metadata()?);
+                estimated_entry_size.bytes += MAR_ENTRY_OVERHEAD_SIZE_ESTIMATE;
+                estimated_entry_size.inodes += 2;
+
+                mar_cleaner.clean(estimated_entry_size)?;
+
                 let mar_builder = MarEntryBuilder::new(&mar_staging_path)?
                     .set_metadata(Metadata::new_log(file_name, cid, next_cid, compression))
                     .add_attachment(path)?;
-
-                mar_cleaner.clean(mar_builder.estimated_entry_size())?;
 
                 // Move the log in the mar_staging area and add a manifest
                 let mar_entry = mar_builder.save(&network_config)?;
