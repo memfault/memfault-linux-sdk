@@ -4,22 +4,19 @@
 use std::{collections::HashMap, time::Duration};
 
 use chrono::Utc;
-use eyre::Result;
+use eyre::{eyre, ErrReport, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{
     build_info::VERSION,
-    metrics::MetricStringKey,
-    metrics::{MetricReportType, MetricValue},
-    network::DeviceConfigRevision,
-    network::NetworkConfig,
+    metrics::{KeyedMetricReading, MetricReading, MetricReportType, MetricStringKey, MetricValue},
+    network::{DeviceConfigRevision, NetworkConfig},
     reboot::RebootReason,
-    util::system::{get_system_clock, read_system_boot_id, Clock},
     util::{
         serialization::{milliseconds_to_duration, optional_milliseconds_to_duration},
-        system::{get_osrelease, get_ostype},
+        system::{get_osrelease, get_ostype, get_system_clock, read_system_boot_id, Clock},
     },
 };
 
@@ -218,6 +215,38 @@ impl<K: AsRef<str>, V: Into<Value>> TryFrom<(K, V)> for DeviceAttribute {
             string_key: str::parse(value.0.as_ref().trim())?,
             value: value.1.into(),
         })
+    }
+}
+
+impl TryFrom<DeviceAttribute> for KeyedMetricReading {
+    type Error = ErrReport;
+
+    fn try_from(attribute: DeviceAttribute) -> Result<Self, Self::Error> {
+        let timestamp = Utc::now();
+
+        let value = &attribute.value;
+        let reading = value
+            .as_f64()
+            .map(|value| MetricReading::Gauge { value, timestamp })
+            .or_else(|| {
+                value.as_str().map(|value| MetricReading::ReportTag {
+                    value: value.to_string(),
+                    timestamp,
+                })
+            })
+            .or_else(|| {
+                value
+                    .as_bool()
+                    .map(|value| MetricReading::Bool { value, timestamp })
+            });
+
+        match reading {
+            Some(reading) => Ok(KeyedMetricReading {
+                name: attribute.string_key,
+                value: reading,
+            }),
+            None => Err(eyre!("Unsupported attribute value type")),
+        }
     }
 }
 
@@ -548,5 +577,26 @@ mod tests {
     fn whitespace_trimmed_attribute(#[case] input_string: &str, #[case] expected: &str) {
         let attribute = DeviceAttribute::try_from((input_string, 42)).unwrap();
         assert_eq!(attribute.string_key.as_str(), expected);
+    }
+
+    #[rstest]
+    #[case(Value::from("string"))]
+    #[case(Value::from(42.0))]
+    #[case(Value::from(true))]
+    fn attribute_to_keyed_metric_reading(#[case] value: Value) {
+        let attribute = DeviceAttribute::try_from(("key", value.clone())).unwrap();
+        let reading = KeyedMetricReading::try_from(attribute).unwrap();
+
+        let actual_value = match reading.value {
+            MetricReading::Gauge { value, .. } => Value::from(value),
+            MetricReading::ReportTag { value, .. } => Value::from(value),
+            MetricReading::Bool { value, .. } => Value::from(value),
+            MetricReading::Histogram { value, .. } => Value::from(value),
+            MetricReading::Rssi { .. }
+            | MetricReading::Counter { .. }
+            | MetricReading::TimeWeightedAverage { .. } => unimplemented!(),
+        };
+
+        assert_eq!(actual_value, value);
     }
 }

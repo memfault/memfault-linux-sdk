@@ -249,6 +249,7 @@ pub struct SystemMetricConfig {
     pub poll_interval_seconds: Duration,
     pub processes: Option<HashSet<String>>,
     pub disk_space: Option<HashSet<String>>,
+    pub diskstats: Option<HashSet<String>>,
     pub network_interfaces: Option<HashSet<String>>,
 }
 

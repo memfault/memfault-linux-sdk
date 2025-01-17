@@ -2,7 +2,6 @@
 # Copyright (c) Memfault, Inc.
 # See License.txt for details
 import time
-from typing import Any
 
 import pytest
 
@@ -27,18 +26,19 @@ def test(qemu: QEMU, memfault_service_tester: MemfaultServiceTester, qemu_device
     # Poke memfaultd to upload now
     qemu.exec_cmd("memfaultctl sync")
 
-    # Wait until we have received attributes
+    # Wait until we have received at least one valid report.
     def _check() -> None:
-        attributes: Any = memfault_service_tester.list_attributes(device_serial=qemu_device_id)
-
-        assert attributes
-
-        d = {a["string_key"]: a["state"]["value"] for a in attributes if a["state"] is not None}
-
-        assert d["a_string"] == "running"
-        assert d["a_bool"] is False
-        assert d["a_boolish_string"] == "true"
-        assert d["a_float"] == 42.42
+        reports = memfault_service_tester.list_reports(
+            {"device_serial": qemu_device_id},
+            ignore_errors=True,
+        )
+        assert reports
+        # Note: sometimes the first heartbeat is an empty dict:
+        assert any(report["metrics"] for report in reports)
+        assert any(report["metrics"].get("a_string") == "running" for report in reports)
+        assert any(report["metrics"].get("a_bool") is False for report in reports)
+        assert any(report["metrics"].get("a_boolish_string") == "true" for report in reports)
+        assert any(report["metrics"].get("a_float") == 42.42 for report in reports)
 
     memfault_service_tester.poll_until_not_raising(_check, poll_interval_seconds=1)
 

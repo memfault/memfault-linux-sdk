@@ -16,4 +16,4 @@ pub use server::HttpServer;
 
 pub use utils::ConvenientHeader;
 
-pub use request_bodies::SessionRequest;
+pub use request_bodies::{MetricsRequest, SessionRequest};

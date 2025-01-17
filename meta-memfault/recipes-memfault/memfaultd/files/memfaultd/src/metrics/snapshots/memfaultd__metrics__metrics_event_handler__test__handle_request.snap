@@ -1,0 +1,9 @@
+---
+source: memfaultd/src/metrics/metrics_event_handler.rs
+expression: metrics
+snapshot_kind: text
+---
+{
+  "Carlton": 2.0,
+  "Daisy": 1.0
+}

@@ -64,7 +64,7 @@ impl HrtReport {
             self.rate_limiter
                 .run_within_limits(reading.value.timestamp(), |rate_limited_calls| {
                     if let Some(limited) = rate_limited_calls {
-                        warn!("{} HRT readings were rate limited.", limited.count);
+                        debug!("{} HRT readings were rate limited.", limited.count);
                     };
                     match self.readings.entry(reading.name.clone()) {
                         Entry::Occupied(mut o) => {
@@ -139,6 +139,7 @@ impl From<&KeyedMetricReading> for HrtReadingMetadata {
             MetricReading::Gauge { .. } => (HrtMetricType::Gauge, DataType::Double),
             MetricReading::Rssi { .. } => (HrtMetricType::Gauge, DataType::Double),
             MetricReading::ReportTag { .. } => (HrtMetricType::Property, DataType::String),
+            MetricReading::Bool { .. } => (HrtMetricType::Property, DataType::Boolean),
         };
 
         Self {

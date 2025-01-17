@@ -110,6 +110,8 @@ impl From<&KeyedMetricReading> for Datum {
             } => (timestamp.timestamp_millis(), value),
             // TODO: Add support for Strings in HRT
             MetricReading::ReportTag { timestamp, .. } => (timestamp.timestamp_millis(), 0.0),
+            // TODO: Add support for Booleans in HRT
+            MetricReading::Bool { timestamp, .. } => (timestamp.timestamp_millis(), 0.0),
         };
         Datum { t, value }
     }
