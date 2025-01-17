@@ -69,6 +69,10 @@ pub enum MetricReading {
         value: f64,
         timestamp: MetricTimestamp,
     },
+    Bool {
+        value: bool,
+        timestamp: MetricTimestamp,
+    },
 }
 
 impl MetricReading {
@@ -105,6 +109,7 @@ impl MetricReading {
             Self::ReportTag { timestamp, .. } => *timestamp,
             Self::TimeWeightedAverage { timestamp, .. } => *timestamp,
             Self::Rssi { timestamp, .. } => *timestamp,
+            Self::Bool { timestamp, .. } => *timestamp,
         }
     }
 }

@@ -34,7 +34,7 @@ use nom::{
 };
 
 use crate::metrics::{system_metrics::SystemMetricFamilyCollector, KeyedMetricReading};
-use crate::util::time_measure::TimeMeasure;
+use crate::util::{math::counter_delta_with_overflow, time_measure::TimeMeasure};
 
 const PROC_DIR: &str = "/proc/";
 pub const PROCESSES_METRIC_NAMESPACE: &str = "processes";
@@ -251,7 +251,10 @@ where
         // the given state), then divide by the total number of milliseconds since the
         // previous reading in order to give us the % of time this process caused
         // the CPU to spend in the user and system states.
-        let cputime_user_pct = (((current.cputime_user - previous.cputime_user)
+        let cputime_user_pct = ((counter_delta_with_overflow(
+            current.cputime_user as u64,
+            previous.cputime_user as u64,
+        ) as f64
             / self.clock_ticks_per_ms)
             / (current
                 .reading_time
@@ -259,7 +262,10 @@ where
                 .as_millis() as f64))
             * 100.0;
 
-        let cputime_sys_pct = (((current.cputime_system - previous.cputime_system)
+        let cputime_sys_pct = ((counter_delta_with_overflow(
+            current.cputime_system as u64,
+            previous.cputime_system as u64,
+        ) as f64
             / self.clock_ticks_per_ms)
             / (current
                 .reading_time
@@ -287,14 +293,20 @@ where
                 .as_str()
                 .parse()
                 .map_err(|e| eyre!("Couldn't parse metric key: {}", e))?,
-            current.pagefaults_minor - previous.pagefaults_minor,
+            counter_delta_with_overflow(
+                current.pagefaults_minor as u64,
+                previous.pagefaults_minor as u64,
+            ) as f64,
         );
         let pagefaults_major_reading = KeyedMetricReading::new_histogram(
             format!("processes/{}/pagefaults/major", current.name)
                 .as_str()
                 .parse()
                 .map_err(|e| eyre!("Couldn't parse metric key: {}", e))?,
-            current.pagefaults_major - previous.pagefaults_major,
+            counter_delta_with_overflow(
+                current.pagefaults_major as u64,
+                previous.pagefaults_major as u64,
+            ) as f64,
         );
 
         let _cpu_usage_process_pct = cputime_sys_pct + cputime_user_pct;

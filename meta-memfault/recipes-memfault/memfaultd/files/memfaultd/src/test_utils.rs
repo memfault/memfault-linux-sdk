@@ -145,4 +145,18 @@ pub fn in_counters(metrics: Vec<(&'static str, f64)>) -> impl Iterator<Item = Ke
         })
 }
 
+pub fn in_bools(metrics: Vec<(&'static str, bool)>) -> impl Iterator<Item = KeyedMetricReading> {
+    metrics
+        .into_iter()
+        .enumerate()
+        .map(|(i, (name, value))| KeyedMetricReading {
+            name: MetricStringKey::from_str(name).unwrap(),
+            value: MetricReading::Bool {
+                value,
+                timestamp: MetricTimestamp::from_str("1991-03-25T00:00:00Z").unwrap()
+                    + chrono::Duration::seconds(i as i64),
+            },
+        })
+}
+
 pub(crate) use set_snapshot_suffix;

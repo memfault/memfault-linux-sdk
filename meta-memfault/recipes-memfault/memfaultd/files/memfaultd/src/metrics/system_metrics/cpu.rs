@@ -41,13 +41,19 @@ use std::{
 use chrono::Utc;
 use log::debug;
 use nom::{
-    bytes::complete::tag, character::complete::space1, multi::count, number::complete::double,
-    sequence::preceded, IResult,
+    bytes::complete::tag,
+    character::complete::{space1, u64},
+    multi::count,
+    sequence::preceded,
+    IResult,
 };
 
-use crate::metrics::{
-    core_metrics::METRIC_CPU_USAGE_PCT, system_metrics::SystemMetricFamilyCollector,
-    KeyedMetricReading, MetricReading, MetricStringKey,
+use crate::{
+    metrics::{
+        core_metrics::METRIC_CPU_USAGE_PCT, system_metrics::SystemMetricFamilyCollector,
+        KeyedMetricReading, MetricReading, MetricStringKey,
+    },
+    util::math::counter_delta_with_overflow,
 };
 use eyre::{eyre, ErrReport, Result};
 
@@ -55,7 +61,7 @@ const PROC_STAT_PATH: &str = "/proc/stat";
 pub const CPU_METRIC_NAMESPACE: &str = "cpu";
 
 pub struct CpuMetricCollector {
-    last_reading: Option<Vec<f64>>,
+    last_reading: Option<Vec<u64>>,
 }
 
 impl CpuMetricCollector {
@@ -103,8 +109,8 @@ impl CpuMetricCollector {
     /// Parse the CPU stats from the suffix of a /proc/stat line following the cpu ID
     ///
     /// 7 or more space delimited integers are expected. Values after the 7th are discarded.
-    fn parse_cpu_stats(input: &str) -> IResult<&str, Vec<f64>> {
-        preceded(tag("cpu"), count(preceded(space1, double), 7))(input)
+    fn parse_cpu_stats(input: &str) -> IResult<&str, Vec<u64>> {
+        preceded(tag("cpu"), count(preceded(space1, u64), 7))(input)
     }
 
     /// Parse the output of a line of /proc/stat, returning
@@ -116,7 +122,7 @@ impl CpuMetricCollector {
     /// "softirq", in that order    
     /// Example of a valid parse-able line:
     /// cpu0 36675 176 11216 1552961 689 0 54
-    fn parse_proc_stat_line_cpu(line: &str) -> Result<Vec<f64>> {
+    fn parse_proc_stat_line_cpu(line: &str) -> Result<Vec<u64>> {
         let (_, cpu_stats) = Self::parse_cpu_stats(line)
             .map_err(|_e| eyre!("Failed to parse CPU stats line: {}", line))?;
         Ok(cpu_stats)
@@ -130,22 +136,22 @@ impl CpuMetricCollector {
     /// to calculate a delta from.
     fn delta_since_last_reading(
         &mut self,
-        cpu_stats: Vec<f64>,
+        cpu_stats: Vec<u64>,
     ) -> Result<Option<Vec<KeyedMetricReading>>> {
         // Check to make sure there was a previous reading to calculate a delta with
         if let Some(last_stats) = self.last_reading.replace(cpu_stats.clone()) {
             let delta = cpu_stats
                 .iter()
                 .zip(last_stats)
-                .map(|(current, previous)| current - previous);
+                .map(|(current, previous)| counter_delta_with_overflow(*current, previous));
 
             let cpu_states_with_ticks = zip(
                 ["user", "nice", "system", "idle", "iowait", "irq", "softirq"],
                 delta,
             )
-            .collect::<HashMap<&str, f64>>();
+            .collect::<HashMap<&str, u64>>();
 
-            let sum: f64 = cpu_states_with_ticks.values().sum();
+            let sum: f64 = cpu_states_with_ticks.values().sum::<u64>() as f64;
             let timestamp = Utc::now();
 
             let readings = cpu_states_with_ticks
@@ -159,7 +165,7 @@ impl CpuMetricCollector {
                         .map_err(|e| eyre!(e))?,
                         MetricReading::Histogram {
                             // Transform raw tick value to a percentage
-                            value: 100.0 * value / sum,
+                            value: 100.0 * *value as f64 / sum,
                             timestamp,
                         },
                     ))
@@ -167,7 +173,7 @@ impl CpuMetricCollector {
                 .collect::<Result<Vec<KeyedMetricReading>>>()?;
 
             if sum > 0.0 {
-                let _cpu_usage_pct = ((sum - cpu_states_with_ticks["idle"]) / sum) * 100.0;
+                let _cpu_usage_pct = ((sum - cpu_states_with_ticks["idle"] as f64) / sum) * 100.0;
                 let _cpu_usage_pct_key =
                     MetricStringKey::from_str(METRIC_CPU_USAGE_PCT).map_err(|e| {
                         eyre!("Failed to construct MetricStringKey for used memory: {}", e)

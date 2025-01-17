@@ -1,0 +1,14 @@
+---
+source: memfaultd/src/metrics/system_metrics/diskstats.rs
+expression: disk_stats
+---
+[
+  59,
+  125,
+  775,
+  15,
+  2,
+  0,
+  2,
+  0
+]

@@ -81,6 +81,7 @@ expression: content
       "poll_interval_seconds": 10,
       "processes": null,
       "disk_space": null,
+      "diskstats": null,
       "network_interfaces": null
     },
     "statsd_server": {

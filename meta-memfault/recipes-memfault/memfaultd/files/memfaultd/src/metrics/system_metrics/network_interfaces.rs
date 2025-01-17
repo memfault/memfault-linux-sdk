@@ -45,7 +45,7 @@ use crate::{
         system_metrics::SystemMetricFamilyCollector, KeyedMetricReading, MetricReading,
         MetricStringKey,
     },
-    util::time_measure::TimeMeasure,
+    util::{math::counter_delta_with_overflow, time_measure::TimeMeasure},
 };
 
 use eyre::{eyre, ErrReport, Result};
@@ -251,26 +251,6 @@ where
         Ok((interface_id.to_string(), wireless_stats))
     }
 
-    /// We need to account for potential rollovers in the
-    /// /proc/net/dev counters, handled by this function
-    fn counter_delta_with_overflow(current: u64, previous: u64) -> u64 {
-        // The only time a counter's value would be less
-        // that its previous value is if it rolled over
-        // due to overflow - drop these readings that overlap
-        // with an overflow
-        if current < previous {
-            // Need to detect if the counter rolled over at u32::MAX or u64::MAX
-            current
-                + ((if previous > u32::MAX as u64 {
-                    u64::MAX
-                } else {
-                    u32::MAX as u64
-                }) - previous)
-        } else {
-            current - previous
-        }
-    }
-
     /// Calculates network metrics     
     fn calculate_network_metrics(
         &mut self,
@@ -295,10 +275,8 @@ where
             let prev_interface_bytes_rx = previous_net_stats
                 .first()
                 .ok_or(eyre!("Previous reading is missing bytes received value"))?;
-            let interface_bytes_rx = Self::counter_delta_with_overflow(
-                *curr_interface_bytes_rx,
-                *prev_interface_bytes_rx,
-            );
+            let interface_bytes_rx =
+                counter_delta_with_overflow(*curr_interface_bytes_rx, *prev_interface_bytes_rx);
 
             // Bytes sent is the 9th numeric value in a /proc/net/dev line
             let curr_interface_bytes_tx = current_reading
@@ -308,10 +286,8 @@ where
             let prev_interface_bytes_tx = previous_net_stats
                 .get(8)
                 .ok_or(eyre!("Previous reading is missing bytes sent value"))?;
-            let interface_bytes_tx = Self::counter_delta_with_overflow(
-                *curr_interface_bytes_tx,
-                *prev_interface_bytes_tx,
-            );
+            let interface_bytes_tx =
+                counter_delta_with_overflow(*curr_interface_bytes_tx, *prev_interface_bytes_tx);
 
             *total_bytes_rx += interface_bytes_rx;
             *total_bytes_tx += interface_bytes_tx;
@@ -348,7 +324,7 @@ where
                     .iter()
                     .zip(previous_net_stats)
                     .map(|(current, previous)| {
-                        Self::counter_delta_with_overflow(*current, previous) as f64
+                        counter_delta_with_overflow(*current, previous) as f64
                             / (current_reading
                                 .reading_time
                                 .since(&previous_reading_time)

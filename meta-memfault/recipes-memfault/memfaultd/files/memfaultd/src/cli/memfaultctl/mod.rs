@@ -4,6 +4,7 @@
 use argh::{FromArgs, TopLevelCommand};
 use chrono::{DateTime, Utc};
 use std::{path::Path, str::FromStr, time::Duration};
+use write_metrics::write_metrics;
 
 mod add_battery_reading;
 mod config_file;
@@ -13,6 +14,7 @@ mod report_sync;
 mod session;
 mod sync;
 mod write_attributes;
+mod write_metrics;
 
 use crate::{
     cli::version::format_version,
@@ -108,6 +110,7 @@ enum MemfaultctlCommand {
     StartSession(StartSessionArgs),
     EndSession(EndSessionArgs),
     AddCustomDataRecording(AddCustomDataRecordingArgs),
+    WriteMetrics(WriteMetricsArgs),
 }
 
 #[derive(FromArgs)]
@@ -186,6 +189,15 @@ struct WriteAttributesArgs {
     /// attributes to write, in the format <VAR1=VAL1 ...>
     #[argh(positional)]
     attributes: Vec<DeviceAttribute>,
+}
+
+#[derive(FromArgs)]
+/// write metrics(s) to memfaultd
+#[argh(subcommand, name = "write-metrics")]
+struct WriteMetricsArgs {
+    /// metrics to write, in the format <VAR1=VAL1 ...>, or in statsd format <name:value|type ...>
+    #[argh(positional)]
+    metrics: Vec<KeyedMetricReading>,
 }
 
 #[derive(FromArgs)]
@@ -323,10 +335,11 @@ pub fn main() -> Result<()> {
                 ))
             } else {
                 check_data_collection_enabled(&config, "write attributes")?;
-                MarEntryBuilder::new(&mar_staging_path)?
-                    .set_metadata(Metadata::new_device_attributes(attributes))
-                    .save(&network_config)
-                    .map(|_entry| ())
+                let metrics = attributes
+                    .into_iter()
+                    .map(KeyedMetricReading::try_from)
+                    .collect::<Result<Vec<KeyedMetricReading>>>()?;
+                write_metrics(metrics, &config)
             }
         }
         MemfaultctlCommand::AddBatteryReading(AddBatteryReadingArgs { reading_string }) => {
@@ -378,6 +391,11 @@ pub fn main() -> Result<()> {
                 .add_copied_attachment(file_path)?
                 .save(&network_config)
                 .map(|_entry| ())
+        }
+        MemfaultctlCommand::WriteMetrics(WriteMetricsArgs { metrics }) => {
+            check_data_collection_enabled(&config, "write metrics")?;
+
+            write_metrics(metrics, &config)
         }
     }
 }

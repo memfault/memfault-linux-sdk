@@ -26,3 +26,14 @@ impl SessionRequest {
         }
     }
 }
+
+#[derive(Serialize, Deserialize)]
+pub struct MetricsRequest {
+    pub readings: Vec<KeyedMetricReading>,
+}
+
+impl MetricsRequest {
+    pub fn new(readings: Vec<KeyedMetricReading>) -> Self {
+        Self { readings }
+    }
+}

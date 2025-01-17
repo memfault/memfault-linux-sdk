@@ -1,0 +1,9 @@
+---
+source: memfaultd/src/metrics/metric_report.rs
+expression: sorted_metrics
+snapshot_kind: text
+---
+{
+  "bar": true,
+  "foo": false
+}

@@ -342,6 +342,46 @@ impl TimeSeries for RssiAverage {
     }
 }
 
+/// An aggregation stores the most recently received bool
+/// associated with a key as a tag on the report
+pub struct Bool {
+    value: bool,
+    end: DateTime<Utc>,
+}
+
+impl Bool {
+    pub fn new(reading: &MetricReading) -> Result<Self> {
+        match reading {
+            MetricReading::Bool { value, timestamp } => Ok(Self {
+                value: *value,
+                end: *timestamp,
+            }),
+            _ => Err(eyre!("Cannot create a bool from a non-bool reading")),
+        }
+    }
+}
+
+impl TimeSeries for Bool {
+    fn aggregate(&mut self, newer: &MetricReading) -> Result<()> {
+        match newer {
+            MetricReading::Bool { value, timestamp } => {
+                if *timestamp > self.end {
+                    self.value = *value;
+                    self.end = *timestamp;
+                }
+                Ok(())
+            }
+            _ => Err(eyre!(
+                "Cannot aggregate a report tag with a non-report-tag reading"
+            )),
+        }
+    }
+
+    fn value(&self) -> MetricValue {
+        MetricValue::Bool(self.value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
 

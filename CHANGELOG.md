@@ -6,6 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.0] - 2024-01-16
+This release introduces the new `memfaultctl write-metrics` command
+as well as some important bugfixes.
+
+### Added
+- `memfaultctl write-metrics`, which allows users to write
+metrics to `memfaultd` from a script or shell by specifying
+them as arguments to the command in the form `KEY=VALUE`.
+- 2 new built-in system metrics under the new `diskstats`
+metric category. These metrics follow the naming pattern
+`diskstats/<device name>/reads_per_second` and
+`diskstats/<device name>/writes_per_second` where 
+`<device name>` is the name of a device listed in
+`/proc/diskstats`. The list of devices monitored 
+can be configured with the `metrics.system_metric_collection.diskstats`
+configuration field.
+
+### Changed
+- The log message emitted when the MAR cleaner
+encounters an invalid MAR entry in the MAR 
+staging area has been lowered from `WARN` level
+to `DEBUG` level.
+- A log message emitted when the configured
+`high_resolution_telemetry.max_samples_per_minute`
+rate limit is violated has been lowered from `WARN`
+level to `DEBUG`. This is to avoid repeatedly 
+logging the same message at a high frequency 
+when the system is sending more readings than
+permitted. 
+
+### Fixed
+- All deltas calculated based on a current and previous
+counter from procfs now take potential overflow into account. 
+- Fixed a sequencing issue with the cleaning of the MAR directory 
+concerning an edge case where logs would fail to recover on 
+devices that are near their disk space or inode quotas. 
+This would result in stranded log files that would not 
+get deleted or uploaded to Memfault until there is enough 
+space to recover them.
+
 ## [1.16.1] - 2024-01-06
 
 This is a small release that adds coredump capture support for 32-bit ARM
@@ -1182,3 +1222,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.16.0-kirkstone
 [1.16.1]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.16.1-kirkstone
+[1.17.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.17.0-kirkstone

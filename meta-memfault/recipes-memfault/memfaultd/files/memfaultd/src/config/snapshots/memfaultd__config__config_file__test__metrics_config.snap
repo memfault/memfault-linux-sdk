@@ -75,6 +75,7 @@ expression: content
       "disk_space": [
         "/dev/sda1"
       ],
+      "diskstats": null,
       "network_interfaces": [
         "eth1"
       ]

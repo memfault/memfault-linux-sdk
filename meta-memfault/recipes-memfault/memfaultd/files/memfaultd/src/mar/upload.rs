@@ -33,7 +33,7 @@ use std::path::{Path, PathBuf};
 
 use eyre::{eyre, Context, Result};
 use itertools::Itertools;
-use log::{trace, warn};
+use log::{debug, trace};
 
 use crate::{
     config::{Resolution, Sampling},
@@ -126,7 +126,7 @@ pub fn gather_mar_entries_to_zip(
             entry_and_infos
         }
         Err(e) => {
-            warn!("Invalid folder in MAR staging: {:?}", e);
+            debug!("Invalid folder in MAR staging: {:?}", e);
             None
         }
     });
