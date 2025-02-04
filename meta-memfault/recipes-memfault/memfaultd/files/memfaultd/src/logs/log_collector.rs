@@ -3,29 +3,29 @@
 // See License.txt for details
 //! Collect logs into log files and save them as MAR entries.
 //!
-use std::io::Cursor;
-use std::num::NonZeroU32;
+use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Arc;
 use std::time::Duration;
-use std::{fs, thread};
-use std::{path::PathBuf, sync::Mutex};
+use std::{fs, sync::atomic::AtomicUsize};
+use std::{io::Cursor, sync::Arc};
+use std::{num::NonZeroU32, sync::atomic::Ordering};
 
 use chrono::{DateTime, Utc};
 use eyre::{eyre, Context, Result};
 use flate2::Compression;
-use log::{error, trace, warn};
+use log::warn;
 use serde::{Deserialize, Serialize};
+use ssf::{Handler, MsgMailbox, Service};
 use tiny_http::{Header, Method, Request, Response, ResponseBox, StatusCode};
 
 use crate::config::{Config, Resolution};
+use crate::http_server::HttpHandlerResult;
 use crate::{config::LogToMetricRule, logs::completed_log::CompletedLog};
 use crate::{config::StorageConfig, http_server::ConvenientHeader};
 use crate::{
     http_server::HttpHandler,
     logs::log_file::{LogFile, LogFileControl, LogFileControlImpl},
 };
-use crate::{http_server::HttpHandlerResult, logs::recovery::recover_old_logs};
 use crate::{logs::headroom::HeadroomCheck, util::circular_queue::CircularQueue};
 use crate::{metrics::MetricsMBox, util::rate_limiter::RateLimiter};
 
@@ -40,10 +40,13 @@ use super::log_level_mapper::LogLevelMapper;
 #[cfg(feature = "regex")]
 use crate::config::LevelMappingConfig;
 
-use super::log_entry::LogEntry;
+use super::{
+    log_entry::LogEntry,
+    messages::{FlushLogsMsg, GetQueuedLogsMsg, LogEntryMsg, RecoverLogsMsg, RotateIfNeededMsg},
+};
 
 pub struct LogCollector<H: HeadroomCheck + Send + 'static> {
-    inner: Arc<Mutex<Option<Inner<H>>>>,
+    inner: Option<Inner<H>>,
 }
 
 impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
@@ -60,7 +63,7 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
     pub fn open<R: FnMut(CompletedLog) -> Result<()> + Send + 'static>(
         log_config: LogCollectorConfig,
         logging_resolution: Resolution,
-        mut on_log_completion: R,
+        on_log_completion: R,
         headroom_limiter: H,
         #[cfg_attr(not(feature = "regex"), allow(unused_variables))] metrics_mbox: MetricsMBox,
     ) -> Result<(Self, Sender<Resolution>)> {
@@ -72,7 +75,6 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
         })?;
 
         // Collect any leftover logfiles in the tmp folder
-        let next_cid = recover_old_logs(&log_config.log_tmp_path, &mut on_log_completion)?;
         #[cfg(feature = "regex")]
         let level_mapper = if log_config.level_mapping_config.enable {
             Some(LogLevelMapper::try_from(&log_config.level_mapping_config)?)
@@ -94,10 +96,9 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
 
         Ok((
             Self {
-                inner: Arc::new(Mutex::new(Some(Inner {
+                inner: Some(Inner {
                     log_file_control: LogFileControlImpl::open(
                         log_config.log_tmp_path,
-                        next_cid,
                         log_config.log_max_size,
                         log_config.log_max_duration,
                         log_config.log_compression_level,
@@ -116,66 +117,17 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
                     level_mapper,
                     logging_resolution,
                     logging_resolution_receiver,
-                }))),
+                }),
             },
             logging_resolution_sender,
         ))
     }
 
-    /// Spawn a thread to read log records from receiver.
-    pub fn spawn_collect_from<T: Iterator<Item = LogEntry> + Send + 'static>(&self, source: T) {
-        // Clone the atomic reference counting "pointer" (not the inner struct itself)
-        let c = self.inner.clone();
-
-        thread::spawn(move || {
-            for line in source {
-                match c.lock() {
-                    Ok(mut inner_opt) => {
-                        match &mut *inner_opt {
-                            Some(inner) => {
-                                if let Err(e) = inner.process_log_record(line) {
-                                    warn!("Error writing log: {:?}", e);
-                                }
-                            }
-                            // log_collector has shutdown. exit the thread cleanly.
-                            None => return,
-                        }
-                    }
-                    Err(e) => {
-                        // This should never happen but we are unable to recover from this so bail out.
-                        error!("Log collector got into an unrecoverable state: {}", e);
-                        std::process::exit(-1);
-                    }
-                }
-            }
-            trace!("Log collection thread shutting down - Channel closed");
-        });
-    }
-
-    /// Get a handler for the /api/v1/crash-logs endpoint
-    pub fn crash_log_handler(&self) -> CrashLogHandler<H> {
-        CrashLogHandler::new(self.inner.clone())
-    }
-
-    /// Force the log_collector to close the current log and generate a MAR entry.
-    pub fn flush_logs(&mut self) -> Result<()> {
-        self.with_mut_inner(|inner| inner.log_file_control.rotate_unless_empty().map(|_| ()))
-    }
-
-    /// Rotate the logs if needed
-    pub fn rotate_if_needed(&mut self) -> Result<bool> {
-        self.with_mut_inner(|inner| inner.rotate_if_needed())
-    }
-
     /// Try to get the inner log_collector or return an error
     fn with_mut_inner<T, F: FnOnce(&mut Inner<H>) -> Result<T>>(&mut self, fun: F) -> Result<T> {
-        let mut inner_opt = self
-            .inner
-            .lock()
-            // This should never happen so we choose to panic in this case.
-            .expect("Fatal: log_collector mutex is poisoned.");
+        let mut inner_opt = &mut self.inner;
 
-        match &mut *inner_opt {
+        match &mut inner_opt {
             Some(inner) => fun(inner),
             None => Err(eyre!("Log collector has already shutdown.")),
         }
@@ -184,19 +136,11 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
     /// Close and dispose of the inner log collector.
     /// This is not public because it does not consume self (to be compatible with drop()).
     fn close_internal(&mut self) -> Result<()> {
-        match self.inner.lock() {
-            Ok(mut inner_opt) => {
-                match (*inner_opt).take() {
-                    Some(inner) => inner.log_file_control.close(),
-                    None => {
-                        // Already closed.
-                        Ok(())
-                    }
-                }
-            }
-            Err(_) => {
-                // Should never happen.
-                panic!("Log collector is poisoned.")
+        match self.inner.take() {
+            Some(inner) => inner.log_file_control.close(),
+            None => {
+                // Already closed.
+                Ok(())
             }
         }
     }
@@ -207,6 +151,47 @@ impl<H: HeadroomCheck + Send> Drop for LogCollector<H> {
         if let Err(e) = self.close_internal() {
             warn!("Error closing log collector: {}", e);
         }
+    }
+}
+
+impl<H: HeadroomCheck + Send> Service for LogCollector<H> {
+    fn name(&self) -> &str {
+        "LogCollector"
+    }
+}
+
+impl<H: HeadroomCheck + Send + 'static> Handler<FlushLogsMsg> for LogCollector<H> {
+    fn deliver(&mut self, _m: FlushLogsMsg) -> <FlushLogsMsg as ssf::Message>::Reply {
+        self.with_mut_inner(|inner| inner.log_file_control.rotate_unless_empty().map(|_| ()))
+    }
+}
+
+impl<H: HeadroomCheck + Send + 'static> Handler<GetQueuedLogsMsg> for LogCollector<H> {
+    fn deliver(&mut self, _m: GetQueuedLogsMsg) -> <GetQueuedLogsMsg as ssf::Message>::Reply {
+        let logs = self.with_mut_inner(|inner| inner.get_log_queue())?;
+
+        Ok(logs)
+    }
+}
+
+impl<H: HeadroomCheck + Send + 'static> Handler<RotateIfNeededMsg> for LogCollector<H> {
+    fn deliver(&mut self, _m: RotateIfNeededMsg) -> <RotateIfNeededMsg as ssf::Message>::Reply {
+        self.with_mut_inner(|inner| inner.rotate_if_needed())
+    }
+}
+
+impl<H: HeadroomCheck + Send + 'static> Handler<LogEntryMsg> for LogCollector<H> {
+    fn deliver(&mut self, m: LogEntryMsg) -> <LogEntryMsg as ssf::Message>::Reply {
+        if m.dropped_msg_count > 0 {
+            warn!("Dropped {} log messages", m.dropped_msg_count);
+        }
+        self.with_mut_inner(|inner| inner.process_log_record(m.entry))
+    }
+}
+
+impl<H: HeadroomCheck + Send + 'static> Handler<RecoverLogsMsg> for LogCollector<H> {
+    fn deliver(&mut self, _m: RecoverLogsMsg) -> <RecoverLogsMsg as ssf::Message>::Reply {
+        self.with_mut_inner(|inner| inner.log_file_control.recover_logs())
     }
 }
 
@@ -290,10 +275,6 @@ impl<H: HeadroomCheck> Inner<H> {
             || matches!(self.logging_resolution, Resolution::Normal)
     }
 
-    fn rotate_if_needed(&mut self) -> Result<bool> {
-        self.log_file_control.rotate_if_needed()
-    }
-
     pub fn get_log_queue(&mut self) -> Result<Vec<String>> {
         let logs = self
             .log_queue
@@ -302,6 +283,10 @@ impl<H: HeadroomCheck> Inner<H> {
             .collect::<Result<Vec<String>, _>>()?;
 
         Ok(logs)
+    }
+
+    fn rotate_if_needed(&mut self) -> Result<bool> {
+        self.log_file_control.rotate_if_needed()
     }
 }
 
@@ -358,6 +343,42 @@ impl From<&Config> for LogCollectorConfig {
     }
 }
 
+#[derive(Clone)]
+pub struct LogEntrySender {
+    sender: MsgMailbox<LogEntryMsg>,
+    dropped_msg_count: Arc<AtomicUsize>,
+}
+
+impl LogEntrySender {
+    pub fn new(sender: MsgMailbox<LogEntryMsg>) -> Self {
+        Self {
+            sender,
+            dropped_msg_count: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    pub fn send_entry(&self, entry: LogEntry) -> Result<()> {
+        let log_entry_msg = LogEntryMsg::new(entry, self.dropped_msg_count.load(Ordering::Relaxed));
+
+        match self.sender.send_and_forget(log_entry_msg) {
+            Ok(_) => self.dropped_msg_count.store(0, Ordering::Relaxed),
+            Err(e) => match e {
+                ssf::MailboxError::SendChannelClosed => {
+                    return Err(eyre!("Journald channel dropped: {}", e));
+                }
+                ssf::MailboxError::NoResponse => {
+                    return Err(eyre!("Unexpected service response"));
+                }
+                ssf::MailboxError::SendChannelFull => {
+                    self.dropped_msg_count.fetch_add(1, Ordering::Relaxed);
+                }
+            },
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 /// A list of crash logs.
 ///
@@ -367,13 +388,13 @@ pub struct CrashLogs {
 }
 
 /// A handler for the /api/v1/crash-logs endpoint.
-pub struct CrashLogHandler<H: HeadroomCheck + Send + 'static> {
-    inner: Arc<Mutex<Option<Inner<H>>>>,
+pub struct CrashLogHandler {
+    collector_mbox: MsgMailbox<GetQueuedLogsMsg>,
 }
 
-impl<H: HeadroomCheck + Send + 'static> CrashLogHandler<H> {
-    fn new(inner: Arc<Mutex<Option<Inner<H>>>>) -> Self {
-        Self { inner }
+impl CrashLogHandler {
+    pub fn new(collector_mbox: MsgMailbox<GetQueuedLogsMsg>) -> Self {
+        Self { collector_mbox }
     }
 
     /// Handle a GET request to /api/v1/crash-logs
@@ -381,12 +402,9 @@ impl<H: HeadroomCheck + Send + 'static> CrashLogHandler<H> {
     /// Will take a snapshot of the current circular queue and return it as a JSON array.
     fn handle_get_crash_logs(&self) -> Result<ResponseBox> {
         let logs = self
-            .inner
-            .lock()
-            .expect("Log collector mutex poisoned")
-            .as_mut()
-            .ok_or_else(|| eyre!("Log collector has already shutdown."))?
-            .get_log_queue()?;
+            .collector_mbox
+            .send_and_wait_for_reply(GetQueuedLogsMsg)??;
+
         let crash_logs = CrashLogs { logs };
 
         let serialized_logs = serde_json::to_string(&crash_logs)?;
@@ -402,7 +420,7 @@ impl<H: HeadroomCheck + Send + 'static> CrashLogHandler<H> {
     }
 }
 
-impl<H: HeadroomCheck + Send + 'static> HttpHandler for CrashLogHandler<H> {
+impl HttpHandler for CrashLogHandler {
     fn handle_request(&self, request: &mut Request) -> HttpHandlerResult {
         if request.url() == CRASH_LOGS_URL {
             match *request.method() {
@@ -417,11 +435,11 @@ impl<H: HeadroomCheck + Send + 'static> HttpHandler for CrashLogHandler<H> {
 
 #[cfg(test)]
 mod tests {
-    use std::cmp::min;
     use std::fs::remove_file;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc::{channel, Receiver};
     use std::sync::Arc;
+    use std::{cmp::min, sync::Mutex};
     use std::{io::Write, path::PathBuf, time::Duration};
     use std::{mem::replace, num::NonZeroU32};
 
@@ -438,7 +456,7 @@ mod tests {
     use eyre::Context;
     use flate2::Compression;
     use rstest::{fixture, rstest};
-    use ssf::ServiceMock;
+    use ssf::{ServiceMock, SharedServiceThread};
     use tempfile::{tempdir, TempDir};
     use tiny_http::{Method, TestRequest};
     use uuid::Uuid;
@@ -524,7 +542,12 @@ mod tests {
     #[rstest]
     fn do_not_create_newfile_on_close(mut fixture: LogFixture) {
         fixture.write_log(test_line());
-        fixture.collector.close_internal().expect("error closing");
+        fixture
+            .collector
+            .lock()
+            .unwrap()
+            .close_internal()
+            .expect("error closing");
         // 0 because the fixture "on_log_completion" moves the file out
         assert_eq!(fixture.count_log_files(), 0);
         assert_eq!(fixture.on_log_completion_calls(), 1);
@@ -552,7 +575,12 @@ mod tests {
     fn forced_rotation_with_nonempty_log(mut fixture: LogFixture) {
         fixture.write_log(test_line());
 
-        fixture.collector.flush_logs().unwrap();
+        fixture
+            .service
+            .mbox()
+            .send_and_wait_for_reply(FlushLogsMsg)
+            .unwrap()
+            .unwrap();
 
         assert_eq!(fixture.count_log_files(), 0);
         assert_eq!(fixture.on_log_completion_calls(), 1);
@@ -565,7 +593,12 @@ mod tests {
             .store(true, Ordering::Relaxed);
         fixture.write_log(test_line());
 
-        fixture.collector.flush_logs().unwrap();
+        fixture
+            .service
+            .mbox()
+            .send_and_wait_for_reply(FlushLogsMsg)
+            .unwrap()
+            .unwrap();
 
         assert_eq!(fixture.on_log_completion_calls(), 1);
 
@@ -575,8 +608,13 @@ mod tests {
     }
 
     #[rstest]
-    fn forced_rotation_with_empty_log(mut fixture: LogFixture) {
-        fixture.collector.flush_logs().unwrap();
+    fn forced_rotation_with_empty_log(fixture: LogFixture) {
+        fixture
+            .service
+            .mbox()
+            .send_and_wait_for_reply(FlushLogsMsg)
+            .unwrap()
+            .unwrap();
 
         assert_eq!(fixture.count_log_files(), 0);
         assert_eq!(fixture.on_log_completion_calls(), 0);
@@ -585,7 +623,12 @@ mod tests {
     #[rstest]
     fn forced_rotation_with_write_after_rotate(mut fixture: LogFixture) {
         fixture.write_log(test_line());
-        fixture.collector.flush_logs().unwrap();
+        fixture
+            .service
+            .mbox()
+            .send_and_wait_for_reply(FlushLogsMsg)
+            .unwrap()
+            .unwrap();
 
         fixture.write_log(test_line());
         assert_eq!(fixture.count_log_files(), 1);
@@ -597,6 +640,25 @@ mod tests {
         let (tmp_logs, _old_file_path) = existing_tmplogs_with_log(&(Uuid::new_v4().to_string()));
         let fixture = collector_with_logs_dir(tmp_logs);
 
+        let mbox = fixture.service.mbox();
+        mbox.send_and_wait_for_reply(RecoverLogsMsg)
+            .unwrap()
+            .unwrap();
+
+        // We should have generated a MAR entry for the pre-existing logfile.
+        assert_eq!(fixture.on_log_completion_calls(), 1);
+    }
+
+    #[rstest]
+    fn recover_old_logfiles_on_entry() {
+        let (tmp_logs, _old_file_path) = existing_tmplogs_with_log(&(Uuid::new_v4().to_string()));
+        let fixture = collector_with_logs_dir(tmp_logs);
+
+        let mbox = fixture.service.mbox();
+        let entry = LogEntry::new_with_message("test");
+        let entry_msg = LogEntryMsg::new(entry, 0);
+        mbox.send_and_wait_for_reply(entry_msg).unwrap().unwrap();
+
         // We should have generated a MAR entry for the pre-existing logfile.
         assert_eq!(fixture.on_log_completion_calls(), 1);
     }
@@ -605,6 +667,11 @@ mod tests {
     fn delete_files_that_are_not_uuids() {
         let (tmp_logs, old_file_path) = existing_tmplogs_with_log("testfile");
         let fixture = collector_with_logs_dir(tmp_logs);
+
+        let mbox = fixture.service.mbox();
+        mbox.send_and_wait_for_reply(RecoverLogsMsg)
+            .unwrap()
+            .unwrap();
 
         // And we should have removed the bogus file
         assert!(!old_file_path.exists());
@@ -630,8 +697,7 @@ mod tests {
             fixture.write_log(log.clone());
         }
 
-        let inner = fixture.collector.inner.clone();
-        let handler = CrashLogHandler::new(inner);
+        let handler = CrashLogHandler::new(fixture.service.mbox().into());
 
         let log_response = handler.handle_get_crash_logs().unwrap();
         let mut log_response_string = String::new();
@@ -650,8 +716,7 @@ mod tests {
     #[case(Method::Delete)]
     #[case(Method::Patch)]
     fn http_handler_unsupported_method(fixture: LogFixture, #[case] method: Method) {
-        let inner = fixture.collector.inner.clone();
-        let handler = CrashLogHandler::new(inner);
+        let handler = CrashLogHandler::new(fixture.service.mbox().into());
 
         let request = TestRequest::new()
             .with_path(CRASH_LOGS_URL)
@@ -664,12 +729,42 @@ mod tests {
 
     #[rstest]
     fn unhandled_url(fixture: LogFixture) {
-        let inner = fixture.collector.inner.clone();
-        let handler = CrashLogHandler::new(inner);
+        let handler = CrashLogHandler::new(fixture.service.mbox().into());
 
         let request = TestRequest::new().with_path("/api/v1/other");
         let response = handler.handle_request(&mut request.into());
         assert!(matches!(response, HttpHandlerResult::NotHandled));
+    }
+
+    #[rstest]
+    fn entry_sender_fail_counter_inc() {
+        let mut service = ServiceMock::new_bounded(1);
+        let sender = LogEntrySender::new(service.mbox.clone());
+        let entry = LogEntry::new_with_message("Test");
+
+        sender.send_entry(entry.clone()).unwrap();
+        sender.send_entry(entry.clone()).unwrap();
+
+        let messages = service.take_messages();
+
+        // We should only have 1 entry at this point
+        assert_eq!(messages.len(), 1);
+
+        sender.send_entry(entry.clone()).unwrap();
+
+        let messages = service.take_messages();
+
+        // Verify that we have 1 message dropped
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].dropped_msg_count, 1);
+
+        sender.send_entry(entry).unwrap();
+
+        let messages = service.take_messages();
+
+        // Verify that we now have no messages dropped
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].dropped_msg_count, 0);
     }
 
     fn existing_tmplogs_with_log(filename: &str) -> (TempDir, PathBuf) {
@@ -687,7 +782,8 @@ mod tests {
     }
 
     struct LogFixture {
-        collector: LogCollector<StubHeadroomLimiter>,
+        collector: Arc<Mutex<LogCollector<StubHeadroomLimiter>>>,
+        service: SharedServiceThread<LogCollector<StubHeadroomLimiter>>,
         // TempDir needs to be after the collector, otherwise we fail to delete
         // the file in LogCollector::Drop because the tempdir is gone
         logs_dir: TempDir,
@@ -701,12 +797,16 @@ mod tests {
 
         fn write_log(&mut self, line: LogEntry) {
             self.collector
+                .lock()
+                .unwrap()
                 .with_mut_inner(|inner| inner.process_log_record(line))
                 .unwrap();
         }
 
         fn read_log_len(&mut self) -> usize {
             self.collector
+                .lock()
+                .unwrap()
                 .with_mut_inner(|inner| {
                     let log = inner.log_file_control.current_log()?;
                     Ok(log.bytes_written())
@@ -716,6 +816,8 @@ mod tests {
 
         fn flush_log_writes(&mut self) -> Result<()> {
             self.collector
+                .lock()
+                .unwrap()
                 .with_mut_inner(|inner| inner.log_file_control.current_log()?.flush())
         }
 
@@ -725,12 +827,16 @@ mod tests {
 
         fn get_log_queue(&mut self) -> CircularQueue<LogEntry> {
             self.collector
+                .lock()
+                .unwrap()
                 .with_mut_inner(|inner| Ok(replace(&mut inner.log_queue, CircularQueue::new(100))))
                 .unwrap()
         }
 
         fn set_log_config(&mut self, storage_config: StorageConfig) {
             self.collector
+                .lock()
+                .unwrap()
                 .with_mut_inner(|inner| {
                     inner.storage_config = storage_config;
                     Ok(())
@@ -802,9 +908,12 @@ mod tests {
             .unwrap()
         };
 
+        let log_collector_service = SharedServiceThread::spawn_with(collector);
+
         LogFixture {
             logs_dir,
-            collector,
+            collector: log_collector_service.shared(),
+            service: log_collector_service,
             on_log_completion_receiver,
             on_completion_should_fail,
         }

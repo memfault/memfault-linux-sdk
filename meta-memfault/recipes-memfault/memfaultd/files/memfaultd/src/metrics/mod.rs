@@ -54,6 +54,7 @@ mod metrics_event_handler;
 pub use metrics_event_handler::MetricsEventHandler;
 
 pub mod core_metrics;
+pub mod internal_metrics;
 
 pub mod statsd_server;
 pub use statsd_server::StatsDServer;

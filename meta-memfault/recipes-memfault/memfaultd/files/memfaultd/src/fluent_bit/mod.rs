@@ -17,7 +17,6 @@
 //! fluent-bitbit server.
 //!
 use std::net::TcpStream;
-use std::sync::mpsc::{Receiver, SyncSender};
 use std::{collections::HashMap, net::SocketAddr};
 
 use chrono::{DateTime, Utc};
@@ -25,10 +24,15 @@ use eyre::{eyre, Error, Result};
 use log::warn;
 use rmp_serde::Deserializer;
 use serde::{Deserialize, Serialize};
+use ssf::MsgMailbox;
 
 use crate::{
     config::Config,
-    logs::log_entry::{LogData, LogEntry},
+    logs::{
+        log_collector::LogEntrySender,
+        log_entry::{LogData, LogEntry},
+        messages::LogEntryMsg,
+    },
 };
 use crate::{
     logs::log_entry::LogValue,
@@ -107,19 +111,27 @@ impl TryFrom<FluentdMessage> for LogEntry {
 
 #[derive(Clone)]
 pub struct FluentBitConnectionHandler {
-    sender: SyncSender<FluentdMessage>,
+    sender: LogEntrySender,
+    extra_fields: Vec<String>,
 }
 
 impl FluentBitConnectionHandler {
     /// Starts the fluent-bit server with a handler delivers parsed messages to a receiver channel.
-    pub fn start(config: FluentBitConfig) -> Result<(ThreadedTcpServer, Receiver<FluentdMessage>)> {
-        let (sender, receiver) = std::sync::mpsc::sync_channel(config.max_buffered_lines);
+    pub fn start(
+        config: FluentBitConfig,
+        sender: MsgMailbox<LogEntryMsg>,
+        extra_fields: Vec<String>,
+    ) -> Result<ThreadedTcpServer> {
+        let sender = LogEntrySender::new(sender);
         let server = ThreadedTcpServer::start(
             config.bind_address,
             config.max_connections,
-            FluentBitConnectionHandler { sender },
+            FluentBitConnectionHandler {
+                sender,
+                extra_fields,
+            },
         )?;
-        Ok((server, receiver))
+        Ok(server)
     }
 
     /// Starts the fluent-bit server with a handler that drops all data.
@@ -132,6 +144,18 @@ impl FluentBitConnectionHandler {
             TcpNullConnectionHandler {},
         )
     }
+
+    /// Convert a FluentdMessage into a serde_json::Value that we can log.
+    ///
+    /// Returns None when this message should be filtered out. This can happen
+    /// if the message does not contain a `MESSAGE` field. Indicating that it is
+    /// not a log message.
+    fn convert_message(msg: FluentdMessage, extra_fields: &[String]) -> Result<LogEntry> {
+        let mut log_entry = LogEntry::try_from(msg)?;
+        log_entry.filter_extra_fields(extra_fields);
+
+        Ok(log_entry)
+    }
 }
 
 impl TcpConnectionHandler for FluentBitConnectionHandler {
@@ -141,7 +165,8 @@ impl TcpConnectionHandler for FluentBitConnectionHandler {
         loop {
             match FluentdMessage::deserialize(&mut de) {
                 Ok(msg) => {
-                    if self.sender.send(msg).is_err() {
+                    let msg = FluentBitConnectionHandler::convert_message(msg, &self.extra_fields)?;
+                    if self.sender.send_entry(msg).is_err() {
                         // An error indicates that the channel has been closed, we should
                         // kill this thread.
                         break;
@@ -167,7 +192,6 @@ impl TcpConnectionHandler for FluentBitConnectionHandler {
 
 pub struct FluentBitConfig {
     bind_address: SocketAddr,
-    max_buffered_lines: usize,
     max_connections: usize,
 }
 
@@ -175,7 +199,6 @@ impl From<&Config> for FluentBitConfig {
     fn from(config: &Config) -> Self {
         Self {
             bind_address: config.config_file.fluent_bit.bind_address,
-            max_buffered_lines: config.config_file.fluent_bit.max_buffered_lines,
             max_connections: config.config_file.fluent_bit.max_connections,
         }
     }
@@ -184,12 +207,10 @@ impl From<&Config> for FluentBitConfig {
 #[cfg(test)]
 mod tests {
     use std::net::TcpListener;
-    use std::{
-        io::Write, net::Shutdown, sync::mpsc::sync_channel, thread, thread::JoinHandle,
-        time::Duration,
-    };
+    use std::{io::Write, net::Shutdown, thread, thread::JoinHandle, time::Duration};
 
     use rstest::{fixture, rstest};
+    use ssf::ServiceMock;
 
     use crate::test_utils::setup_logger;
 
@@ -205,8 +226,8 @@ mod tests {
             connection.client.shutdown(Shutdown::Both).unwrap();
 
             // Make sure there is nothing received
-            let received = connection.receiver.recv();
-            assert!(received.is_err());
+            let received = connection.service.take_messages();
+            assert!(received.is_empty());
 
             // The handler should return without an error
             assert!(connection.thread.join().is_ok());
@@ -222,11 +243,13 @@ mod tests {
         connection.client.write_all(&message.bytes).unwrap();
         connection.client.shutdown(Shutdown::Both).unwrap();
 
+        thread::sleep(Duration::from_millis(5));
         // Make sure message is received
-        let received = connection.receiver.recv().unwrap();
-        assert_eq!(received.0, message.msg.0);
+        let received = connection.service.take_messages();
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].entry.ts, message.msg.0);
         assert_eq!(
-            serde_json::to_string(&received.1).unwrap(),
+            serde_json::to_string(&received[0].entry.data).unwrap(),
             serde_json::to_string(&message.msg.1).unwrap()
         );
 
@@ -250,11 +273,15 @@ mod tests {
         connection.client.write_all(buf2).unwrap();
         connection.client.shutdown(Shutdown::Both).unwrap();
 
+        thread::sleep(Duration::from_millis(5));
         // Make sure message is received
-        let received = connection.receiver.recv().unwrap();
-        assert_eq!(received.0, message.msg.0);
+        let received = connection.service.take_messages();
+        assert_eq!(received.len(), 1);
+
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].entry.ts, message.msg.0);
         assert_eq!(
-            serde_json::to_string(&received.1).unwrap(),
+            serde_json::to_string(&received[0].entry.data).unwrap(),
             serde_json::to_string(&message.msg.1).unwrap()
         );
 
@@ -274,20 +301,20 @@ mod tests {
         connection.client.write_all(&buf).unwrap();
         connection.client.shutdown(Shutdown::Both).unwrap();
 
+        thread::sleep(Duration::from_millis(5));
         // Make sure two messages are received
-        let received1 = connection.receiver.recv().unwrap();
-        let received2 = connection.receiver.recv().unwrap();
-        assert_eq!(received1.0, message.msg.0);
-        assert_eq!(
-            serde_json::to_string(&received1.1).unwrap(),
-            serde_json::to_string(&message.msg.1).unwrap()
-        );
-
-        assert_eq!(received2.0, message2.msg.0);
-        assert_eq!(
-            serde_json::to_string(&received2.1).unwrap(),
-            serde_json::to_string(&message2.msg.1).unwrap()
-        );
+        let received = connection.service.take_messages();
+        assert_eq!(received.len(), 2);
+        received
+            .into_iter()
+            .zip([&message.msg, &message2.msg].iter())
+            .for_each(|(log, msg)| {
+                assert_eq!(log.entry.ts, msg.0);
+                assert_eq!(
+                    serde_json::to_string(&log.entry.data).unwrap(),
+                    serde_json::to_string(&msg.1).unwrap()
+                );
+            });
 
         // The handler should return without an error
         assert!(connection.thread.join().is_ok());
@@ -367,10 +394,7 @@ mod tests {
         connection.client.write_all(&buf).unwrap();
 
         // Make sure one messages is received
-        let _received1 = connection
-            .receiver
-            .recv_timeout(Duration::from_millis(10))
-            .unwrap();
+        let _received1 = connection.service.take_messages();
 
         // The handler should return without an error
         connection.client.shutdown(Shutdown::Both).unwrap();
@@ -380,25 +404,30 @@ mod tests {
     struct FluentBitFixture {
         client: TcpStream,
         thread: JoinHandle<Result<()>>,
-        receiver: Receiver<FluentdMessage>,
+        service: ServiceMock<LogEntryMsg>,
     }
 
     #[fixture]
     fn connection() -> FluentBitFixture {
-        let (sender, receiver) = sync_channel(1);
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let local_address = listener.local_addr().unwrap();
+        let service = ServiceMock::new();
+        let sender = service.mbox.clone();
 
         let client = TcpStream::connect(local_address).unwrap();
         let (server, _) = listener.accept().unwrap();
 
-        let handler = FluentBitConnectionHandler { sender };
+        let sender = LogEntrySender::new(sender);
+        let handler = FluentBitConnectionHandler {
+            sender,
+            extra_fields: vec![],
+        };
         let thread = thread::spawn(move || handler.handle_connection(server));
 
         FluentBitFixture {
             client,
             thread,
-            receiver,
+            service,
         }
     }
 

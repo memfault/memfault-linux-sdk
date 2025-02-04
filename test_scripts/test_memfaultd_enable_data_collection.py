@@ -50,7 +50,7 @@ def test_start(qemu: QEMU) -> None:
     output = b""
     while True:
         try:
-            output += qemu.child().read_nonblocking(size=1024, timeout=cast(int, 0.5))
+            output += qemu.child().read_nonblocking(size=1024, timeout=cast("int", 0.5))
         except pexpect.TIMEOUT:
             break
     assert b"memfaultd.service: Scheduled restart job" not in output
@@ -87,7 +87,7 @@ def test_via_memfaultctl(qemu: QEMU) -> None:
     output = b""
     while True:
         try:
-            output += qemu.child().read_nonblocking(size=1024, timeout=cast(int, 0.5))
+            output += qemu.child().read_nonblocking(size=1024, timeout=cast("int", 0.5))
         except pexpect.TIMEOUT:
             break
     assert b"memfaultd.service: Scheduled restart job" not in output

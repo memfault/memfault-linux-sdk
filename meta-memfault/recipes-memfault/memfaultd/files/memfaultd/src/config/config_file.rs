@@ -102,7 +102,8 @@ pub struct CoredumpConfig {
 pub struct FluentBitConfig {
     pub extra_fluentd_attributes: Vec<String>,
     pub bind_address: SocketAddr,
-    pub max_buffered_lines: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_buffered_lines: Option<usize>,
     pub max_connections: usize,
 }
 
@@ -123,22 +124,17 @@ pub enum LogSource {
 pub struct LogsConfig {
     #[serde(rename = "rotate_size_kib", with = "kib_to_usize")]
     pub rotate_size: usize,
-
     #[serde(rename = "rotate_after_seconds", with = "seconds_to_duration")]
     pub rotate_after: Duration,
-
     #[serde(with = "number_to_compression")]
     pub compression_level: Compression,
-
     pub max_lines_per_minute: NonZeroU32,
-
     pub log_to_metrics: Option<LogToMetricsConfig>,
-
     pub storage: StorageConfig,
-
     pub source: LogSource,
-
     pub level_mapping: LevelMappingConfig,
+    pub extra_attributes: Vec<String>,
+    pub max_buffered_lines: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -174,6 +170,7 @@ pub struct MarConfig {
     pub mar_file_max_size: usize,
     #[serde(rename = "mar_entry_max_age_seconds", with = "seconds_to_duration")]
     pub mar_entry_max_age: Duration,
+    pub mar_entry_max_count: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -386,9 +383,9 @@ impl MemfaultdConfig {
 
     /// Merge two JSON objects together. The values from the second one will override values in the first one.
     fn merge_into(dest: &mut Value, src: Value) {
-        assert!(dest.is_object() && src.is_object());
-        if let Value::Object(dest_map) = src {
-            for (key, value) in dest_map {
+        assert!(dest.is_object());
+        if let Value::Object(src_map) = src {
+            for (key, value) in src_map {
                 if let Some(obj) = dest.get_mut(&key) {
                     if obj.is_object() {
                         MemfaultdConfig::merge_into(obj, value);
@@ -397,6 +394,8 @@ impl MemfaultdConfig {
                 }
                 dest[&key] = value;
             }
+        } else if let Value::Null = src {
+            *dest = Value::Null
         }
     }
 
@@ -485,6 +484,22 @@ mod test {
         assert_eq!(
             serde_json::to_string(&c).unwrap(),
             r#"{"node":{"value":true,"valueB":false,"valueC":{"a":1,"b":42}}}"#
+        );
+    }
+
+    #[test]
+    fn test_merge_overwrite_with_null() {
+        let mut c = serde_json::from_str(
+            r#"{ "node": { "value": true, "valueB": false, "valueC": { "a": 1, "b": 2 } } }"#,
+        )
+        .unwrap();
+        let j = serde_json::from_str(r#"{ "node": { "valueC": null }}"#).unwrap();
+
+        MemfaultdConfig::merge_into(&mut c, j);
+
+        assert_eq!(
+            serde_json::to_string(&c).unwrap(),
+            r#"{"node":{"value":true,"valueB":false,"valueC":null}}"#
         );
     }
 

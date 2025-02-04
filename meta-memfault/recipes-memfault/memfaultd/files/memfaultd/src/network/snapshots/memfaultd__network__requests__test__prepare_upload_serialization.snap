@@ -1,0 +1,16 @@
+---
+source: memfaultd/src/network/requests.rs
+expression: prepare_request
+snapshot_kind: text
+---
+{
+  "content_encoding": null,
+  "size": 123,
+  "device": {
+    "device_serial": "device_id",
+    "hardware_version": "hardware_version",
+    "software_version": "software_version",
+    "software_type": "software_type"
+  },
+  "kind": "MAR"
+}

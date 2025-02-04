@@ -53,7 +53,7 @@ use crate::collectd::CollectdHandler;
 #[cfg(feature = "logging")]
 use crate::{
     fluent_bit::{FluentBitConfig, FluentBitConnectionHandler},
-    logs::{CompletedLog, FluentBitAdapter, HeadroomLimiter, LogCollector, LogCollectorConfig},
+    logs::{CompletedLog, HeadroomLimiter, LogCollector, LogCollectorConfig},
     mar::{MarEntryBuilder, Metadata},
     util::disk_size::get_disk_space,
 };
@@ -101,23 +101,6 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         )
     })?;
 
-    let mar_cleaner = Arc::new(MarStagingCleaner::new(
-        &config.mar_staging_path(),
-        config.tmp_dir_max_size(),
-        config.tmp_dir_min_headroom(),
-        config.mar_entry_max_age(),
-    ));
-
-    // List of tasks to run before syncing with server
-    let mut sync_tasks: Vec<Box<dyn FnMut(bool) -> Result<()>>> = vec![];
-    // List of tasks to run before shutting down
-    let mut shutdown_tasks: Vec<Box<dyn FnMut() -> Result<()>>> = vec![];
-
-    // List of http handlers
-    #[allow(unused_mut, /* reason = "Can be unused when some features are disabled." */)]
-    let mut http_handlers: Vec<Box<dyn HttpHandler>> =
-        vec![Box::new(MarExportHandler::new(config.mar_staging_path()))];
-
     // Metric store
     let metric_report_manager = ServiceThread::spawn_with(match config.session_configs() {
         Some(session_configs) => MetricReportManager::new_with_session_configs(
@@ -128,6 +111,25 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         None => MetricReportManager::new(config.hrt_enabled(), config.hrt_max_samples_per_min()),
     });
     let metrics_mbox: MetricsMBox = metric_report_manager.mbox().into();
+
+    let mar_cleaner = Arc::new(MarStagingCleaner::new(
+        &config.mar_staging_path(),
+        config.tmp_dir_max_size(),
+        config.tmp_dir_min_headroom(),
+        config.mar_entry_max_age(),
+        config.mar_entry_max_count(),
+        metrics_mbox.clone(),
+    ));
+
+    // List of tasks to run before syncing with server
+    let mut sync_tasks: Vec<Box<dyn FnMut(bool) -> Result<()>>> = vec![];
+    // List of tasks to run before shutting down
+    let mut shutdown_tasks: Vec<Box<dyn FnOnce() -> Result<()>>> = vec![];
+
+    // List of http handlers
+    #[allow(unused_mut, /* reason = "Can be unused when some features are disabled." */)]
+    let mut http_handlers: Vec<Box<dyn HttpHandler>> =
+        vec![Box::new(MarExportHandler::new(config.mar_staging_path()))];
 
     let battery_monitor = Arc::new(Mutex::new(BatteryMonitor::<Instant>::new(
         metrics_mbox.clone(),
@@ -398,32 +400,17 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         use crate::config::LogSource;
         #[cfg(feature = "systemd")]
         use crate::logs::journald_provider::start_journald_provider;
-        use crate::logs::log_entry::LogEntry;
+        use crate::logs::log_collector::CrashLogHandler;
+        use crate::logs::messages::RecoverLogsMsg;
+        use crate::logs::messages::{FlushLogsMsg, RotateIfNeededMsg};
         use crate::mar::MAR_ENTRY_OVERHEAD_SIZE_ESTIMATE;
         use log::debug;
+        use ssf::{BoundedServiceThread, ShutdownServiceMessage};
 
         let fluent_bit_config = FluentBitConfig::from(&config);
         if config.config_file.enable_data_collection {
             let log_source = config.config_file.logs.source;
-            let log_receiver: Box<dyn Iterator<Item = LogEntry> + Send> = match log_source {
-                LogSource::FluentBit => {
-                    let (_, fluent_bit_receiver) =
-                        FluentBitConnectionHandler::start(fluent_bit_config)?;
-                    Box::new(FluentBitAdapter::new(
-                        fluent_bit_receiver,
-                        &config.config_file.fluent_bit.extra_fluentd_attributes,
-                    ))
-                }
-                #[cfg(feature = "systemd")]
-                LogSource::Journald => Box::new(start_journald_provider(config.tmp_dir())),
-                #[cfg(not(feature = "systemd"))]
-                LogSource::Journald => {
-                    warn!("logs.source configuration set to \"journald\", but memfaultd was not compiled with the systemd feature. Logs will not be collected.");
-                    // This match arm still needs to evaluate to Box<dyn Iterator<Item = LogEntry> + Send>
-                    // Empty iterator typechecks and is effectively a no-op.
-                    Box::new([].into_iter())
-                }
-            };
+            let extra_attr = config.log_extra_attributes();
 
             let mar_cleaner = mar_cleaner.clone();
 
@@ -481,7 +468,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                 .sampling
                 .logging_resolution;
 
-            let (mut log_collector, sender) = LogCollector::open(
+            let (log_collector, sender) = LogCollector::open(
                 log_config,
                 logging_resolution,
                 on_log_completion,
@@ -489,24 +476,57 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                 metric_report_manager.mbox().into(),
             )?;
 
+            let max_buffered_lines = config.log_max_buffered_lines();
+            let log_collector_service =
+                BoundedServiceThread::spawn_with(log_collector, max_buffered_lines);
+            let log_collector_mbox = log_collector_service.mbox();
+            // Begin log recovery in spawned thread
+            if let Err(e) = log_collector_mbox.send_and_forget(RecoverLogsMsg) {
+                warn!("Failed to start log recovery: {}", e);
+            }
+            match log_source {
+                LogSource::FluentBit => {
+                    let _ = FluentBitConnectionHandler::start(
+                        fluent_bit_config,
+                        log_collector_mbox.clone().into(),
+                        extra_attr,
+                    )?;
+                }
+                #[cfg(feature = "systemd")]
+                LogSource::Journald => start_journald_provider(
+                    config.tmp_dir(),
+                    extra_attr,
+                    log_collector_mbox.clone().into(),
+                ),
+                #[cfg(not(feature = "systemd"))]
+                LogSource::Journald => warn!("logs.source configuration set to \"journald\", but memfaultd was not compiled with the systemd feature. Logs will not be collected."),
+            }
             // Store the Sender in a variable that can be accessed
             // outside this logging code block
             logging_resolution_sender = Some(sender);
 
-            log_collector.spawn_collect_from(log_receiver);
-
-            let crash_log_handler = log_collector.crash_log_handler();
+            let crash_log_handler = CrashLogHandler::new(log_collector_mbox.clone().into());
             http_handlers.push(Box::new(crash_log_handler));
+
+            let BoundedServiceThread { handle, mailbox } = log_collector_service;
+            shutdown_tasks.push(Box::new(move || {
+                // Shutdown logging thread and wait for join
+                mailbox.send_and_wait_for_reply(ShutdownServiceMessage {})?;
+                if handle.join().is_err() {
+                    warn!("Log collector did not shut down cleanly");
+                }
+                Ok(())
+            }));
 
             sync_tasks.push(Box::new(move |forced_sync| {
                 // Check if we have received a signal to force-sync and reset the flag.
                 if forced_sync {
                     trace!("Flushing logs");
-                    log_collector.flush_logs()?;
+                    log_collector_mbox.send_and_wait_for_reply(FlushLogsMsg)??;
                 } else {
                     // If not force-flushing - we still want to make sure this file
                     // did not get too old.
-                    log_collector.rotate_if_needed()?;
+                    log_collector_mbox.send_and_wait_for_reply(RotateIfNeededMsg)??;
                 }
                 Ok(())
             }));
@@ -642,7 +662,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         Duration::new(60, 0),
     );
     info!("Memfaultd shutting down...");
-    for task in &mut shutdown_tasks {
+    for task in shutdown_tasks {
         if let Err(e) = task() {
             warn!("Error while shutting down: {}", e);
         }
