@@ -18,7 +18,10 @@ use uuid::Uuid;
 
 use std::collections::HashMap;
 
-use super::log_entry::{LogData, LogEntry};
+use super::{
+    log_entry::{LogData, LogEntry},
+    recovery::recover_old_logs,
+};
 
 pub trait LogFile {
     fn write_json_line(&mut self, json: LogEntry) -> Result<()>;
@@ -104,13 +107,12 @@ pub struct LogFileControlImpl {
     max_duration: Duration,
     compression_level: Compression,
     on_log_completion: Box<(dyn FnMut(CompletedLog) -> Result<()> + Send)>,
-    next_cid: Uuid,
+    next_cid: Option<Uuid>,
 }
 
 impl LogFileControlImpl {
     pub fn open<R: FnMut(CompletedLog) -> Result<()> + Send + 'static>(
         tmp_path: PathBuf,
-        next_cid: Uuid,
         max_size: usize,
         max_duration: Duration,
         compression_level: Compression,
@@ -123,8 +125,22 @@ impl LogFileControlImpl {
             max_duration,
             compression_level,
             on_log_completion: Box::new(on_log_completion),
-            next_cid,
+            next_cid: None,
         })
+    }
+
+    /// Starts recovey of logs.
+    ///
+    /// Checks if the next CID is populated. If is we've, already recovered
+    /// any logs and this is effecitly a no-op. The return bool indicates
+    /// whether or not recovery was run.
+    pub fn recover_logs(&mut self) -> Result<bool> {
+        if self.next_cid.is_none() {
+            self.next_cid()?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     /// Close current logfile, create a MAR entry and starts a new one.
@@ -132,16 +148,27 @@ impl LogFileControlImpl {
         let current_log = self.current_log.take();
 
         if let Some(current_log) = current_log {
-            self.next_cid = Uuid::new_v4();
+            *self.next_cid()? = Uuid::new_v4();
 
-            Self::dispatch_on_log_completion(
-                &mut self.on_log_completion,
-                current_log,
-                self.next_cid,
-            );
+            let next_cid = *self.next_cid()?;
+            Self::dispatch_on_log_completion(&mut self.on_log_completion, current_log, next_cid);
         }
 
         Ok(())
+    }
+
+    fn next_cid(&mut self) -> Result<&mut Uuid> {
+        if self.next_cid.is_none() {
+            self.next_cid = Some(recover_old_logs(
+                &self.tmp_path,
+                &mut self.on_log_completion,
+            )?);
+        }
+
+        // This should neve be None as we check the cid above
+        self.next_cid
+            .as_mut()
+            .ok_or_else(|| eyre!("next CID not populated"))
     }
 
     fn dispatch_on_log_completion(
@@ -202,8 +229,9 @@ impl LogFileControl<LogFileImpl> for LogFileControlImpl {
 
     fn current_log(&mut self) -> Result<&mut LogFileImpl> {
         if self.current_log.is_none() {
+            let next_cid = *self.next_cid()?;
             self.current_log = Some(
-                LogFileImpl::open(&self.tmp_path, self.next_cid, self.compression_level)
+                LogFileImpl::open(&self.tmp_path, next_cid, self.compression_level)
                     .map_err(|e| eyre!("Failed to open log file: {e}"))?,
             );
         }

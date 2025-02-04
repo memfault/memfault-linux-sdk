@@ -4,7 +4,7 @@
 use std::{
     error::Error,
     fmt::Display,
-    sync::mpsc::{channel, Receiver, Sender},
+    sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender, TrySendError},
 };
 
 use crate::{Envelope, Handler, Message, Service};
@@ -16,6 +16,7 @@ use crate::{Envelope, Handler, Message, Service};
 pub enum MailboxError {
     SendChannelClosed,
     NoResponse,
+    SendChannelFull,
 }
 
 impl Display for MailboxError {
@@ -63,6 +64,53 @@ impl<S: Service> Mailbox<S> {
 impl<S: Service> Clone for Mailbox<S> {
     fn clone(&self) -> Self {
         Mailbox {
+            sender: self.sender.clone(),
+        }
+    }
+}
+
+pub struct BoundedMailbox<S: Service> {
+    sender: SyncSender<Envelope<S>>,
+}
+
+impl<S: Service> BoundedMailbox<S> {
+    pub fn create(channel_size: usize) -> (Self, Receiver<Envelope<S>>) {
+        let (sender, receiver) = sync_channel(channel_size);
+        (BoundedMailbox { sender }, receiver)
+    }
+
+    pub fn send_and_forget<M>(&self, message: M) -> Result<(), MailboxError>
+    where
+        M: Message,
+        S: Handler<M>,
+    {
+        self.sender
+            .try_send(Envelope::wrap(message))
+            .map_err(|e| match e {
+                std::sync::mpsc::TrySendError::Full(_) => MailboxError::SendChannelFull,
+                std::sync::mpsc::TrySendError::Disconnected(_) => MailboxError::SendChannelClosed,
+            })
+    }
+
+    pub fn send_and_wait_for_reply<M>(&self, message: M) -> Result<M::Reply, MailboxError>
+    where
+        M: Message,
+        S: Handler<M>,
+    {
+        let (envelope, ack_receiver) = Envelope::wrap_with_reply(message);
+
+        self.sender.try_send(envelope).map_err(|e| match e {
+            TrySendError::Full(_) => MailboxError::SendChannelFull,
+            TrySendError::Disconnected(_) => MailboxError::SendChannelClosed,
+        })?;
+
+        ack_receiver.recv().map_err(|_e| MailboxError::NoResponse)
+    }
+}
+
+impl<S: Service> Clone for BoundedMailbox<S> {
+    fn clone(&self) -> Self {
+        BoundedMailbox {
             sender: self.sender.clone(),
         }
     }

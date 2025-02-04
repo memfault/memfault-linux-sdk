@@ -1,0 +1,13 @@
+---
+source: memfaultd/src/mar/clean.rs
+expression: metrics_service.take_metrics().unwrap()
+---
+{
+  "MemfaultSdkMetric_mar_clean_duration_seconds": "<duration>",
+  "MemfaultSdkMetric_mar_clean_duration_seconds_max": "<duration>",
+  "MemfaultSdkMetric_mar_clean_duration_seconds_min": "<duration>",
+  "MemfaultSdkMetric_mar_entries_deleted": 0.0,
+  "MemfaultSdkMetric_mar_entry_count": 1.0,
+  "MemfaultSdkMetric_mar_entry_count_max": 1.0,
+  "MemfaultSdkMetric_mar_entry_count_min": 1.0
+}

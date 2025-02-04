@@ -192,16 +192,13 @@ impl JournalRaw for JournalRawImpl {
         let mut data_len = MaybeUninit::uninit();
         let mut fields = Vec::new();
 
-        let timestamp = self.get_timestamp().map_or_else(
-            |e| {
-                debug!(
-                    "Failed to get journal entry timestamp, falling back to ingestion time: {}",
-                    e
-                );
-                Utc::now()
-            },
-            |t| t,
-        );
+        let timestamp = self.get_timestamp().unwrap_or_else(|e| {
+            debug!(
+                "Failed to get journal entry timestamp, falling back to ingestion time: {}",
+                e
+            );
+            Utc::now()
+        });
 
         let mut enum_ret = unsafe {
             sd_journal_enumerate_data(self.journal, data.as_mut_ptr(), data_len.as_mut_ptr())

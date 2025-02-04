@@ -1,28 +1,29 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use std::sync::MutexGuard;
+use std::sync::mpsc::Receiver;
 
-use crate::{Message, MockMsgMailbox, MsgMailbox};
+use crate::{Message, MsgMailbox};
 
 /// The ServiceMock allows you to mock a service processing messages of a specific type.
 pub struct ServiceMock<M: Message> {
     pub mbox: MsgMailbox<M>,
-    mock: MockMsgMailbox<M>,
+    receiver: Receiver<M>,
 }
 
 impl<M: Message> ServiceMock<M> {
     pub fn new() -> Self {
-        let (mbox, mock) = MsgMailbox::mock();
-        Self { mbox, mock }
+        let (mbox, receiver) = MsgMailbox::mock();
+        Self { mbox, receiver }
     }
 
-    pub fn messages(&mut self) -> MutexGuard<Vec<M>> {
-        self.mock.messages()
+    pub fn new_bounded(channel_size: usize) -> Self {
+        let (mbox, receiver) = MsgMailbox::bounded_mock(channel_size);
+        Self { mbox, receiver }
     }
 
     pub fn take_messages(&mut self) -> Vec<M> {
-        self.mock.take_messages()
+        self.receiver.try_iter().collect()
     }
 }
 

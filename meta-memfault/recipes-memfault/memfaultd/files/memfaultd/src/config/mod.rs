@@ -2,6 +2,7 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 use eyre::eyre;
+use itertools::Itertools;
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::num::NonZeroU32;
@@ -225,6 +226,10 @@ impl Config {
         self.config_file.mar.mar_entry_max_age
     }
 
+    pub fn mar_entry_max_count(&self) -> usize {
+        self.config_file.mar.mar_entry_max_count
+    }
+
     pub fn battery_monitor_periodic_update_enabled(&self) -> bool {
         self.config_file.battery_monitor.is_some()
     }
@@ -360,6 +365,32 @@ impl Config {
 
     pub fn log_extraction_config(&self) -> &LevelMappingConfig {
         &self.config_file.logs.level_mapping
+    }
+
+    /// Combines both fluentd_extra_attributes and logs.extra_attributes
+    ///
+    /// All duplicates will be removed.
+    pub fn log_extra_attributes(&self) -> Vec<String> {
+        let fluentd_extra_attr = &self.config_file.fluent_bit.extra_fluentd_attributes;
+        let logs_extra_attr = &self.config_file.logs.extra_attributes;
+
+        fluentd_extra_attr
+            .iter()
+            .chain(logs_extra_attr.iter())
+            .dedup()
+            .cloned()
+            .collect()
+    }
+
+    /// Gets the max buffered lines configured.
+    ///
+    /// This prefers any user configured value for fluent-bit to maintain
+    /// backwards compatibility.
+    pub fn log_max_buffered_lines(&self) -> usize {
+        let fluent_bit_max = self.config_file.fluent_bit.max_buffered_lines;
+        let log_max = self.config_file.logs.max_buffered_lines;
+
+        fluent_bit_max.unwrap_or(log_max)
     }
 }
 
@@ -498,6 +529,50 @@ mod tests {
         config.config_file.software_type = config_swv.map(String::from);
 
         assert_eq!(config.software_type(), expected);
+    }
+
+    #[rstest]
+    #[case::both_set(
+        vec!["fluentd"],
+        vec!["logs"],
+        vec!["fluentd", "logs"])]
+    #[case::fluentd_set(vec!["fluentd"], vec![], vec!["fluentd"])]
+    #[case::logs_set(vec![], vec!["logs"], vec!["logs"])]
+    #[case::neither_set(vec![], vec![], vec![])]
+    #[case::duplicates(
+        vec!["fluentd", "logs"],
+        vec!["logs"],
+        vec!["fluentd", "logs"])]
+    fn log_attr_merge(
+        #[case] fluentd_attr: Vec<&str>,
+        #[case] log_attr: Vec<&str>,
+        #[case] expected_attr: Vec<&str>,
+    ) {
+        let mut config = Config::test_fixture();
+        config.config_file.fluent_bit.extra_fluentd_attributes =
+            fluentd_attr.into_iter().map(|s| s.to_string()).collect();
+        config.config_file.logs.extra_attributes =
+            log_attr.into_iter().map(|s| s.to_string()).collect();
+
+        let mut actual_attr = config.log_extra_attributes();
+        actual_attr.sort();
+        assert_eq!(actual_attr, expected_attr);
+    }
+
+    #[rstest]
+    #[case(Some(42), 25, 42)]
+    #[case(None, 25, 25)]
+    fn log_max_buffered_precedence(
+        #[case] fluent_bit_max: Option<usize>,
+        #[case] log_max: usize,
+        #[case] expected: usize,
+    ) {
+        let mut config = Config::test_fixture();
+        config.config_file.fluent_bit.max_buffered_lines = fluent_bit_max;
+        config.config_file.logs.max_buffered_lines = log_max;
+
+        let actual_max = config.log_max_buffered_lines();
+        assert_eq!(actual_max, expected);
     }
 
     struct Fixture {
