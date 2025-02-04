@@ -3,20 +3,32 @@
 // See License.txt for details
 use crate::{
     mar::MarEntry,
+    metrics::{
+        internal_metrics::{
+            INTERNAL_METRIC_MAR_CLEANER_DURATION, INTERNAL_METRIC_MAR_ENTRIES_DELETED,
+            INTERNAL_METRIC_MAR_ENTRY_COUNT,
+        },
+        KeyedMetricReading, MetricStringKey, MetricsMBox,
+    },
     util::disk_size::{get_disk_space, get_size, DiskSize},
 };
 use eyre::{eyre, Result, WrapErr};
 use log::{debug, trace, warn};
-use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::fs::read_dir;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
+use std::{
+    fmt::{Display, Formatter, Result as FmtResult},
+    time::Instant,
+};
 
 pub struct MarStagingCleaner {
     mar_staging_path: PathBuf,
     max_total_size: DiskSize,
     min_headroom: DiskSize,
     max_age: Duration,
+    max_count: usize,
+    metrics_mbox: MetricsMBox,
 }
 
 impl MarStagingCleaner {
@@ -25,12 +37,16 @@ impl MarStagingCleaner {
         max_total_size: DiskSize,
         min_headroom: DiskSize,
         max_age: Duration,
+        max_count: usize,
+        metrics_mbox: MetricsMBox,
     ) -> Self {
         Self {
             mar_staging_path: mar_staging_path.to_owned(),
             max_total_size,
             min_headroom,
             max_age,
+            max_count,
+            metrics_mbox,
         }
     }
 
@@ -46,6 +62,8 @@ impl MarStagingCleaner {
             self.min_headroom + required_space,
             SystemTime::now(),
             self.max_age,
+            self.max_count,
+            &self.metrics_mbox,
         )
         .map_err(|e| {
             warn!("Unable to clean MAR entries: {}", e);
@@ -58,12 +76,14 @@ impl MarStagingCleaner {
 enum DeletionReason {
     Expired,
     DiskQuota,
+    EntryQuota,
 }
 impl Display for DeletionReason {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         match self {
             DeletionReason::Expired => write!(f, "Expired"),
             DeletionReason::DiskQuota => write!(f, "Disk quota"),
+            DeletionReason::EntryQuota => write!(f, "Entry quota"),
         }
     }
 }
@@ -90,6 +110,9 @@ impl AgeSizePath {
     }
 }
 
+// TODO: Refactor clean_mar_staging so
+// that it complies with this lint
+#[allow(clippy::too_many_arguments)]
 fn clean_mar_staging(
     mar_staging: &Path,
     max_total_size: DiskSize,
@@ -97,8 +120,12 @@ fn clean_mar_staging(
     min_space: DiskSize,
     reference_date: SystemTime,
     max_age: Duration,
+    max_count: usize,
+    metrics_mbox: &MetricsMBox,
 ) -> Result<DiskSize> {
+    let cleaning_start = Instant::now();
     let (entries, total_space_used) = collect_mar_entries(mar_staging, reference_date)?;
+    let total_entries = entries.len() as u64;
 
     let marked_entries = mark_entries_for_deletion(
         entries,
@@ -107,13 +134,38 @@ fn clean_mar_staging(
         available_space,
         min_space,
         max_age,
+        max_count,
     );
 
-    let space_freed = remove_marked_entries(marked_entries);
+    let (space_freed, entries_deleted) = remove_marked_entries(marked_entries);
+
+    let elapsed_clean_time = cleaning_start.elapsed().as_secs_f64();
 
     let remaining_quota =
         max_total_size.saturating_sub(total_space_used.saturating_sub(space_freed));
     let usable_space = (available_space + space_freed).saturating_sub(min_space);
+
+    let entries_deleted_counter = KeyedMetricReading::new_counter(
+        MetricStringKey::from(INTERNAL_METRIC_MAR_ENTRIES_DELETED),
+        entries_deleted as f64,
+    );
+
+    let mar_entry_count = KeyedMetricReading::new_histogram(
+        MetricStringKey::from(INTERNAL_METRIC_MAR_ENTRY_COUNT),
+        total_entries as f64,
+    );
+
+    let cleaning_duration = KeyedMetricReading::new_histogram(
+        MetricStringKey::from(INTERNAL_METRIC_MAR_CLEANER_DURATION),
+        elapsed_clean_time,
+    );
+
+    if metrics_mbox
+        .send_and_forget([entries_deleted_counter, cleaning_duration, mar_entry_count].into())
+        .is_err()
+    {
+        debug!("Couldn't send MAR entries deleted counter reading")
+    }
 
     // Available space to write is the min of bytes and inodes remaining.
     Ok(DiskSize::min(remaining_quota, usable_space))
@@ -165,6 +217,7 @@ fn mark_entries_for_deletion(
     available_space: DiskSize,
     min_space: DiskSize,
     max_age: Duration,
+    max_count: usize,
 ) -> Vec<(AgeSizePath, DeletionReason)> {
     // Sort entries with oldest first
     let mut entries_by_age = entries;
@@ -195,12 +248,22 @@ fn mark_entries_for_deletion(
     // Ignore max_age if it is configured to 0
     let delete_expired_entries = !max_age.is_zero();
 
+    // Ignore max_count if it is configured to 0
+    let mut over_max_entries = match max_count {
+        0 => 0,
+        _ => entries_by_age.len().saturating_sub(max_count),
+    };
+
     // Since the vector is sorted from oldest to newest,
     // older entries will be marked for deletion first
     entries_by_age
         .into_iter()
         .filter_map(|entry| {
-            if need_to_free != DiskSize::ZERO && !space_to_be_freed.exceeds(&need_to_free) {
+            if over_max_entries > 0 {
+                over_max_entries -= 1;
+                space_to_be_freed += entry.size;
+                Some((entry, DeletionReason::EntryQuota))
+            } else if need_to_free != DiskSize::ZERO && !space_to_be_freed.exceeds(&need_to_free) {
                 space_to_be_freed += entry.size;
                 Some((entry, DeletionReason::DiskQuota))
             } else if delete_expired_entries && entry.age > max_age {
@@ -213,8 +276,9 @@ fn mark_entries_for_deletion(
         .collect()
 }
 
-fn remove_marked_entries(marked_entries: Vec<(AgeSizePath, DeletionReason)>) -> DiskSize {
+fn remove_marked_entries(marked_entries: Vec<(AgeSizePath, DeletionReason)>) -> (DiskSize, u64) {
     let mut space_freed = DiskSize::ZERO;
+    let mut entries_freed = 0;
     for (entry, deletion_reason) in marked_entries {
         debug!(
             "Cleaning up MAR entry: {} ({} bytes / {} inodes, ~{} seconds old). Deletion reason: {}",
@@ -233,17 +297,21 @@ fn remove_marked_entries(marked_entries: Vec<(AgeSizePath, DeletionReason)>) -> 
                 entry.size
             );
             space_freed += entry.size;
+            entries_freed += 1;
         }
     }
-    space_freed
+    (space_freed, entries_freed)
 }
 
 #[cfg(test)]
 mod test {
     use crate::mar::test_utils::MarCollectorFixture;
+    use crate::metrics::TakeMetrics;
     use crate::test_utils::create_file_with_size;
     use crate::test_utils::setup_logger;
+    use insta::assert_json_snapshot;
     use rstest::{fixture, rstest};
+    use ssf::ServiceMock;
 
     use super::*;
     #[rstest]
@@ -318,6 +386,7 @@ mod test {
             available_space,
             min_headroom,
             Duration::from_secs(0), // No max age for this test
+            0,
         );
 
         let do_not_deletes = ["/mock/a", "/mock/b"];
@@ -372,6 +441,7 @@ mod test {
             DiskSize::new_capacity(10000),
             DiskSize::ZERO,         // No min headroom quota for this test
             Duration::from_secs(0), // No max age for this test
+            0,
         );
 
         let do_not_deletes = ["/mock/a", "/mock/b"];
@@ -436,6 +506,7 @@ mod test {
             available_space,
             min_headroom,
             Duration::from_secs(0), // No max age for this test
+            0,
         );
 
         assert!(marked_entries
@@ -494,6 +565,7 @@ mod test {
             DiskSize::new_capacity(10000),
             DiskSize::ZERO,         // No min headroom quota for this test
             Duration::from_secs(1), // low max age so all entries are marked as expired
+            0,
         );
 
         assert!(marked_entries
@@ -567,6 +639,7 @@ mod test {
             DiskSize::new_capacity(10000),
             DiskSize::ZERO,
             Duration::from_secs(100),
+            0,
         );
 
         let do_not_deletes = ["/mock/a", "/mock/b"];
@@ -662,6 +735,7 @@ mod test {
             available_space,
             min_headroom,
             Duration::from_secs(0), // No max age in this test
+            0,
         );
 
         let do_not_deletes = ["/mock/a", "/mock/b"];
@@ -685,6 +759,7 @@ mod test {
         max_total_size: DiskSize,
         available_space: DiskSize,
         min_headroom: DiskSize,
+        metrics_service: ServiceMock<Vec<KeyedMetricReading>>,
     ) {
         let size_avail = clean_mar_staging(
             &mar_fixture.mar_staging,
@@ -693,6 +768,8 @@ mod test {
             min_headroom,
             SystemTime::now(),
             Duration::from_secs(604800),
+            0,
+            &metrics_service.mbox,
         )
         .unwrap();
         assert_eq!(
@@ -707,6 +784,7 @@ mod test {
         max_total_size: DiskSize,
         available_space: DiskSize,
         min_headroom: DiskSize,
+        mut metrics_service: ServiceMock<Vec<KeyedMetricReading>>,
     ) {
         let path = mar_fixture.create_empty_entry();
         let size_avail = clean_mar_staging(
@@ -716,6 +794,8 @@ mod test {
             min_headroom,
             SystemTime::now(),
             Duration::from_secs(604800),
+            0,
+            &metrics_service.mbox,
         )
         .unwrap();
         assert_eq!(
@@ -723,6 +803,11 @@ mod test {
             DiskSize::min(max_total_size, available_space.saturating_sub(min_headroom))
         );
         assert!(path.exists());
+        assert_json_snapshot!(metrics_service.take_metrics().unwrap(), {
+            ".MemfaultSdkMetric_mar_clean_duration_seconds" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_max" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_min" => "<duration>"
+        });
     }
 
     #[rstest]
@@ -731,6 +816,7 @@ mod test {
         max_total_size: DiskSize,
         available_space: DiskSize,
         min_headroom: DiskSize,
+        mut metrics_service: ServiceMock<Vec<KeyedMetricReading>>,
     ) {
         let path = mar_fixture.create_empty_entry();
 
@@ -745,6 +831,8 @@ mod test {
             min_headroom,
             SystemTime::now(),
             Duration::from_secs(604800),
+            0,
+            &metrics_service.mbox,
         )
         .unwrap();
         assert_eq!(
@@ -752,6 +840,11 @@ mod test {
             DiskSize::min(max_total_size, available_space.saturating_sub(min_headroom))
         );
         assert!(!path.exists());
+        assert_json_snapshot!(metrics_service.take_metrics().unwrap(), {
+            ".MemfaultSdkMetric_mar_clean_duration_seconds" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_max" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_min" => "<duration>"
+        });
     }
 
     #[rstest]
@@ -760,6 +853,7 @@ mod test {
         max_total_size: DiskSize,
         available_space: DiskSize,
         min_headroom: DiskSize,
+        mut metrics_service: ServiceMock<Vec<KeyedMetricReading>>,
     ) {
         let now = SystemTime::now();
         let path = mar_fixture.create_logentry_with_size_and_age(1, now);
@@ -770,10 +864,17 @@ mod test {
             min_headroom,
             now,
             Duration::from_secs(604800),
+            0,
+            &metrics_service.mbox,
         )
         .unwrap();
         assert!(max_total_size.exceeds(&size_avail));
         assert!(path.exists());
+        assert_json_snapshot!(metrics_service.take_metrics().unwrap(), {
+            ".MemfaultSdkMetric_mar_clean_duration_seconds" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_max" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_min" => "<duration>"
+        });
     }
 
     #[rstest]
@@ -782,6 +883,7 @@ mod test {
         max_total_size: DiskSize,
         available_space: DiskSize,
         min_headroom: DiskSize,
+        mut metrics_service: ServiceMock<Vec<KeyedMetricReading>>,
     ) {
         let now = SystemTime::now();
         // NOTE: the entire directory will be larger than max_total_size due to the manifest.json.
@@ -796,6 +898,8 @@ mod test {
             min_headroom,
             now,
             Duration::from_secs(604800),
+            0,
+            &metrics_service.mbox,
         )
         .unwrap();
         assert_eq!(
@@ -803,10 +907,18 @@ mod test {
             DiskSize::min(max_total_size, available_space.saturating_sub(min_headroom))
         );
         assert!(!path.exists());
+        assert_json_snapshot!(metrics_service.take_metrics().unwrap(), {
+            ".MemfaultSdkMetric_mar_clean_duration_seconds" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_max" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_min" => "<duration>"
+        });
     }
 
     #[rstest]
-    fn removes_mar_entry_exceeding_min_headroom(mut mar_fixture: MarCollectorFixture) {
+    fn removes_mar_entry_exceeding_min_headroom(
+        mut mar_fixture: MarCollectorFixture,
+        mut metrics_service: ServiceMock<Vec<KeyedMetricReading>>,
+    ) {
         let now = SystemTime::now();
         let max_total_size = DiskSize::new_capacity(4096);
         let min_headroom = DiskSize {
@@ -826,15 +938,23 @@ mod test {
             min_headroom,
             now,
             Duration::from_secs(604800),
+            0,
+            &metrics_service.mbox,
         )
         .unwrap();
         assert!(size_avail.bytes >= 1);
         assert!(!path.exists());
+        assert_json_snapshot!(metrics_service.take_metrics().unwrap(), {
+            ".MemfaultSdkMetric_mar_clean_duration_seconds" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_max" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_min" => "<duration>"
+        });
     }
 
     #[rstest]
     fn removes_oldest_mar_entry_exceeding_max_total_size_when_multiple(
         mut mar_fixture: MarCollectorFixture,
+        mut metrics_service: ServiceMock<Vec<KeyedMetricReading>>,
     ) {
         let now = SystemTime::now();
         let max_total_size = DiskSize::new_capacity(23000);
@@ -858,16 +978,24 @@ mod test {
             min_headroom,
             now,
             Duration::from_secs(604800),
+            0,
+            &metrics_service.mbox,
         )
         .unwrap();
         assert!(!oldest.exists());
         assert!(middle.exists());
         assert!(most_recent.exists());
+        assert_json_snapshot!(metrics_service.take_metrics().unwrap(), {
+            ".MemfaultSdkMetric_mar_clean_duration_seconds" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_max" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_min" => "<duration>"
+        });
     }
 
     #[rstest]
     fn removes_entries_exceeding_min_headroom_size_by_age(
         mut mar_fixture: MarCollectorFixture,
+        mut metrics_service: ServiceMock<Vec<KeyedMetricReading>>,
         _setup_logger: (),
     ) {
         let now = SystemTime::now();
@@ -896,17 +1024,25 @@ mod test {
             min_headroom,
             now,
             Duration::from_secs(604800),
+            0,
+            &metrics_service.mbox,
         )
         .unwrap();
         assert!(most_recent.exists());
         assert!(second_newest.exists());
         assert!(!second_oldest.exists());
         assert!(!oldest.exists());
+        assert_json_snapshot!(metrics_service.take_metrics().unwrap(), {
+            ".MemfaultSdkMetric_mar_clean_duration_seconds" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_max" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_min" => "<duration>"
+        });
     }
 
     #[rstest]
     fn removes_entries_exceeding_max_total_size_by_age(
         mut mar_fixture: MarCollectorFixture,
+        mut metrics_service: ServiceMock<Vec<KeyedMetricReading>>,
         _setup_logger: (),
     ) {
         let now = SystemTime::now();
@@ -933,18 +1069,26 @@ mod test {
             min_headroom,
             now,
             Duration::from_secs(604800),
+            0,
+            &metrics_service.mbox,
         )
         .unwrap();
         assert!(second_newest.exists());
         assert!(most_recent.exists());
         assert!(!oldest.exists());
         assert!(!second_oldest.exists());
+        assert_json_snapshot!(metrics_service.take_metrics().unwrap(), {
+            ".MemfaultSdkMetric_mar_clean_duration_seconds" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_max" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_min" => "<duration>"
+        });
     }
 
     #[rstest]
     fn removes_mar_entry_exceeding_min_headroom_inodes(
         _setup_logger: (),
         mut mar_fixture: MarCollectorFixture,
+        mut metrics_service: ServiceMock<Vec<KeyedMetricReading>>,
     ) {
         let now = SystemTime::now();
         let max_total_size = DiskSize::new_capacity(10 * 1024 * 1024);
@@ -965,10 +1109,17 @@ mod test {
             min_headroom,
             now,
             Duration::from_secs(604800),
+            0,
+            &metrics_service.mbox,
         )
         .unwrap();
         assert!(size_avail.bytes >= 1);
         assert!(!path.exists());
+        assert_json_snapshot!(metrics_service.take_metrics().unwrap(), {
+            ".MemfaultSdkMetric_mar_clean_duration_seconds" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_max" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_min" => "<duration>"
+        });
     }
 
     #[rstest]
@@ -977,6 +1128,7 @@ mod test {
         max_total_size: DiskSize,
         available_space: DiskSize,
         min_headroom: DiskSize,
+        mut metrics_service: ServiceMock<Vec<KeyedMetricReading>>,
     ) {
         let now = SystemTime::now();
         let thirty_seconds_ago = now - Duration::from_secs(30);
@@ -991,11 +1143,18 @@ mod test {
             min_headroom,
             now,
             Duration::from_secs(60),
+            0,
+            &metrics_service.mbox,
         )
         .unwrap();
         assert!(size_avail.bytes >= 1);
         assert!(path_unexpired.exists());
         assert!(!path_expired.exists());
+        assert_json_snapshot!(metrics_service.take_metrics().unwrap(), {
+            ".MemfaultSdkMetric_mar_clean_duration_seconds" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_max" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_min" => "<duration>"
+        });
     }
 
     #[rstest]
@@ -1004,6 +1163,7 @@ mod test {
         max_total_size: DiskSize,
         available_space: DiskSize,
         min_headroom: DiskSize,
+        mut metrics_service: ServiceMock<Vec<KeyedMetricReading>>,
     ) {
         let now = SystemTime::now();
         let thirty_seconds_ago = now - Duration::from_secs(30);
@@ -1015,10 +1175,17 @@ mod test {
             min_headroom,
             now,
             Duration::from_secs(60),
+            0,
+            &metrics_service.mbox,
         )
         .unwrap();
         assert!(size_avail.bytes >= 1);
         assert!(path.exists());
+        assert_json_snapshot!(metrics_service.take_metrics().unwrap(), {
+            ".MemfaultSdkMetric_mar_clean_duration_seconds" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_max" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_min" => "<duration>"
+        });
     }
 
     #[rstest]
@@ -1026,6 +1193,7 @@ mod test {
         mut mar_fixture: MarCollectorFixture,
         max_total_size: DiskSize,
         available_space: DiskSize,
+        mut metrics_service: ServiceMock<Vec<KeyedMetricReading>>,
         min_headroom: DiskSize,
     ) {
         let now = SystemTime::now();
@@ -1038,10 +1206,60 @@ mod test {
             min_headroom,
             now,
             Duration::from_secs(0),
+            0,
+            &metrics_service.mbox,
         )
         .unwrap();
         assert!(size_avail.bytes >= 1);
         assert!(path.exists());
+        assert_json_snapshot!(metrics_service.take_metrics().unwrap(), {
+            ".MemfaultSdkMetric_mar_clean_duration_seconds" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_max" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_min" => "<duration>"
+        });
+    }
+
+    #[rstest]
+    #[case::max_entries_0(0, (true, true), "max_entries_0")]
+    #[case::max_entries_less_than(1, (false, true), "max_entries_less_than")]
+    #[case::max_entries_equal(2, (true, true), "max_entries_equal")]
+    #[case::max_entries_greater_than(3, (true, true), "max_entries_greater_than")]
+    fn deletes_mar_entry_when_over_max_count(
+        #[case] entry_quota: usize,
+        #[case] keep_entries: (bool, bool),
+        #[case] test_name: &str,
+        mut mar_fixture: MarCollectorFixture,
+        available_space: DiskSize,
+        min_headroom: DiskSize,
+        mut metrics_service: ServiceMock<Vec<KeyedMetricReading>>,
+    ) {
+        let (keep_old_entry, keep_new_entry) = keep_entries;
+        let now = SystemTime::now();
+        let yesterday = now - Duration::from_secs(86400);
+        let old_dir = mar_fixture.create_logentry_with_size_and_age(1, yesterday);
+        let now_dir = mar_fixture.create_logentry_with_size_and_age(1, now);
+
+        let max_total_size = DiskSize::new_capacity(2048);
+
+        let size_avail = clean_mar_staging(
+            &mar_fixture.mar_staging,
+            max_total_size,
+            available_space,
+            min_headroom,
+            SystemTime::now(),
+            Duration::from_secs(0),
+            entry_quota,
+            &metrics_service.mbox,
+        );
+
+        assert!(size_avail.is_ok());
+        assert_eq!(old_dir.exists(), keep_old_entry);
+        assert_eq!(now_dir.exists(), keep_new_entry);
+        assert_json_snapshot!(test_name, metrics_service.take_metrics().unwrap(), {
+            ".MemfaultSdkMetric_mar_clean_duration_seconds" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_max" => "<duration>",
+            ".MemfaultSdkMetric_mar_clean_duration_seconds_min" => "<duration>"
+        });
     }
 
     #[fixture]
@@ -1068,5 +1286,10 @@ mod test {
     #[fixture]
     fn mar_fixture() -> MarCollectorFixture {
         MarCollectorFixture::new()
+    }
+
+    #[fixture]
+    fn metrics_service() -> ServiceMock<Vec<KeyedMetricReading>> {
+        ServiceMock::new()
     }
 }

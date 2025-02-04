@@ -1,6 +1,7 @@
 ---
 source: memfaultd/src/config/config_file.rs
 expression: content
+snapshot_kind: text
 ---
 {
   "persist_dir": "/media/memfault",
@@ -38,7 +39,6 @@ expression: content
   "fluent-bit": {
     "extra_fluentd_attributes": [],
     "bind_address": "127.0.0.1:5170",
-    "max_buffered_lines": 1000,
     "max_connections": 4
   },
   "logs": {
@@ -69,11 +69,14 @@ expression: content
     "level_mapping": {
       "enable": false,
       "regex": null
-    }
+    },
+    "extra_attributes": [],
+    "max_buffered_lines": 1000
   },
   "mar": {
     "mar_file_max_size_kib": 10240,
-    "mar_entry_max_age_seconds": 604800
+    "mar_entry_max_age_seconds": 604800,
+    "mar_entry_max_count": 1000
   },
   "http_server": {
     "bind_address": "127.0.0.1:8787"

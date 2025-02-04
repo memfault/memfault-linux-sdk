@@ -3,29 +3,29 @@
 // See License.txt for details
 use crate::logs::journald_parser::{Journal, JournalRaw, JournalRawImpl};
 
-use eyre::{eyre, Result};
-use log::{error, warn};
+use eyre::Result;
+use log::error;
+use ssf::MsgMailbox;
 
+use std::path::PathBuf;
 use std::thread::spawn;
-use std::{
-    path::PathBuf,
-    sync::mpsc::{sync_channel, Receiver, SyncSender},
-};
 
-use super::log_entry::LogEntry;
-
-const ENTRY_CHANNEL_SIZE: usize = 1024;
+use super::{log_collector::LogEntrySender, log_entry::LogEntry, messages::LogEntryMsg};
 
 /// A log provider that reads log entries from Journald and sends them to a receiver.
 pub struct JournaldLogProvider<J: JournalRaw> {
     journal: Journal<J>,
-    entry_sender: SyncSender<LogEntry>,
+    extra_attr: Vec<String>,
+    entry_sender: LogEntrySender,
 }
 
 impl<J: JournalRaw> JournaldLogProvider<J> {
-    pub fn new(journal: J, entry_sender: SyncSender<LogEntry>) -> Self {
+    pub fn new(journal: J, entry_sender: MsgMailbox<LogEntryMsg>, extra_attr: Vec<String>) -> Self {
+        let entry_sender = LogEntrySender::new(entry_sender);
+
         Self {
             journal: Journal::new(journal),
+            extra_attr,
             entry_sender,
         }
     }
@@ -38,12 +38,9 @@ impl<J: JournalRaw> JournaldLogProvider<J> {
         {
             // We would only fail here if 'MESSAGE' is not present. Which we verified above.
             let mut log_entry = LogEntry::try_from(entry)?;
-            // TODO: Add support for filtering additional fields
-            log_entry.filter_extra_fields(&[]);
+            log_entry.filter_extra_fields(&self.extra_attr);
 
-            if let Err(e) = self.entry_sender.send(log_entry) {
-                return Err(eyre!("Journald channel dropped: {}", e));
-            }
+            self.entry_sender.send_entry(log_entry)?;
         }
         Ok(())
     }
@@ -58,48 +55,23 @@ impl<J: JournalRaw> JournaldLogProvider<J> {
     }
 }
 
-/// A receiver for log entries from Journald.
-pub struct JournaldLogReceiver {
-    entry_receiver: Receiver<LogEntry>,
-}
-
-impl JournaldLogReceiver {
-    pub fn new(entry_receiver: Receiver<LogEntry>) -> Self {
-        Self { entry_receiver }
-    }
-}
-
-impl Iterator for JournaldLogReceiver {
-    type Item = LogEntry;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self.entry_receiver.recv() {
-            Ok(v) => Some(v),
-            Err(e) => {
-                warn!("Failed to receive entry: {}", e);
-                None
-            }
-        }
-    }
-}
-
 /// Start a Journald log provider and return a receiver for the log entries.
 ///
 /// This function will start a new thread that reads log entries from Journald and sends them to the
 /// returned receiver. It takes in the temporary storage path to use as the location of storing the
 /// cursor file.
-pub fn start_journald_provider(tmp_path: PathBuf) -> JournaldLogReceiver {
-    let (entry_sender, entry_receiver) = sync_channel(ENTRY_CHANNEL_SIZE);
-
+pub fn start_journald_provider(
+    tmp_path: PathBuf,
+    extra_attr: Vec<String>,
+    entry_sender: MsgMailbox<LogEntryMsg>,
+) {
     spawn(move || {
         let journal_raw = JournalRawImpl::new(tmp_path);
-        let mut provider = JournaldLogProvider::new(journal_raw, entry_sender);
+        let mut provider = JournaldLogProvider::new(journal_raw, entry_sender, extra_attr);
         if let Err(e) = provider.start() {
             error!("Journald provider failed: {}", e);
         }
     });
-
-    JournaldLogReceiver::new(entry_receiver)
 }
 
 #[cfg(test)]
@@ -107,17 +79,21 @@ mod test {
     use chrono::{DateTime, NaiveDateTime, Utc};
     use insta::{assert_json_snapshot, with_settings};
     use mockall::Sequence;
+    use rstest::rstest;
+    use ssf::ServiceMock;
 
     use super::*;
 
     use crate::logs::journald_parser::{JournalEntryRaw, MockJournalRaw};
 
-    #[test]
-    fn test_happy_path() {
+    #[rstest]
+    #[case("no_extra_attr".to_string(), vec![])]
+    #[case("extra_attr".to_string(), vec!["EXTRA_FIELD".to_string()])]
+    fn test_happy_path(#[case] test_name: String, #[case] extra_attr: Vec<String>) {
         let mut journal_raw = MockJournalRaw::new();
         let mut seq = Sequence::new();
 
-        let (sender, receiver) = sync_channel(ENTRY_CHANNEL_SIZE);
+        let mut service = ServiceMock::new();
 
         journal_raw
             .expect_next_entry_available()
@@ -133,12 +109,13 @@ mod test {
             .in_sequence(&mut seq)
             .returning(|| Ok(false));
 
-        let mut provider = JournaldLogProvider::new(journal_raw, sender);
+        let mut provider = JournaldLogProvider::new(journal_raw, service.mbox.clone(), extra_attr);
 
         assert!(provider.run_once().is_ok());
-        let entry = receiver.try_recv().unwrap();
+        let entries = service.take_messages();
+        assert_eq!(entries.len(), 1);
         with_settings!({sort_maps => true}, {
-            assert_json_snapshot!(entry);
+            assert_json_snapshot!(test_name, entries[0].entry);
         });
     }
 
@@ -147,8 +124,9 @@ mod test {
         let mut journal_raw = MockJournalRaw::new();
         let mut seq = Sequence::new();
 
-        let (sender, receiver) = sync_channel(1);
-        drop(receiver);
+        let service = ServiceMock::new();
+        let mbox = service.mbox.clone();
+        drop(service);
 
         journal_raw
             .expect_next_entry_available()
@@ -159,7 +137,7 @@ mod test {
             .expect_get_entry_field_data()
             .returning(|| Ok(Some(raw_journal_entry())));
 
-        let mut provider = JournaldLogProvider::new(journal_raw, sender);
+        let mut provider = JournaldLogProvider::new(journal_raw, mbox, vec![]);
 
         assert!(provider.run_once().is_err());
     }
@@ -168,6 +146,7 @@ mod test {
         let fields = [
             "_SYSTEMD_UNIT=user@1000.service",
             "MESSAGE=audit: type=1400 audit(1713462571.968:7508): apparmor=\"DENIED\" operation=\"open\" class=\"file\" profile=\"snap.firefox.firefox\" name=\"/etc/fstab\" pid=10122 comm=\"firefox\" requested_mask=\"r\" denied_mask=\"r\" fsuid=1000 ouid=0",
+            "EXTRA_FIELD=extra",
         ];
 
         let timestamp = NaiveDateTime::from_timestamp_millis(1337).unwrap();

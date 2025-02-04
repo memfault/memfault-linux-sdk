@@ -13,9 +13,9 @@ use reqwest::blocking;
 use reqwest::blocking::Body;
 use reqwest::header;
 
-use crate::retriable_error::RetriableError;
 use crate::util::io::StreamLen;
 use crate::util::string::Ellipsis;
+use crate::{network::UploadPrepareKind, retriable_error::RetriableError};
 
 use super::requests::DeviceConfigResponse;
 use super::requests::UploadPrepareRequest;
@@ -135,9 +135,10 @@ impl NetworkClientImpl {
         &self,
         file: BodyAdapter<R>,
         gzipped: bool,
+        kind: UploadPrepareKind,
     ) -> Result<String> {
         let prepare_request =
-            UploadPrepareRequest::prepare(&self.config, file.size as usize, gzipped);
+            UploadPrepareRequest::prepare(&self.config, file.size as usize, gzipped, kind);
 
         let prepare_response = self
             .fetch(
@@ -183,7 +184,7 @@ impl NetworkClientImpl {
 
 impl NetworkClient for NetworkClientImpl {
     fn upload_mar_file<F: Read + StreamLen + Send + 'static>(&self, file: F) -> Result<()> {
-        let token = self.prepare_and_upload(file.into(), false)?;
+        let token = self.prepare_and_upload(file.into(), false, UploadPrepareKind::Mar)?;
 
         let mar_upload = MarUploadMetadata::prepare(&self.config, &token);
         self.fetch(

@@ -76,7 +76,7 @@ class MemfaultServiceTester:
             params=params,  # pyright: ignore[reportArgumentType]
         )
         assert resp.status_code == expect_status
-        return cast(list[dict[str, Json]], resp.json()["data"]) if resp.ok else None
+        return cast("list[dict[str, Json]]", resp.json()["data"]) if resp.ok else None
 
     def poll_reboot_events_until_count(
         self,
@@ -91,7 +91,7 @@ class MemfaultServiceTester:
             )
             assert events is not None
             assert len(events) >= count
-            events.sort(key=lambda x: datetime.datetime.fromisoformat(cast(str, x["time"])))
+            events.sort(key=lambda x: datetime.datetime.fromisoformat(cast("str", x["time"])))
             return events
 
         return self.poll_until_not_raising(_check, timeout_seconds=timeout_secs)
@@ -107,7 +107,7 @@ class MemfaultServiceTester:
             params=params,  # pyright: ignore[reportArgumentType]
         )
         assert rv.status_code == expect_status or ignore_errors
-        return cast(list[dict[str, Any]], rv.json()["data"]) if rv.status_code == 200 else []
+        return cast("list[dict[str, Any]]", rv.json()["data"]) if rv.status_code == 200 else []
 
     def poll_reports_until_count(
         self,
@@ -147,7 +147,7 @@ class MemfaultServiceTester:
             params=params,  # pyright: ignore[reportArgumentType]
         )
         assert rv.status_code == expect_status or ignore_errors
-        return cast(list[dict[str, Json]], rv.json()["data"]) if rv.status_code == 200 else []
+        return cast("list[dict[str, Json]]", rv.json()["data"]) if rv.status_code == 200 else []
 
     def poll_elf_coredumps_until_count(
         self,
@@ -184,7 +184,7 @@ class MemfaultServiceTester:
             params=params,  # pyright: ignore[reportArgumentType]
         )
         assert resp.status_code == expect_status
-        return cast(list[dict[str, Json]], resp.json()["data"]) if resp.ok else None
+        return cast("list[dict[str, Json]]", resp.json()["data"]) if resp.ok else None
 
     def patch_device_attributes(
         self,
@@ -215,7 +215,7 @@ class MemfaultServiceTester:
             },
         )
         assert resp.status_code == expect_status, resp.json()
-        return cast(dict[str, Json], resp.json()["data"]) if resp.ok else None
+        return cast("dict[str, Json]", resp.json()["data"]) if resp.ok else None
 
     def log_files_get_list(
         self, device_serial: str, params: dict[str, Json] | None = None
@@ -225,7 +225,7 @@ class MemfaultServiceTester:
             params=params,  # pyright: ignore[reportArgumentType]
         )
         assert rv.status_code == 200
-        return cast(list[dict[str, Json]], rv.json()["data"])
+        return cast("list[dict[str, Json]]", rv.json()["data"])
 
     def log_file_download(self, device_serial: str, cid: str | uuid.UUID) -> str:
         rv = self.session.get(
@@ -237,4 +237,4 @@ class MemfaultServiceTester:
     def get_device(self, device_serial: str) -> dict[str, Json]:
         rv = self.session.get(f"{self._project_url}/devices/{device_serial}")
         assert rv.status_code == 200, f"Get device failed with status: {rv.status_code}"
-        return cast(dict[str, Json], rv.json()["data"])
+        return cast("dict[str, Json]", rv.json()["data"])

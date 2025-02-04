@@ -1,6 +1,7 @@
 ---
 source: memfaultd/src/logs/journald_provider.rs
 expression: entry
+snapshot_kind: text
 ---
 {
   "ts": "1970-01-01T00:00:01.337+00:00",

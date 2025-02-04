@@ -6,45 +6,77 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.17.0] - 2024-01-16
-This release introduces the new `memfaultctl write-metrics` command
-as well as some important bugfixes.
+## [1.18.0] - 2024-01-16
 
 ### Added
-- `memfaultctl write-metrics`, which allows users to write
-metrics to `memfaultd` from a script or shell by specifying
-them as arguments to the command in the form `KEY=VALUE`.
-- 2 new built-in system metrics under the new `diskstats`
-metric category. These metrics follow the naming pattern
-`diskstats/<device name>/reads_per_second` and
-`diskstats/<device name>/writes_per_second` where 
-`<device name>` is the name of a device listed in
-`/proc/diskstats`. The list of devices monitored 
-can be configured with the `metrics.system_metric_collection.diskstats`
-configuration field.
+
+- `mar.mar_entry_max_count`, which allows for setting the max number of MAR
+  entries in your tmp directory. This will default to 1000.
+- `logs.max_buffered_lines`, which sets the max number of lines that will be
+  kept in memory before lines are dropped. Note that this is the same as
+  `fluent-bit.max_buffered_lines`, but will apply to both the `fluent-bit` log
+  source as well as the `journald` log source. If you have previously configured
+  `fluent-bit.max_buffered_lines` that value will be used instead of the general
+  config.
+- Added the `kind` field to the MAR POST body. This is a field that is used by
+  Memfault to differentiate the source of a MAR entry.
+- Added `logs.extra_attributes` option to configure extra log attributes to keep
+  in the log file (similar to
+  [`fluent-bit.extra_attributes`](https://docs.memfault.com/docs/linux/reference-memfaultd-configuration#fluent-bit)
+  which still works but will be deprecated)
 
 ### Changed
-- The log message emitted when the MAR cleaner
-encounters an invalid MAR entry in the MAR 
-staging area has been lowered from `WARN` level
-to `DEBUG` level.
-- A log message emitted when the configured
-`high_resolution_telemetry.max_samples_per_minute`
-rate limit is violated has been lowered from `WARN`
-level to `DEBUG`. This is to avoid repeatedly 
-logging the same message at a high frequency 
-when the system is sending more readings than
-permitted. 
+
+- The `LogCollector` has gone through a refactor to make the concurrency methods
+  more consistent with the rest of the code base. This has also allowed us to
+  make the following change.
+- Moved recovery of logs in the `logs` directory into the `LogCollector` thread.
+  This prevents a case where `memfaultd` could be slow to start when there is a
+  large number of MAR entries on disk, and depending on systemd configuration,
+  could be considered crashed and restarted before booting completely.
 
 ### Fixed
-- All deltas calculated based on a current and previous
-counter from procfs now take potential overflow into account. 
-- Fixed a sequencing issue with the cleaning of the MAR directory 
-concerning an edge case where logs would fail to recover on 
-devices that are near their disk space or inode quotas. 
-This would result in stranded log files that would not 
-get deleted or uploaded to Memfault until there is enough 
-space to recover them.
+
+- When passing a null to disable a feature there was a case where the config
+  merging logic would fail. This would result in a case where a subset of
+  configs were not possible. Fixed this logic to allow these valid use cases.
+
+## [1.17.0] - 2024-01-16
+
+This release introduces the new `memfaultctl write-metrics` command as well as
+some important bugfixes.
+
+### Added
+
+- `memfaultctl write-metrics`, which allows users to write metrics to
+  `memfaultd` from a script or shell by specifying them as arguments to the
+  command in the form `KEY=VALUE`.
+- 2 new built-in system metrics under the new `diskstats` metric category. These
+  metrics follow the naming pattern `diskstats/<device name>/reads_per_second`
+  and `diskstats/<device name>/writes_per_second` where `<device name>` is the
+  name of a device listed in `/proc/diskstats`. The list of devices monitored
+  can be configured with the `metrics.system_metric_collection.diskstats`
+  configuration field.
+
+### Changed
+
+- The log message emitted when the MAR cleaner encounters an invalid MAR entry
+  in the MAR staging area has been lowered from `WARN` level to `DEBUG` level.
+- A log message emitted when the configured
+  `high_resolution_telemetry.max_samples_per_minute` rate limit is violated has
+  been lowered from `WARN` level to `DEBUG`. This is to avoid repeatedly logging
+  the same message at a high frequency when the system is sending more readings
+  than permitted.
+
+### Fixed
+
+- All deltas calculated based on a current and previous counter from procfs now
+  take potential overflow into account.
+- Fixed a sequencing issue with the cleaning of the MAR directory concerning an
+  edge case where logs would fail to recover on devices that are near their disk
+  space or inode quotas. This would result in stranded log files that would not
+  get deleted or uploaded to Memfault until there is enough space to recover
+  them.
 
 ## [1.16.1] - 2024-01-06
 
@@ -1224,3 +1256,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.16.1-kirkstone
 [1.17.0]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.17.0-kirkstone
+[1.18.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.18.0-kirkstone
