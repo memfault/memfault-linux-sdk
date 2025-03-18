@@ -6,7 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.18.0] - 2024-01-16
+## [1.18.1] - 2025-03-14
+
+This release adds `mickledore` to the list of compatible 
+Yocto versions for `meta-memfault`. 
+
+### Added
+- `mickledore` to `LAYERSERIES_COMPAT_memfault` in `meta-memfault`'s 
+`layer.conf`
+
+## [1.18.0] - 2025-02-04
+
+This release introduces the new `memfaultctl write-metrics` command
+as well as some important bugfixes.
 
 ### Added
 
@@ -78,7 +90,7 @@ some important bugfixes.
   get deleted or uploaded to Memfault until there is enough space to recover
   them.
 
-## [1.16.1] - 2024-01-06
+## [1.16.1] - 2025-01-06
 
 This is a small release that adds coredump capture support for 32-bit ARM
 targets using [musl libc](https://www.musl-libc.org/).
@@ -1258,3 +1270,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.17.0-kirkstone
 [1.18.0]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.18.0-kirkstone
+[1.18.1]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.18.1-kirkstone
