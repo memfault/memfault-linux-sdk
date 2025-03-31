@@ -41,7 +41,7 @@ fn trigger_coredump_inner(config: &Config, error_type: ErrorStrategy) -> Result<
         // Give the kernel and memfault-core-handler time to process the coredump
         std::thread::sleep(std::time::Duration::from_secs(3));
 
-        send_flush_signal()?;
+        send_flush_signal(false)?;
     }
 
     Ok(())

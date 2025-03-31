@@ -14,7 +14,7 @@ use std::{fs::create_dir_all, time::Instant};
 
 use eyre::Result;
 use eyre::{eyre, Context};
-use log::{error, info, trace, warn};
+use log::{debug, error, info, trace, warn};
 
 use ssf::{Scheduler, ServiceThread};
 
@@ -61,6 +61,8 @@ use crate::{
 const CONFIG_REFRESH_INTERVAL: Duration = Duration::from_secs(60 * 120);
 const DAILY_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60 * 60 * 24);
 
+type SyncTask = Box<dyn FnMut(bool, bool) -> Result<()>>;
+
 #[derive(PartialEq, Eq)]
 pub enum MemfaultLoopResult {
     Terminate,
@@ -82,9 +84,19 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     let reload = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(signal_hook::consts::SIGHUP, Arc::clone(&reload))?;
 
-    // Register a flag to be set when we are woken up by SIGUSR1
+    // Flags that indicate whether special behavior should be taken while sync-ing
     let force_sync = Arc::new(AtomicBool::new(false));
+    let skip_serialization_on_sync = Arc::new(AtomicBool::new(false));
+
+    // If memfaultd is woken up by SIGUSR1, it is a forced sync
     signal_hook::flag::register(signal_hook::consts::SIGUSR1, Arc::clone(&force_sync))?;
+
+    // If memfaultd is woken up by SIGUSR2, it is a forced sync where we should skip dumping data
+    signal_hook::flag::register(signal_hook::consts::SIGUSR2, Arc::clone(&force_sync))?;
+    signal_hook::flag::register(
+        signal_hook::consts::SIGUSR2,
+        Arc::clone(&skip_serialization_on_sync),
+    )?;
 
     // Load configuration and device information. This has already been done by the C code but
     // we are preparing for a future where there is no more C code.
@@ -122,7 +134,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     ));
 
     // List of tasks to run before syncing with server
-    let mut sync_tasks: Vec<Box<dyn FnMut(bool) -> Result<()>>> = vec![];
+    let mut sync_tasks: Vec<SyncTask> = vec![];
     // List of tasks to run before shutting down
     let mut shutdown_tasks: Vec<Box<dyn FnOnce() -> Result<()>>> = vec![];
 
@@ -287,12 +299,15 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     }
     // Schedule a task to dump the metrics when a sync is forced
     {
-        {
-            let net_config = NetworkConfig::from(&config);
-            let mar_staging_path = config.mar_staging_path();
-            let dump_metrics_mbox = metric_report_manager.mbox();
-            sync_tasks.push(Box::new(move |forced| match forced {
-                true => {
+        let net_config = NetworkConfig::from(&config);
+        let mar_staging_path = config.mar_staging_path();
+        let dump_metrics_mbox = metric_report_manager.mbox();
+        sync_tasks.push(Box::new(move |forced, skip_serialization| match forced {
+            true => {
+                if skip_serialization {
+                    debug!("Skipping heartbeat metric serialization");
+                    Ok(())
+                } else {
                     trace!("Dumping heartbeat metrics");
                     dump_metrics_mbox
                         .send_and_wait_for_reply(DumpMetricReportMessage::new(
@@ -303,16 +318,21 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                         .map_err(|e| eyre!("Couldn't send message to dump_metrics_mbox: {}", e))?
                         .map_err(|e| eyre!("Error dumping metrics: {}", e))
                 }
-                false => Ok(()),
-            }));
-        }
+            }
+            false => Ok(()),
+        }));
+    }
 
-        {
-            let net_config = NetworkConfig::from(&config);
-            let mar_staging_path = config.mar_staging_path();
-            let dump_metrics_mbox = metric_report_manager.mbox();
-            sync_tasks.push(Box::new(move |forced| match forced {
-                true => {
+    {
+        let net_config = NetworkConfig::from(&config);
+        let mar_staging_path = config.mar_staging_path();
+        let dump_metrics_mbox = metric_report_manager.mbox();
+        sync_tasks.push(Box::new(move |forced, skip_serialization| match forced {
+            true => {
+                if skip_serialization {
+                    debug!("Skipping daily heartbeat metric serialization");
+                    Ok(())
+                } else {
                     trace!("Dumping daily heartbeat metrics");
                     dump_metrics_mbox
                         .send_and_wait_for_reply(DumpMetricReportMessage::new(
@@ -323,16 +343,21 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                         .map_err(|e| eyre!("Couldn't send message to dump_metrics_mbox: {}", e))?
                         .map_err(|e| eyre!("Error dumping metrics: {}", e))
                 }
-                false => Ok(()),
-            }));
-        }
+            }
+            false => Ok(()),
+        }));
+    }
 
-        {
-            let net_config = NetworkConfig::from(&config);
-            let mar_staging_path = config.mar_staging_path();
-            let dump_metrics_mbox = metric_report_manager.mbox();
-            sync_tasks.push(Box::new(move |forced| match forced {
-                true => {
+    {
+        let net_config = NetworkConfig::from(&config);
+        let mar_staging_path = config.mar_staging_path();
+        let dump_metrics_mbox = metric_report_manager.mbox();
+        sync_tasks.push(Box::new(move |forced, skip_serialization| match forced {
+            true => {
+                if skip_serialization {
+                    debug!("Skipping HRT metric serialization");
+                    Ok(())
+                } else {
                     trace!("Dumping HRT metrics");
                     let hrt_message =
                         DumpHrtMessage::new(mar_staging_path.clone(), net_config.clone());
@@ -341,9 +366,9 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                         .map_err(|e| eyre!("Couldn't send message to dump_metrics_mbox: {}", e))?
                         .map_err(|e| eyre!("Error dumping metrics: {}", e))
                 }
-                false => Ok(()),
-            }));
-        }
+            }
+            false => Ok(()),
+        }));
     }
     // Schedule a task to dump the metrics when we are shutting down
     {
@@ -404,7 +429,6 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         use crate::logs::messages::RecoverLogsMsg;
         use crate::logs::messages::{FlushLogsMsg, RotateIfNeededMsg};
         use crate::mar::MAR_ENTRY_OVERHEAD_SIZE_ESTIMATE;
-        use log::debug;
         use ssf::{BoundedServiceThread, ShutdownServiceMessage};
 
         let fluent_bit_config = FluentBitConfig::from(&config);
@@ -518,9 +542,9 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                 Ok(())
             }));
 
-            sync_tasks.push(Box::new(move |forced_sync| {
+            sync_tasks.push(Box::new(move |forced_sync, skip_serialization| {
                 // Check if we have received a signal to force-sync and reset the flag.
-                if forced_sync {
+                if forced_sync && !skip_serialization {
                     trace!("Flushing logs");
                     log_collector_mbox.send_and_wait_for_reply(FlushLogsMsg)??;
                 } else {
@@ -570,6 +594,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
             // Reset the forced sync flag before doing any work so we can detect
             // if it's set again while we run and RerunImmediately.
             let forced = force_sync.swap(false, Ordering::Relaxed);
+            let skip_serialization = skip_serialization_on_sync.swap(false, Ordering::Relaxed);
             let enable_data_collection = config.config_file.enable_data_collection;
 
             // Refresh device config if needed. In cases where we are only syncing on demand, we
@@ -618,7 +643,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
             }
 
             for task in &mut sync_tasks {
-                if let Err(e) = task(forced) {
+                if let Err(e) = task(forced, skip_serialization) {
                     warn!("{:#}", e);
                 }
             }
