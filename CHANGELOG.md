@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.0] - 2025-03-31
+
+This release adds `memfaultctl upload` as a command to allow
+users to force `memfaultd` to upload data without forcing a 
+write and sync of in-progress data.
+
+### Added
+- `memfaultctl upload`, which tells `memfaultd` to upload
+any data that has been written to the staging directory. 
+
 ## [1.18.1] - 2025-03-14
 
 This release adds `mickledore` to the list of compatible 
@@ -1272,3 +1282,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.18.0-kirkstone
 [1.18.1]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.18.1-kirkstone
+[1.19.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.19.0-kirkstone
