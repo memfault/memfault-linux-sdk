@@ -102,6 +102,7 @@ enum MemfaultctlCommand {
     RequestMetrics(RequestMetricsArgs),
     ShowSettings(ShowSettingsArgs),
     Synchronize(SyncArgs),
+    Upload(UploadArgs),
     TriggerCoredump(TriggerCoredumpArgs),
     WriteAttributes(WriteAttributesArgs),
     AddBatteryReading(AddBatteryReadingArgs),
@@ -169,9 +170,16 @@ struct RequestMetricsArgs {}
 struct ShowSettingsArgs {}
 
 #[derive(FromArgs)]
-/// Upload all pending data to Memfault now
+/// Sync all pending data to Memfault now, including any in-progress
+/// log files or metric reports
 #[argh(subcommand, name = "sync")]
 struct SyncArgs {}
+
+#[derive(FromArgs)]
+/// Upload all data that has been written to disk to Memfault now.
+/// In-progress metric reports and logs are not serialized and uploaded.
+#[argh(subcommand, name = "upload")]
+struct UploadArgs {}
 
 #[derive(FromArgs)]
 /// trigger a coredump and immediately reports it to Memfault (defaults to segfault)
@@ -320,9 +328,10 @@ pub fn main() -> Result<()> {
                 reason,
             )
         }
-        MemfaultctlCommand::RequestMetrics(_) => sync(),
+        MemfaultctlCommand::RequestMetrics(_) => sync(false),
         MemfaultctlCommand::ShowSettings(_) => show_settings(config_path),
-        MemfaultctlCommand::Synchronize(_) => sync(),
+        MemfaultctlCommand::Synchronize(_) => sync(false),
+        MemfaultctlCommand::Upload(_) => sync(true),
         MemfaultctlCommand::TriggerCoredump(TriggerCoredumpArgs { strategy }) => {
             trigger_coredump(&config, strategy)
         }
