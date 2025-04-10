@@ -754,6 +754,76 @@ mod test {
     }
 
     #[rstest]
+    fn empty_directory_cleaned(
+        mut mar_fixture: MarCollectorFixture,
+        metrics_service: ServiceMock<Vec<KeyedMetricReading>>,
+    ) {
+        let min_headroom = DiskSize {
+            bytes: 1024,
+            inodes: 10,
+        };
+
+        // Less inodes available than permitted by quota
+        let available_space = DiskSize {
+            bytes: 10000,
+            inodes: 2,
+        };
+        let max_total_size = DiskSize::new_capacity(3000);
+        let path = mar_fixture.create_empty_entry();
+
+        // Cleaner should delete empty directory to free up inodes
+        let _size_avail = clean_mar_staging(
+            &mar_fixture.mar_staging,
+            max_total_size,
+            available_space,
+            min_headroom,
+            SystemTime::now(),
+            Duration::from_secs(604800),
+            0,
+            &metrics_service.mbox,
+        )
+        .unwrap();
+
+        // Should have been cleaned up
+        assert!(!path.exists());
+    }
+
+    #[rstest]
+    fn corrupted_entry_cleaned(
+        mut mar_fixture: MarCollectorFixture,
+        metrics_service: ServiceMock<Vec<KeyedMetricReading>>,
+    ) {
+        let min_headroom = DiskSize {
+            bytes: 1024,
+            inodes: 10,
+        };
+
+        // Less inodes available than permitted by quota
+        let available_space = DiskSize {
+            bytes: 10000,
+            inodes: 2,
+        };
+        let max_total_size = DiskSize::new_capacity(3000);
+        let path = mar_fixture.create_corrupted_manifest_entry();
+
+        // Cleaner should delete directory with corrupted manifest to free up inodes
+        let _size_avail = clean_mar_staging(
+            &mar_fixture.mar_staging,
+            max_total_size,
+            available_space,
+            min_headroom,
+            SystemTime::now(),
+            Duration::from_secs(604800),
+            0,
+            &metrics_service.mbox,
+        )
+        .unwrap();
+
+        // Should have been cleaned up
+        assert!(!path.exists());
+    }
+
+    #[rstest]
     fn empty_staging_area(
         mar_fixture: MarCollectorFixture,
         max_total_size: DiskSize,

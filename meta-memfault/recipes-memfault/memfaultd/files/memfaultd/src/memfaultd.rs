@@ -16,12 +16,12 @@ use eyre::Result;
 use eyre::{eyre, Context};
 use log::{debug, error, info, trace, warn};
 
-use ssf::{Scheduler, ServiceThread};
+use ssf::{MsgMailbox, Scheduler, ServiceManager};
 
 use crate::metrics::{
     BatteryMonitor, BatteryReadingHandler, ConnectivityMonitor, DumpHrtMessage,
-    DumpMetricReportMessage, KeyedMetricReading, MetricReportType, MetricsMBox,
-    ReportSyncEventHandler, ReportsToDump, SessionEventHandler, SystemMetricsCollector,
+    DumpMetricReportMessage, KeyedMetricReading, MetricReportType, ReportSyncEventHandler,
+    ReportsToDump, SessionEventHandler, SystemMetricsCollector,
 };
 use crate::{config::Resolution, metrics::MetricsEventHandler};
 
@@ -60,6 +60,8 @@ use crate::{
 
 const CONFIG_REFRESH_INTERVAL: Duration = Duration::from_secs(60 * 120);
 const DAILY_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60 * 60 * 24);
+
+const MAX_EXPECTED_SHUTDOWN_DURATION_SECONDS: f64 = 3.0;
 
 type SyncTask = Box<dyn FnMut(bool, bool) -> Result<()>>;
 
@@ -113,16 +115,23 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         )
     })?;
 
+    let mut system = ServiceManager::default();
+
     // Metric store
-    let metric_report_manager = ServiceThread::spawn_with(match config.session_configs() {
+    let metric_report_manager = match config.session_configs() {
         Some(session_configs) => MetricReportManager::new_with_session_configs(
             config.hrt_enabled(),
             config.hrt_max_samples_per_min(),
             session_configs,
+            config.config_file.metrics.enable_daily_heartbeats,
         ),
-        None => MetricReportManager::new(config.hrt_enabled(), config.hrt_max_samples_per_min()),
-    });
-    let metrics_mbox: MetricsMBox = metric_report_manager.mbox().into();
+        None => MetricReportManager::new(
+            config.hrt_enabled(),
+            config.hrt_max_samples_per_min(),
+            config.config_file.metrics.enable_daily_heartbeats,
+        ),
+    };
+    let metrics_mbox = system.spawn_service_thread(metric_report_manager);
 
     let mar_cleaner = Arc::new(MarStagingCleaner::new(
         &config.mar_staging_path(),
@@ -130,7 +139,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         config.tmp_dir_min_headroom(),
         config.mar_entry_max_age(),
         config.mar_entry_max_count(),
-        metrics_mbox.clone(),
+        metrics_mbox.clone().into(),
     ));
 
     // List of tasks to run before syncing with server
@@ -144,7 +153,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         vec![Box::new(MarExportHandler::new(config.mar_staging_path()))];
 
     let battery_monitor = Arc::new(Mutex::new(BatteryMonitor::<Instant>::new(
-        metrics_mbox.clone(),
+        metrics_mbox.clone().into(),
     )));
     let battery_reading_handler = BatteryReadingHandler::new(
         config.config_file.enable_data_collection,
@@ -154,13 +163,13 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
 
     let report_sync_event_handler = ReportSyncEventHandler::new(
         config.config_file.enable_data_collection,
-        metrics_mbox.clone(),
+        metrics_mbox.clone().into(),
     );
     http_handlers.push(Box::new(report_sync_event_handler));
 
     let session_event_handler = SessionEventHandler::new(
         config.config_file.enable_data_collection,
-        metric_report_manager.mbox().into(),
+        metrics_mbox.clone().into(),
         config.mar_staging_path(),
         (&config).into(),
     );
@@ -170,13 +179,13 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         let collectd_handler = CollectdHandler::new(
             config.config_file.enable_data_collection,
             config.builtin_system_metric_collection_enabled(),
-            metric_report_manager.mbox().into(),
+            metrics_mbox.clone().into(),
         );
         http_handlers.push(Box::new(collectd_handler));
     }
 
     let metrics_event_handler = MetricsEventHandler::new(
-        metrics_mbox.clone(),
+        metrics_mbox.clone().into(),
         config.config_file.enable_data_collection,
     );
     http_handlers.push(Box::new(metrics_event_handler));
@@ -188,17 +197,20 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         let net_config = NetworkConfig::from(&config);
         let mar_staging_path = config.mar_staging_path();
         let heartbeat_interval = config.config_file.heartbeat_interval;
-        let mailbox = metric_report_manager.mbox();
 
         let heartbeat_message = DumpMetricReportMessage::new(
             ReportsToDump::Report(MetricReportType::Heartbeat),
             mar_staging_path.clone(),
             net_config.clone(),
         );
-        scheduler.schedule_message_subscription(heartbeat_message, &mailbox, &heartbeat_interval);
+        scheduler.schedule_message_subscription(
+            heartbeat_message,
+            &metrics_mbox,
+            &heartbeat_interval,
+        );
 
         let hrt_message = DumpHrtMessage::new(mar_staging_path.clone(), net_config.clone());
-        scheduler.schedule_message_subscription(hrt_message, &mailbox, &heartbeat_interval);
+        scheduler.schedule_message_subscription(hrt_message, &metrics_mbox, &heartbeat_interval);
 
         if config.config_file.metrics.enable_daily_heartbeats {
             let daily_message = DumpMetricReportMessage::new(
@@ -208,7 +220,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
             );
             scheduler.schedule_message_subscription(
                 daily_message,
-                &mailbox,
+                &metrics_mbox,
                 &DAILY_HEARTBEAT_INTERVAL,
             );
         }
@@ -218,7 +230,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     if config.statsd_server_enabled() && config.config_file.enable_data_collection {
         if let Ok(bind_address) = config.statsd_server_address() {
             let legacy_gauge_aggregation = config.statsd_server_legacy_gauge_aggregation_enabled();
-            let metrics_mailbox = metrics_mbox.clone();
+            let metrics_mailbox = metrics_mbox.clone().into();
             spawn(move || {
                 let statsd_server = StatsDServer::new(legacy_gauge_aggregation, metrics_mailbox);
                 if let Err(e) = statsd_server.run(bind_address) {
@@ -233,7 +245,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         && config.config_file.enable_data_collection
     {
         let poll_interval = config.system_metric_poll_interval();
-        let mbox = metrics_mbox.clone();
+        let mbox = metrics_mbox.clone().into();
         let processes_config = config.system_metric_monitored_processes();
         let network_interfaces_config = config.system_metric_network_interfaces_config().cloned();
         let disk_space_config = config.system_metric_disk_space_config();
@@ -280,7 +292,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
             let mut connectivity_monitor =
                 ConnectivityMonitor::<Instant, TcpConnectionChecker>::new(
                     connectivity_monitor_config,
-                    metric_report_manager.mbox().into(),
+                    metrics_mbox.clone().into(),
                 );
             spawn(move || {
                 let mut next_connectivity_reading_time =
@@ -301,7 +313,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     {
         let net_config = NetworkConfig::from(&config);
         let mar_staging_path = config.mar_staging_path();
-        let dump_metrics_mbox = metric_report_manager.mbox();
+        let dump_metrics_mbox: MsgMailbox<DumpMetricReportMessage> = metrics_mbox.clone().into();
         sync_tasks.push(Box::new(move |forced, skip_serialization| match forced {
             true => {
                 if skip_serialization {
@@ -326,7 +338,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     {
         let net_config = NetworkConfig::from(&config);
         let mar_staging_path = config.mar_staging_path();
-        let dump_metrics_mbox = metric_report_manager.mbox();
+        let dump_metrics_mbox: MsgMailbox<DumpMetricReportMessage> = metrics_mbox.clone().into();
         sync_tasks.push(Box::new(move |forced, skip_serialization| match forced {
             true => {
                 if skip_serialization {
@@ -351,7 +363,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     {
         let net_config = NetworkConfig::from(&config);
         let mar_staging_path = config.mar_staging_path();
-        let dump_metrics_mbox = metric_report_manager.mbox();
+        let dump_metrics_mbox: MsgMailbox<DumpHrtMessage> = metrics_mbox.clone().into();
         sync_tasks.push(Box::new(move |forced, skip_serialization| match forced {
             true => {
                 if skip_serialization {
@@ -370,12 +382,13 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
             false => Ok(()),
         }));
     }
+
     // Schedule a task to dump the metrics when we are shutting down
     {
         let net_config = NetworkConfig::from(&config);
         let mar_staging_path = config.mar_staging_path();
 
-        let dump_metrics_mbox = metric_report_manager.mbox();
+        let dump_metrics_mbox: MsgMailbox<DumpMetricReportMessage> = metrics_mbox.clone().into();
         shutdown_tasks.push(Box::new(move || {
             dump_metrics_mbox
                 .send_and_forget(DumpMetricReportMessage::new(
@@ -390,7 +403,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     {
         let net_config = NetworkConfig::from(&config);
         let mar_staging_path = config.mar_staging_path();
-        let dump_metrics_mbox = metric_report_manager.mbox();
+        let dump_metrics_mbox: MsgMailbox<DumpHrtMessage> = metrics_mbox.clone().into();
         shutdown_tasks.push(Box::new(move || {
             dump_metrics_mbox
                 .send_and_wait_for_reply(DumpHrtMessage::new(
@@ -404,7 +417,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     // Schedule a task to compute operational and crashfree hours
     if config.config_file.enable_data_collection {
         let mut crashfree_tracker =
-            CrashFreeIntervalTracker::<Instant>::new_hourly(metric_report_manager.mbox().into());
+            CrashFreeIntervalTracker::<Instant>::new_hourly(metrics_mbox.clone().into());
         http_handlers.push(crashfree_tracker.http_handler());
         spawn(move || {
             let interval = Duration::from_secs(60);
@@ -423,13 +436,10 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     #[cfg(feature = "logging")]
     {
         use crate::config::LogSource;
-        #[cfg(feature = "systemd")]
-        use crate::logs::journald_provider::start_journald_provider;
         use crate::logs::log_collector::CrashLogHandler;
         use crate::logs::messages::RecoverLogsMsg;
         use crate::logs::messages::{FlushLogsMsg, RotateIfNeededMsg};
         use crate::mar::MAR_ENTRY_OVERHEAD_SIZE_ESTIMATE;
-        use ssf::{BoundedServiceThread, ShutdownServiceMessage};
 
         let fluent_bit_config = FluentBitConfig::from(&config);
         if config.config_file.enable_data_collection {
@@ -497,13 +507,12 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                 logging_resolution,
                 on_log_completion,
                 headroom_limiter,
-                metric_report_manager.mbox().into(),
+                metrics_mbox.clone().into(),
             )?;
 
             let max_buffered_lines = config.log_max_buffered_lines();
-            let log_collector_service =
-                BoundedServiceThread::spawn_with(log_collector, max_buffered_lines);
-            let log_collector_mbox = log_collector_service.mbox();
+            let log_collector_mbox =
+                system.spawn_bounded_service_thread(log_collector, max_buffered_lines);
             // Begin log recovery in spawned thread
             if let Err(e) = log_collector_mbox.send_and_forget(RecoverLogsMsg) {
                 warn!("Failed to start log recovery: {}", e);
@@ -517,11 +526,19 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                     )?;
                 }
                 #[cfg(feature = "systemd")]
-                LogSource::Journald => start_journald_provider(
-                    config.tmp_dir(),
-                    extra_attr,
-                    log_collector_mbox.clone().into(),
-                ),
+                LogSource::Journald => {
+                    use crate::logs::journald_provider::JournaldLogProvider;
+                    use crate::logs::journald_parser::JournalRawImpl;
+
+                    let tmp_dir = config.tmp_dir();
+                    let log_collector_mbox = log_collector_mbox.clone();
+                    let spawn_fn = move || {
+                        let journal = JournalRawImpl::new(tmp_dir);
+                        JournaldLogProvider::new(journal, log_collector_mbox.into(), extra_attr)
+                    };
+
+                    system.spawn_bounded_task_service_thread_with_fn(spawn_fn, 128);
+                }
                 #[cfg(not(feature = "systemd"))]
                 LogSource::Journald => warn!("logs.source configuration set to \"journald\", but memfaultd was not compiled with the systemd feature. Logs will not be collected."),
             }
@@ -529,18 +546,11 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
             // outside this logging code block
             logging_resolution_sender = Some(sender);
 
-            let crash_log_handler = CrashLogHandler::new(log_collector_mbox.clone().into());
+            let crash_log_handler = CrashLogHandler::new(
+                log_collector_mbox.clone().into(),
+                log_collector_mbox.clone().into(),
+            );
             http_handlers.push(Box::new(crash_log_handler));
-
-            let BoundedServiceThread { handle, mailbox } = log_collector_service;
-            shutdown_tasks.push(Box::new(move || {
-                // Shutdown logging thread and wait for join
-                mailbox.send_and_wait_for_reply(ShutdownServiceMessage {})?;
-                if handle.join().is_err() {
-                    warn!("Log collector did not shut down cleanly");
-                }
-                Ok(())
-            }));
 
             sync_tasks.push(Box::new(move |forced_sync, skip_serialization| {
                 // Check if we have received a signal to force-sync and reset the flag.
@@ -588,6 +598,13 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         error!("Failed to run scheduled job: {}", e);
     });
     scheduler.run(failed_send_fn);
+
+    shutdown_tasks.push(Box::new(move || {
+        let stats = system.stop();
+        debug!("Service stats: {:#?}", stats);
+
+        Ok(())
+    }));
 
     loop_with_exponential_error_backoff(
         || {
@@ -686,11 +703,22 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         upload_interval,
         Duration::new(60, 0),
     );
+
+    let shutdown_start_time = Instant::now();
     info!("Memfaultd shutting down...");
     for task in shutdown_tasks {
         if let Err(e) = task() {
             warn!("Error while shutting down: {}", e);
         }
+    }
+    let shutdown_duration = shutdown_start_time.elapsed().as_secs_f64();
+    if shutdown_duration > MAX_EXPECTED_SHUTDOWN_DURATION_SECONDS {
+        warn!(
+            "memfaultd took longer than expected to shutdown ({} seconds)",
+            shutdown_duration
+        )
+    } else {
+        debug!("memfaultd took {} seconds to shutdown", shutdown_duration)
     }
 
     if reload.load(Ordering::Relaxed) {

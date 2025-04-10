@@ -1,0 +1,34 @@
+---
+source: memfaultd/src/logs/log_filter.rs
+expression: "log_entries.into_iter().flat_map(|entry|\n            log_filter.apply_rules(entry)).collect::<Vec<_>>()"
+---
+[
+  {
+    "ts": "2004-06-16T12:00:00+00:00",
+    "data": {
+      "MESSAGE": "Hello, world!",
+      "foo": "bar"
+    }
+  },
+  {
+    "ts": "2004-06-16T12:00:00+00:00",
+    "data": {
+      "MESSAGE": "Goodbye, world!",
+      "foo": "baz"
+    }
+  },
+  {
+    "ts": "2004-06-16T12:00:00+00:00",
+    "data": {
+      "MESSAGE": "Hello again, world!",
+      "foo": "baz"
+    }
+  },
+  {
+    "ts": "2004-06-16T12:00:00+00:00",
+    "data": {
+      "MESSAGE": "Hello one more time, world!",
+      "foo": "bar"
+    }
+  }
+]

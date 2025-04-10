@@ -7,7 +7,7 @@
 # Enable for trace
 # set -eux
 
-LATEST_VERSION="1.13.0"
+LATEST_VERSION="1.18.0"
 
 # Required so that the script works  if run as root user or a regular user
 # Mostly for compatibility with Yocto systems, which are often accessed as
@@ -32,6 +32,7 @@ main() {
   local project_key
   local release_url
   local use_musl
+  local device_id
 
   if [ -z "${MEMFAULTD_URL}" ]; then
     release_url=$MEMFAULTD_URL
@@ -41,7 +42,7 @@ main() {
   if [ -z "${USE_MUSL}" ]; then
     use_musl=$USE_MUSL
   fi
-  while getopts ":p:u:m:" opt; do
+  while getopts ":p:u:m:d:" opt; do
     case $opt in
       p)
         project_key="$OPTARG"
@@ -51,6 +52,9 @@ main() {
         ;;
       m)
         use_musl=1
+        ;;
+      d)
+        device_id="$OPTARG"
         ;;
       \?)
         echo "Invalid option: -$OPTARG" >&2
@@ -83,8 +87,12 @@ main() {
     err "Couldn't create a temporary work directory - exiting"
   fi
 
-  local device_name
-  ensure read -p "Enter an ID for this device: " device_name < /dev/tty
+  if [ -z "${device_id}" ]; then
+    device_id=$MEMFAULT_DEVICE_ID
+  fi
+  if [ -z "${device_id}" ]; then
+    ensure read -p "Enter an ID for this device: " device_id < /dev/tty
+  fi
 
   # fall back to default if a url is not specified
   if [ -z "${release_url}" ]; then
@@ -127,7 +135,7 @@ main() {
 
   echo "Installed memfaultd ✅"
 
-  ensure install_memfault_device_info "${tmp_dir}" "$device_name"
+  ensure install_memfault_device_info "${tmp_dir}" "$device_id"
 
   # Initialize memfaultd.service if it's not running already
   if ! service_exists memfaultd; then

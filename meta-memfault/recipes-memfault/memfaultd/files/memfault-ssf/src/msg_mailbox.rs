@@ -3,7 +3,7 @@
 // See License.txt for details
 use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender};
 
-use crate::{BoundedMailbox, Handler, Mailbox, MailboxError, Message, Service};
+use crate::{BoundedMailbox, BoundedTaskMailbox, Handler, Mailbox, MailboxError, Message, Service};
 
 /// A `MsgMailbox` only depends on the type of the messages it can contain.
 ///
@@ -94,6 +94,23 @@ where
     }
 }
 
+impl<M, S> MsgMailboxT<M> for BoundedTaskMailbox<S>
+where
+    S: Service + 'static,
+    M: Message,
+    S: Handler<M>,
+{
+    fn send_and_forget(&self, message: M) -> Result<(), MailboxError> {
+        self.send_and_forget(message)
+    }
+    fn send_and_wait_for_reply(&self, message: M) -> Result<M::Reply, MailboxError> {
+        self.send_and_wait_for_reply(message)
+    }
+    fn duplicate(&self) -> Box<dyn MsgMailboxT<M>> {
+        Box::new(self.clone())
+    }
+}
+
 impl<M, S> From<Mailbox<S>> for MsgMailbox<M>
 where
     M: Message,
@@ -116,6 +133,20 @@ where
     S: 'static,
 {
     fn from(mailbox: BoundedMailbox<S>) -> Self {
+        MsgMailbox {
+            service_mailbox: Box::new(mailbox),
+        }
+    }
+}
+
+impl<M, S> From<BoundedTaskMailbox<S>> for MsgMailbox<M>
+where
+    M: Message,
+    S: Service,
+    S: Handler<M>,
+    S: 'static,
+{
+    fn from(mailbox: BoundedTaskMailbox<S>) -> Self {
         MsgMailbox {
             service_mailbox: Box::new(mailbox),
         }

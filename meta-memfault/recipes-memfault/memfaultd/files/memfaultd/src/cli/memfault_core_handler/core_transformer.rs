@@ -312,7 +312,7 @@ pub struct CoreTransformerLogFetcher {
 }
 
 impl CoreTransformerLogFetcher {
-    /// A timeout of 500s is used to prevent the coredump handler from blocking indefinitely.
+    /// A timeout of 500ms is used to prevent the coredump handler from blocking indefinitely.
     /// This is to prevent a slow http request from blocking the coredump handler indefinitely.
     const APPLICATION_LOGS_TIMEOUT: Duration = Duration::from_millis(500);
 

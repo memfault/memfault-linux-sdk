@@ -1,0 +1,8 @@
+---
+source: memfaultd/src/logs/log_filter.rs
+expression: service.take_metrics().unwrap()
+---
+{
+  "first_person_log_lines": 2.0,
+  "warning_log_lines": 2.0
+}

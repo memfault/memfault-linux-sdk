@@ -32,7 +32,7 @@ use super::{hrt::write_report_to_disk, DumpHrtMessage, DumpMetricReportMessage, 
 
 pub struct MetricReportManager {
     heartbeat: MetricReport,
-    daily_heartbeat: MetricReport,
+    daily_heartbeat: Option<MetricReport>,
     hrt: Option<HrtReport>,
     sessions: HashMap<SessionName, MetricReport>,
     session_configs: Vec<SessionConfig>,
@@ -43,26 +43,28 @@ pub struct MetricReportManager {
 impl MetricReportManager {
     /// Creates a MetricReportManager with no sessions
     /// configured
-    pub fn new(hrt_enabled: bool, hrt_max_samples_per_min: NonZeroU32) -> Self {
-        Self {
-            heartbeat: MetricReport::new_heartbeat(),
-            daily_heartbeat: MetricReport::new_daily_heartbeat(),
-            hrt: hrt_enabled.then(|| HrtReport::new(hrt_max_samples_per_min)),
-            sessions: HashMap::new(),
-            session_configs: vec![],
-            core_metrics: CoreMetricKeys::get_session_core_metrics(),
+    pub fn new(
+        hrt_enabled: bool,
+        hrt_max_samples_per_min: NonZeroU32,
+        daily_heartbeats_enabled: bool,
+    ) -> Self {
+        Self::new_with_session_configs(
+            hrt_enabled,
             hrt_max_samples_per_min,
-        }
+            &[],
+            daily_heartbeats_enabled,
+        )
     }
 
     pub fn new_with_session_configs(
         hrt_enabled: bool,
         hrt_max_samples_per_min: NonZeroU32,
         session_configs: &[SessionConfig],
+        daily_heartbeats_enabled: bool,
     ) -> Self {
         Self {
             heartbeat: MetricReport::new_heartbeat(),
-            daily_heartbeat: MetricReport::new_daily_heartbeat(),
+            daily_heartbeat: daily_heartbeats_enabled.then(MetricReport::new_daily_heartbeat),
             hrt: hrt_enabled.then(|| HrtReport::new(hrt_max_samples_per_min)),
             sessions: HashMap::new(),
             session_configs: session_configs.to_vec(),
@@ -117,9 +119,11 @@ impl MetricReportManager {
 
     /// Returns an iterator over all ongoing metric reports
     fn report_iter(&mut self) -> impl Iterator<Item = &mut MetricReport> {
-        self.sessions
-            .values_mut()
-            .chain([&mut self.heartbeat, &mut self.daily_heartbeat])
+        let reports = match &mut self.daily_heartbeat {
+            Some(daily_heartbeat) => vec![&mut self.heartbeat, daily_heartbeat],
+            None => vec![&mut self.heartbeat],
+        };
+        self.sessions.values_mut().chain(reports)
     }
 
     /// Adds a metric reading to all ongoing metric reports
@@ -158,7 +162,13 @@ impl MetricReportManager {
     ) -> Result<()> {
         match report_type {
             MetricReportType::Heartbeat => self.heartbeat.add_metric(m),
-            MetricReportType::DailyHeartbeat => self.daily_heartbeat.add_metric(m),
+            MetricReportType::DailyHeartbeat => {
+                if let Some(daily_heartbeat) = &mut self.daily_heartbeat {
+                    daily_heartbeat.add_metric(m)
+                } else {
+                    Ok(())
+                }
+            }
             MetricReportType::Session(session_name) => self
                 .sessions
                 .get_mut(session_name)
@@ -202,9 +212,10 @@ impl MetricReportManager {
             MetricReportType::Heartbeat => {
                 self.heartbeat.prepare_metric_report(mar_staging_area)?
             }
-            MetricReportType::DailyHeartbeat => self
-                .daily_heartbeat
-                .prepare_metric_report(mar_staging_area)?,
+            MetricReportType::DailyHeartbeat => match &mut self.daily_heartbeat {
+                Some(daily_heartbeat) => daily_heartbeat.prepare_metric_report(mar_staging_area)?,
+                None => return Ok(()),
+            },
             MetricReportType::Session(session_name) => match self.sessions.remove(session_name) {
                 Some(mut report) => report.prepare_metric_report(mar_staging_area)?,
                 None => return Err(eyre!("No metric report found for {}", session_name)),
@@ -288,6 +299,7 @@ impl Default for MetricReportManager {
             true,
             NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN)
                 .expect("Default HRT rate limit should be nonzero"),
+            true,
         )
     }
 }
@@ -435,7 +447,7 @@ mod tests {
     #[case(in_histograms(vec![("foo", 1.0), ("bar",  2.0), ("baz", 3.0)]))]
     fn test_no_hrt_when_disabled(#[case] metrics: impl Iterator<Item = KeyedMetricReading>) {
         let mut metric_report_manager =
-            MetricReportManager::new(false, NonZeroU32::new(1).unwrap());
+            MetricReportManager::new(false, NonZeroU32::new(1).unwrap(), true);
         for m in metrics {
             metric_report_manager
                 .add_metric(m)
@@ -452,6 +464,7 @@ mod tests {
             true,
             NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN)
                 .expect("Default HRT rate limit should be nonzero"),
+            true,
         );
         for m in metrics {
             metric_report_manager
@@ -511,6 +524,7 @@ mod tests {
             NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN)
                 .expect("Zero value passed to non-zero constructor"),
             &session_configs,
+            true,
         );
 
         assert!(metric_report_manager.start_session(session_a_name).is_ok());
@@ -534,7 +548,7 @@ mod tests {
         // Verify daily heartbeat report
         let snapshot_name = format!("{}.{}", test_name, "daily_heartbeat");
         assert_report_snapshot(
-            &mut metric_report_manager.daily_heartbeat,
+            &mut metric_report_manager.daily_heartbeat.unwrap(),
             &snapshot_name,
             &tempdir,
         );
@@ -566,6 +580,7 @@ mod tests {
             NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN)
                 .expect("Zero value passed to non-zero constructor"),
             &session_configs,
+            true,
         );
 
         assert!(metric_report_manager
@@ -607,6 +622,7 @@ mod tests {
             NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN)
                 .expect("Zero value passed to non-zero constructor"),
             &session_configs,
+            true,
         );
 
         let metrics_a = in_histograms(vec![("foo", 1.0), ("bar", 2.0)]);
@@ -659,6 +675,7 @@ mod tests {
             NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN)
                 .expect("Zero value passed to non-zero constructor"),
             &session_configs,
+            true,
         );
 
         let metrics = in_histograms(vec![("foo", 5.0), ("bar", 3.5)]);
@@ -682,6 +699,18 @@ mod tests {
                 _ => panic!("Invalid MAR builder"),
             }
         }
+    }
+
+    #[test]
+    fn test_no_daily_heartbeats_when_disabled() {
+        let metric_report_manager = MetricReportManager::new(
+            true,
+            NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN)
+                .expect("Zero value passed to non-zero constructor"),
+            false,
+        );
+
+        assert!(metric_report_manager.daily_heartbeat.is_none());
     }
 
     fn assert_report_snapshot(

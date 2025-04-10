@@ -1,0 +1,7 @@
+---
+source: memfaultd/src/logs/log_filter.rs
+expression: service.take_metrics().unwrap()
+---
+{
+  "foobar_count": 1.0
+}

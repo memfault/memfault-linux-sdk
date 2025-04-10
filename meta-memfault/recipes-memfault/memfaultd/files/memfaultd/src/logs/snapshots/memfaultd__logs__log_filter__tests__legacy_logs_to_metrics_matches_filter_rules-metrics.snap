@@ -1,0 +1,9 @@
+---
+source: memfaultd/src/logs/log_filter.rs
+expression: service.take_metrics().unwrap()
+---
+{
+  "ssh_sessions_blake_count": 1.0,
+  "ssh_sessions_pat_count": 1.0,
+  "ssh_sessions_thomas_count": 4.0
+}

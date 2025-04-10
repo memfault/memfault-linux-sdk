@@ -5,6 +5,7 @@ use std::{fmt::Display, time::Duration};
 
 use super::DeliveryStats;
 
+#[derive(Debug)]
 pub struct StatsAggregator {
     count: usize,
     max_queueing: Duration,

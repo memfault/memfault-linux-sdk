@@ -9,6 +9,8 @@ use std::{
 
 use crate::{Envelope, Handler, Message, Service};
 
+use tokio::sync::mpsc as tokio_mpsc;
+
 /// The only reason for a message to fail to send is if the receiver channel is closed.
 // An improvement would be to return the message back to the sender (the
 // channel does it but after we wrap it in an envelope, it's complicated...)
@@ -111,6 +113,53 @@ impl<S: Service> BoundedMailbox<S> {
 impl<S: Service> Clone for BoundedMailbox<S> {
     fn clone(&self) -> Self {
         BoundedMailbox {
+            sender: self.sender.clone(),
+        }
+    }
+}
+
+pub struct BoundedTaskMailbox<S: Service> {
+    sender: tokio_mpsc::Sender<Envelope<S>>,
+}
+
+impl<S: Service> BoundedTaskMailbox<S> {
+    pub fn create(channel_size: usize) -> (Self, tokio_mpsc::Receiver<Envelope<S>>) {
+        let (sender, receiver) = tokio_mpsc::channel(channel_size);
+        (BoundedTaskMailbox { sender }, receiver)
+    }
+
+    pub fn send_and_forget<M>(&self, message: M) -> Result<(), MailboxError>
+    where
+        M: Message,
+        S: Handler<M>,
+    {
+        self.sender
+            .try_send(Envelope::wrap(message))
+            .map_err(|e| match e {
+                tokio_mpsc::error::TrySendError::Full(_) => MailboxError::SendChannelFull,
+                tokio_mpsc::error::TrySendError::Closed(_) => MailboxError::SendChannelClosed,
+            })
+    }
+
+    pub fn send_and_wait_for_reply<M>(&self, message: M) -> Result<M::Reply, MailboxError>
+    where
+        M: Message,
+        S: Handler<M>,
+    {
+        let (envelope, ack_receiver) = Envelope::wrap_with_reply(message);
+
+        self.sender.try_send(envelope).map_err(|e| match e {
+            tokio_mpsc::error::TrySendError::Full(_) => MailboxError::SendChannelFull,
+            tokio_mpsc::error::TrySendError::Closed(_) => MailboxError::SendChannelClosed,
+        })?;
+
+        ack_receiver.recv().map_err(|_e| MailboxError::NoResponse)
+    }
+}
+
+impl<S: Service> Clone for BoundedTaskMailbox<S> {
+    fn clone(&self) -> Self {
+        BoundedTaskMailbox {
             sender: self.sender.clone(),
         }
     }

@@ -14,6 +14,6 @@ mod utils;
 pub use handler::{HttpHandler, HttpHandlerResult};
 pub use server::HttpServer;
 
-pub use utils::ConvenientHeader;
+pub use utils::{parse_query_params, ConvenientHeader};
 
 pub use request_bodies::{MetricsRequest, SessionRequest};

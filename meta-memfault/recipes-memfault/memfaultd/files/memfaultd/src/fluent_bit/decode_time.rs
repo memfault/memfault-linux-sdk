@@ -184,7 +184,7 @@ mod tests {
 
         assert_eq!(t.timestamp(), seconds as i64);
         assert_eq!(
-            t.timestamp_nanos() - t.timestamp() * 1_000_000_000,
+            t.timestamp_nanos_opt().unwrap() - t.timestamp() * 1_000_000_000,
             nanoseconds as i64
         );
     }
