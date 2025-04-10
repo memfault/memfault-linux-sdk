@@ -3,6 +3,7 @@
 // See License.txt for details
 use std::{io::Read, str::from_utf8, time::Duration};
 
+use chrono::{DateTime, Utc};
 use eyre::{eyre, Context, Result};
 use reqwest::{
     blocking::{Body, Client, Response},
@@ -180,12 +181,17 @@ impl MemfaultdClient {
     }
 
     #[cfg(feature = "logging")]
-    pub fn get_crash_logs(&self) -> Result<Option<Vec<String>>> {
+    pub fn get_crash_logs(&self, time_of_crash: DateTime<Utc>) -> Result<Option<Vec<String>>> {
         use crate::logs::log_collector::{CrashLogs, CRASH_LOGS_URL};
 
         let r = self
             .client
-            .get(format!("{}{}", self.base_url, CRASH_LOGS_URL))
+            .get(format!(
+                "{}{}?time_of_crash={}",
+                self.base_url,
+                CRASH_LOGS_URL,
+                time_of_crash.to_rfc3339()
+            ))
             .send()?;
 
         match r.status() {
@@ -209,7 +215,7 @@ impl MemfaultdClient {
     }
 
     #[cfg(not(feature = "logging"))]
-    pub fn get_crash_logs(&self) -> Result<Option<Vec<String>>> {
+    pub fn get_crash_logs(&self, _time_of_crash: DateTime<Utc>) -> Result<Option<Vec<String>>> {
         Ok(None)
     }
 

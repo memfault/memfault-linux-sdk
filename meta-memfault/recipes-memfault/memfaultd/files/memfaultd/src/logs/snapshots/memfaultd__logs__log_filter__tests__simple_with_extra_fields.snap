@@ -1,0 +1,5 @@
+---
+source: memfaultd/src/logs/log_filter.rs
+expression: "log_entries.into_iter().flat_map(|entry|\n            log_filter.apply_rules(entry)).collect::<Vec<_>>()"
+---
+[]

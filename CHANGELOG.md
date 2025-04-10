@@ -6,29 +6,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.19.0] - 2025-03-31
+## [1.20.0] - 2025-04-10
 
-This release adds `memfaultctl upload` as a command to allow
-users to force `memfaultd` to upload data without forcing a 
-write and sync of in-progress data.
+This release adds support for log filtering as well as a few bug fixes. Check
+out the [logging docs](https://docs.memfault.com/docs/linux/logging) for more
+information on log filtering!
 
 ### Added
-- `memfaultctl upload`, which tells `memfaultd` to upload
-any data that has been written to the staging directory. 
+
+- Added support for log message filtering. This feature gives you the ability to
+  exclude log lines that are spammy or contain potentially sensitive information
+  from being uploaded to Memfault.
+- Added built-in `logs-to-metric` rules that increment counter metrics when a
+  `systemd_restarts` or `oomkill` event is detected. These are widely applicable
+  to most Linux distros, and represent a good base for metric collection
+
+### Fixed
+
+- Fixed a problem where large HRT files could take a long time to write. This
+  was due to the file writer not being buffered.
+- Fixed a race condition that caused the `journald` cursor to not be written.
+  This would lead to the `journald` log collector capturing duplicate log lines
+  if `memfaultd` is restarted.
+- Fixed a problem where daily heartbeats were being saved when they were not
+  enabled.
+
+### Removed
+
+- Combined the `regex` feature with the `logging` feature to simplify feature
+  management as log filtering and matching based on regexes becomes a key part
+  of our logging offering.
+
+## [1.19.0] - 2025-03-31
+
+This release adds `memfaultctl upload` as a command to allow users to force
+`memfaultd` to upload data without forcing a write and sync of in-progress data.
+
+### Added
+
+- `memfaultctl upload`, which tells `memfaultd` to upload any data that has been
+  written to the staging directory.
 
 ## [1.18.1] - 2025-03-14
 
-This release adds `mickledore` to the list of compatible 
-Yocto versions for `meta-memfault`. 
+This release adds `mickledore` to the list of compatible Yocto versions for
+`meta-memfault`.
 
 ### Added
-- `mickledore` to `LAYERSERIES_COMPAT_memfault` in `meta-memfault`'s 
-`layer.conf`
+
+- `mickledore` to `LAYERSERIES_COMPAT_memfault` in `meta-memfault`'s
+  `layer.conf`
 
 ## [1.18.0] - 2025-02-04
 
-This release introduces the new `memfaultctl write-metrics` command
-as well as some important bugfixes.
+This release introduces the new `memfaultctl write-metrics` command as well as
+some important bugfixes.
 
 ### Added
 
@@ -1284,3 +1316,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.18.1-kirkstone
 [1.19.0]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.19.0-kirkstone
+[1.20.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.20.0-kirkstone

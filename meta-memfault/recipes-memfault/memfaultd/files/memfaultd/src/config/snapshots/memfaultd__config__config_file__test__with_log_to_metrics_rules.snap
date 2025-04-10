@@ -1,7 +1,6 @@
 ---
 source: memfaultd/src/config/config_file.rs
 expression: content
-snapshot_kind: text
 ---
 {
   "persist_dir": "/media/memfault",
@@ -71,7 +70,8 @@ snapshot_kind: text
       "regex": null
     },
     "extra_attributes": [],
-    "max_buffered_lines": 1000
+    "max_buffered_lines": 1000,
+    "filtering": null
   },
   "mar": {
     "mar_file_max_size_kib": 10240,

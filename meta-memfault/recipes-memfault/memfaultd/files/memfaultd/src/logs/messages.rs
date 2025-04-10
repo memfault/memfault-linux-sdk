@@ -1,6 +1,7 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
+use chrono::{DateTime, Utc};
 use eyre::Result;
 use ssf::Message;
 
@@ -16,6 +17,11 @@ pub struct GetQueuedLogsMsg;
 
 impl Message for GetQueuedLogsMsg {
     type Reply = Result<Vec<String>>;
+}
+pub struct GetLatestLogTimestampMsg;
+
+impl Message for GetLatestLogTimestampMsg {
+    type Reply = Result<DateTime<Utc>>;
 }
 
 pub struct RotateIfNeededMsg;

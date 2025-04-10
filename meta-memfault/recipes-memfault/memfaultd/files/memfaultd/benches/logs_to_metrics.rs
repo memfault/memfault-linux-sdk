@@ -6,7 +6,7 @@ use std::{collections::HashMap, iter::repeat};
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use memfaultd::config::LogToMetricRule;
 use memfaultd::logs::log_entry::{LogData, LogEntry};
-use memfaultd::logs::log_to_metrics::LogToMetrics;
+use memfaultd::logs::log_filter::LogFilter;
 use memfaultd::metrics::MetricReportManager;
 use ssf::ServiceJig;
 
@@ -41,10 +41,15 @@ fn send_logs(num_log_lines: u64) {
         .map(log_line_from_str)
         .collect::<Vec<LogEntry>>();
 
-    let mut logs_to_metrics = LogToMetrics::new(rules, report_service.mailbox.into());
-    log_lines.iter().for_each(|log_line| {
-        logs_to_metrics
-            .process(log_line)
+    let mut log_filter = LogFilter::new_no_default_rules(
+        vec![],
+        rules,
+        memfaultd::config::LogRuleAction::Pass,
+        report_service.mailbox.into(),
+    );
+    log_lines.into_iter().for_each(|log_line| {
+        log_filter
+            .apply_rules(log_line)
             .expect("Failed to process log line");
     });
 }

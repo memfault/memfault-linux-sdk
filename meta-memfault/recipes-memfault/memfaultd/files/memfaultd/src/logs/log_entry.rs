@@ -110,6 +110,47 @@ impl LogEntry {
             },
         }
     }
+
+    #[cfg(test)]
+    pub fn new_with_message_level_and_service(message: &str, level: &str, service: &str) -> Self {
+        let datetime = DateTime::parse_from_rfc3339("2004-06-16T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        LogEntry {
+            ts: datetime,
+            data: LogData {
+                message: message.to_string(),
+                pid: None,
+                systemd_unit: Some(service.to_string()),
+                priority: Some(level.to_string()),
+                original_priority: None,
+                extra_fields: HashMap::new(),
+            },
+        }
+    }
+
+    #[cfg(test)]
+    pub fn new_with_message_and_extra_fields(
+        message: &str,
+        extra_fields: HashMap<String, LogValue>,
+    ) -> Self {
+        let datetime = DateTime::parse_from_rfc3339("2004-06-16T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        LogEntry {
+            ts: datetime,
+            data: LogData {
+                message: message.to_string(),
+                pid: None,
+                systemd_unit: None,
+                priority: None,
+                original_priority: None,
+                extra_fields,
+            },
+        }
+    }
 }
 
 #[cfg(test)]

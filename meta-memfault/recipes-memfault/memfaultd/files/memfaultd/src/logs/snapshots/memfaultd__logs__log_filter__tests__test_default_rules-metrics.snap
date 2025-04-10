@@ -1,0 +1,10 @@
+---
+source: memfaultd/src/logs/log_filter.rs
+expression: service.take_metrics().unwrap()
+---
+{
+  "oomkill_collectd": 1.0,
+  "oomkill_wefaultd": 3.0,
+  "systemd_restarts_memfaultd.service": 1.0,
+  "systemd_restarts_wefaultd.service": 2.0
+}

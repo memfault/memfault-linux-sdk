@@ -5,7 +5,8 @@
 //!
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::time::Duration;
+use std::thread::sleep;
+use std::time::{Duration, Instant};
 use std::{fs, sync::atomic::AtomicUsize};
 use std::{io::Cursor, sync::Arc};
 use std::{num::NonZeroU32, sync::atomic::Ordering};
@@ -18,26 +19,25 @@ use serde::{Deserialize, Serialize};
 use ssf::{Handler, MsgMailbox, Service};
 use tiny_http::{Header, Method, Request, Response, ResponseBox, StatusCode};
 
-use crate::config::{Config, Resolution};
+use crate::config::{Config, LogFilterConfig, Resolution};
 use crate::http_server::HttpHandlerResult;
 use crate::{config::LogToMetricRule, logs::completed_log::CompletedLog};
 use crate::{config::StorageConfig, http_server::ConvenientHeader};
 use crate::{
-    http_server::HttpHandler,
+    http_server::{parse_query_params, HttpHandler},
     logs::log_file::{LogFile, LogFileControl, LogFileControlImpl},
 };
 use crate::{logs::headroom::HeadroomCheck, util::circular_queue::CircularQueue};
 use crate::{metrics::MetricsMBox, util::rate_limiter::RateLimiter};
 
 pub const CRASH_LOGS_URL: &str = "/api/v1/crash-logs";
+pub const CRASH_LOGS_CRASH_TS_PARAM: &str = "time_of_crash";
 
-#[cfg(feature = "regex")]
-use super::log_to_metrics::LogToMetrics;
-
-#[cfg(feature = "regex")]
+use super::log_filter::LogFilter;
 use super::log_level_mapper::LogLevelMapper;
+use super::log_to_metrics::LogToMetrics;
+use super::messages::GetLatestLogTimestampMsg;
 
-#[cfg(feature = "regex")]
 use crate::config::LevelMappingConfig;
 
 use super::{
@@ -65,7 +65,7 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
         logging_resolution: Resolution,
         on_log_completion: R,
         headroom_limiter: H,
-        #[cfg_attr(not(feature = "regex"), allow(unused_variables))] metrics_mbox: MetricsMBox,
+        metrics_mbox: MetricsMBox,
     ) -> Result<(Self, Sender<Resolution>)> {
         fs::create_dir_all(&log_config.log_tmp_path).wrap_err_with(|| {
             format!(
@@ -75,7 +75,6 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
         })?;
 
         // Collect any leftover logfiles in the tmp folder
-        #[cfg(feature = "regex")]
         let level_mapper = if log_config.level_mapping_config.enable {
             Some(LogLevelMapper::try_from(&log_config.level_mapping_config)?)
         } else {
@@ -106,14 +105,19 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
                     )?,
                     rate_limiter: RateLimiter::new(log_config.max_lines_per_minute),
                     headroom_limiter,
-                    #[cfg(feature = "regex")]
+                    #[allow(dead_code)]
                     log_to_metrics: LogToMetrics::new(
+                        log_config.log_to_metrics_rules.clone(),
+                        metrics_mbox.clone(),
+                    ),
+                    log_filter: LogFilter::new(
+                        log_config.log_filter_config.rules,
                         log_config.log_to_metrics_rules,
+                        log_config.log_filter_config.default_action,
                         metrics_mbox,
                     ),
                     log_queue: CircularQueue::new(in_memory_lines),
                     storage_config: log_config.storage_config,
-                    #[cfg(feature = "regex")]
                     level_mapper,
                     logging_resolution,
                     logging_resolution_receiver,
@@ -174,6 +178,21 @@ impl<H: HeadroomCheck + Send + 'static> Handler<GetQueuedLogsMsg> for LogCollect
     }
 }
 
+impl<H: HeadroomCheck + Send + 'static> Handler<GetLatestLogTimestampMsg> for LogCollector<H> {
+    fn deliver(
+        &mut self,
+        _m: GetLatestLogTimestampMsg,
+    ) -> <GetLatestLogTimestampMsg as ssf::Message>::Reply {
+        let log_ts = self.with_mut_inner(|inner| {
+            inner
+                .get_latest_log_timestamp()
+                .ok_or(eyre!("Couldn't get latest log timestamp"))
+        })?;
+
+        Ok(log_ts)
+    }
+}
+
 impl<H: HeadroomCheck + Send + 'static> Handler<RotateIfNeededMsg> for LogCollector<H> {
     fn deliver(&mut self, _m: RotateIfNeededMsg) -> <RotateIfNeededMsg as ssf::Message>::Reply {
         self.with_mut_inner(|inner| inner.rotate_if_needed())
@@ -201,11 +220,11 @@ struct Inner<H: HeadroomCheck> {
     rate_limiter: RateLimiter<DateTime<Utc>>,
     log_file_control: LogFileControlImpl,
     headroom_limiter: H,
-    #[cfg(feature = "regex")]
+    #[allow(dead_code)]
     log_to_metrics: LogToMetrics,
+    log_filter: LogFilter,
     log_queue: CircularQueue<LogEntry>,
     storage_config: StorageConfig,
-    #[cfg(feature = "regex")]
     level_mapper: Option<LogLevelMapper>,
     logging_resolution: Resolution,
     logging_resolution_receiver: Receiver<Resolution>,
@@ -216,51 +235,46 @@ impl<H: HeadroomCheck> Inner<H> {
     // mutex on the Inner object.
     // Be careful to not try to acquire other mutexes here to avoid a
     // dead-lock. Everything we need should be in Inner.
-    #[cfg_attr(not(feature = "regex"), allow(unused_mut))]
     fn process_log_record(&mut self, mut log: LogEntry) -> Result<()> {
-        #[cfg(feature = "regex")]
         if let Some(level_mapper) = &self.level_mapper.as_mut() {
             level_mapper.map_log(&mut log)?;
         }
 
-        #[cfg(feature = "regex")]
-        if let Err(e) = self.log_to_metrics.process(&log) {
-            warn!("Error processing log to metrics: {:?}", e);
-        }
+        if let Some(log) = self.log_filter.apply_rules(log) {
+            if !self
+                .headroom_limiter
+                .check(&log.ts, &mut self.log_file_control)?
+            {
+                return Ok(());
+            }
+            self.log_queue.push(log.clone());
 
-        if !self
-            .headroom_limiter
-            .check(&log.ts, &mut self.log_file_control)?
-        {
-            return Ok(());
-        }
-        self.log_queue.push(log.clone());
+            // Return early and do not write a log message to file if not persisting
+            if !self.should_persist() {
+                return Ok(());
+            }
 
-        // Return early and do not write a log message to file if not persisting
-        if !self.should_persist() {
-            return Ok(());
-        }
+            // Rotate before writing (in case log file is now too old)
+            self.log_file_control.rotate_if_needed()?;
 
-        // Rotate before writing (in case log file is now too old)
-        self.log_file_control.rotate_if_needed()?;
+            let logfile = self.log_file_control.current_log()?;
+            self.rate_limiter
+                .run_within_limits(log.ts, |rate_limited_calls| {
+                    // Print a message if some previous calls were rate limited.
+                    if let Some(limited) = rate_limited_calls {
+                        logfile.write_log(
+                            limited.latest_call,
+                            "WARN",
+                            format!("Memfaultd rate limited {} messages.", limited.count),
+                        )?;
+                    }
+                    logfile.write_json_line(log)?;
+                    Ok(())
+                })?;
 
-        let logfile = self.log_file_control.current_log()?;
-        self.rate_limiter
-            .run_within_limits(log.ts, |rate_limited_calls| {
-                // Print a message if some previous calls were rate limited.
-                if let Some(limited) = rate_limited_calls {
-                    logfile.write_log(
-                        limited.latest_call,
-                        "WARN",
-                        format!("Memfaultd rate limited {} messages.", limited.count),
-                    )?;
-                }
-                logfile.write_json_line(log)?;
-                Ok(())
-            })?;
-
-        // Rotate after writing (in case log file is now too large)
-        self.log_file_control.rotate_if_needed()?;
+            // Rotate after writing (in case log file is now too large)
+            self.log_file_control.rotate_if_needed()?;
+        };
         Ok(())
     }
 
@@ -285,6 +299,10 @@ impl<H: HeadroomCheck> Inner<H> {
         Ok(logs)
     }
 
+    fn get_latest_log_timestamp(&self) -> Option<DateTime<Utc>> {
+        self.log_queue.back().map(|log_entry| log_entry.ts)
+    }
+
     fn rotate_if_needed(&mut self) -> Result<bool> {
         self.log_file_control.rotate_if_needed()
     }
@@ -307,7 +325,6 @@ pub struct LogCollectorConfig {
     max_lines_per_minute: NonZeroU32,
 
     /// Rules to convert logs to metrics
-    #[cfg_attr(not(feature = "regex"), allow(dead_code))]
     log_to_metrics_rules: Vec<LogToMetricRule>,
 
     /// Maximum number of lines to keep in memory
@@ -316,8 +333,10 @@ pub struct LogCollectorConfig {
     /// Whether or not to persist log lines
     storage_config: StorageConfig,
 
-    #[cfg(feature = "regex")]
     level_mapping_config: LevelMappingConfig,
+
+    #[cfg_attr(not(feature = "regex"), allow(dead_code))]
+    log_filter_config: LogFilterConfig,
 }
 
 impl From<&Config> for LogCollectorConfig {
@@ -337,8 +356,14 @@ impl From<&Config> for LogCollectorConfig {
                 .unwrap_or_default(),
             in_memory_lines: config.config_file.coredump.log_lines,
             storage_config: config.config_file.logs.storage,
-            #[cfg(feature = "regex")]
             level_mapping_config: config.config_file.logs.level_mapping.clone(),
+            log_filter_config: config
+                .config_file
+                .logs
+                .filtering
+                .as_ref()
+                .cloned()
+                .unwrap_or_default(),
         }
     }
 }
@@ -387,22 +412,61 @@ pub struct CrashLogs {
     pub logs: Vec<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LatestLogTimestamp {
+    pub ts: DateTime<Utc>,
+}
+
 /// A handler for the /api/v1/crash-logs endpoint.
 pub struct CrashLogHandler {
-    collector_mbox: MsgMailbox<GetQueuedLogsMsg>,
+    get_queued_logs_mbox: MsgMailbox<GetQueuedLogsMsg>,
+    get_latest_log_ts_mbox: MsgMailbox<GetLatestLogTimestampMsg>,
 }
 
 impl CrashLogHandler {
-    pub fn new(collector_mbox: MsgMailbox<GetQueuedLogsMsg>) -> Self {
-        Self { collector_mbox }
+    /// Timeout for delay on waiting for log_collector to "catch up" to the
+    /// time of the crash before returning logs in the /api/v1/crash-logs
+    /// endpoint
+    pub const CRASH_LOGS_DELAY_TIMEOUT: Duration = Duration::from_millis(250);
+
+    pub fn new(
+        get_queued_logs_mbox: MsgMailbox<GetQueuedLogsMsg>,
+        get_latest_log_ts_mbox: MsgMailbox<GetLatestLogTimestampMsg>,
+    ) -> Self {
+        Self {
+            get_queued_logs_mbox,
+            get_latest_log_ts_mbox,
+        }
     }
 
     /// Handle a GET request to /api/v1/crash-logs
     ///
     /// Will take a snapshot of the current circular queue and return it as a JSON array.
-    fn handle_get_crash_logs(&self) -> Result<ResponseBox> {
+    fn handle_get_crash_logs(
+        &self,
+        time_of_crash: DateTime<Utc>,
+        crash_logs_delay_timeout: Duration,
+    ) -> Result<ResponseBox> {
+        let mut latest_log_timestamp = self
+            .get_latest_log_ts_mbox
+            .send_and_wait_for_reply(GetLatestLogTimestampMsg)?;
+        let crash_logs_delay_start = Instant::now();
+
+        // Try to wait for the log queue in log_collector to "catch up" to the time
+        // of the crash to ensure all logs leading up to crash are captured
+        while latest_log_timestamp.is_ok_and(|log_ts| log_ts < time_of_crash)
+            && crash_logs_delay_start.elapsed() < crash_logs_delay_timeout
+        {
+            latest_log_timestamp = self
+                .get_latest_log_ts_mbox
+                .send_and_wait_for_reply(GetLatestLogTimestampMsg)?;
+
+            // Sleep to avoid busy-waiting
+            sleep(Duration::from_millis(50));
+        }
+
         let logs = self
-            .collector_mbox
+            .get_queued_logs_mbox
             .send_and_wait_for_reply(GetQueuedLogsMsg)??;
 
         let crash_logs = CrashLogs { logs };
@@ -419,17 +483,30 @@ impl CrashLogHandler {
         .boxed())
     }
 }
-
 impl HttpHandler for CrashLogHandler {
     fn handle_request(&self, request: &mut Request) -> HttpHandlerResult {
-        if request.url() == CRASH_LOGS_URL {
-            match *request.method() {
-                Method::Get => self.handle_get_crash_logs().into(),
-                _ => HttpHandlerResult::Response(Response::empty(405).boxed()),
-            }
-        } else {
-            HttpHandlerResult::NotHandled
+        let url = request.url();
+        let base_url = url.split('?').next().unwrap_or(url);
+
+        if base_url != CRASH_LOGS_URL {
+            return HttpHandlerResult::NotHandled;
         }
+
+        if *request.method() != Method::Get {
+            return HttpHandlerResult::Response(Response::empty(405).boxed());
+        }
+
+        let query_params = parse_query_params(url);
+
+        let time_of_crash = match query_params.get(CRASH_LOGS_CRASH_TS_PARAM) {
+            Some(crash_timestamp_str) => crash_timestamp_str
+                .parse::<DateTime<Utc>>()
+                .unwrap_or(Utc::now()),
+            None => Utc::now(),
+        };
+
+        self.handle_get_crash_logs(time_of_crash, Self::CRASH_LOGS_DELAY_TIMEOUT)
+            .into()
     }
 }
 
@@ -506,6 +583,7 @@ mod tests {
             log_compression_level: Compression::default(),
             max_lines_per_minute: NonZeroU32::new(1_000).unwrap(),
             log_to_metrics_rules: vec![],
+            log_filter_config: LogFilterConfig::default(),
             in_memory_lines: 1000,
             storage_config: StorageConfig::Persist,
             level_mapping_config: LevelMappingConfig {
@@ -697,9 +775,17 @@ mod tests {
             fixture.write_log(log.clone());
         }
 
-        let handler = CrashLogHandler::new(fixture.service.mbox().into());
+        let handler =
+            CrashLogHandler::new(fixture.service.mbox().into(), fixture.service.mbox().into());
 
-        let log_response = handler.handle_get_crash_logs().unwrap();
+        // This should timeout because the crash "happened" one second after the last log
+        // message and there are no further logs and there is a delay timeout of 0 seconds
+        let log_response = handler
+            .handle_get_crash_logs(
+                date_str.parse::<DateTime<Utc>>().unwrap() + Duration::from_secs(1),
+                Duration::from_secs(0),
+            )
+            .unwrap();
         let mut log_response_string = String::new();
         log_response
             .into_reader()
@@ -716,7 +802,8 @@ mod tests {
     #[case(Method::Delete)]
     #[case(Method::Patch)]
     fn http_handler_unsupported_method(fixture: LogFixture, #[case] method: Method) {
-        let handler = CrashLogHandler::new(fixture.service.mbox().into());
+        let handler =
+            CrashLogHandler::new(fixture.service.mbox().into(), fixture.service.mbox().into());
 
         let request = TestRequest::new()
             .with_path(CRASH_LOGS_URL)
@@ -729,7 +816,8 @@ mod tests {
 
     #[rstest]
     fn unhandled_url(fixture: LogFixture) {
-        let handler = CrashLogHandler::new(fixture.service.mbox().into());
+        let handler =
+            CrashLogHandler::new(fixture.service.mbox().into(), fixture.service.mbox().into());
 
         let request = TestRequest::new().with_path("/api/v1/other");
         let response = handler.handle_request(&mut request.into());
@@ -871,6 +959,7 @@ mod tests {
             max_lines_per_minute: NonZeroU32::new(1_000).unwrap(),
             log_to_metrics_rules: vec![],
             in_memory_lines: IN_MEMORY_LINES,
+            log_filter_config: LogFilterConfig::default(),
             storage_config: StorageConfig::Persist,
             level_mapping_config: LevelMappingConfig {
                 enable: false,

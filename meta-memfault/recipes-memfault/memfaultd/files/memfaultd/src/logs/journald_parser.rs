@@ -1,15 +1,16 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use eyre::{eyre, Error, Result};
+use futures::future::LocalBoxFuture;
 use libc::free;
-use nix::poll::{poll, PollFd};
 use serde::Serialize;
-use std::ffi::CString;
 use std::fs::read_to_string;
 use std::{collections::HashMap, path::PathBuf};
 use std::{ffi::c_char, mem::MaybeUninit};
+use std::{ffi::CString, os::fd::RawFd};
+use tokio::io::unix::AsyncFd;
 
 use log::{debug, warn};
 use memfaultc_sys::systemd::{
@@ -41,7 +42,7 @@ pub trait JournalRaw {
     /// Waits for the next journal entry to be available.
     ///
     /// This method should block until the next journal entry is available.
-    fn wait_for_entry(&mut self) -> Result<()>;
+    fn wait_for_entry(&mut self) -> LocalBoxFuture<'_, Result<(), &'static str>>;
 }
 
 /// Raw journal entry data.
@@ -66,13 +67,12 @@ impl JournalEntryRaw {
 /// libsystemd.
 pub struct JournalRawImpl {
     journal: *mut sd_journal,
-    wait_fd: PollFd,
+    wait_fd: RawFd,
     cursor_file: PathBuf,
 }
 
 impl JournalRawImpl {
     /// Timeout journal polling after 1 minute.
-    const POLL_TIMEOUT_MS: i32 = 1000 * 60;
     const JOURNAL_CURSOR_FILE: &str = "JOURNALD_CURSOR";
 
     pub fn new(tmp_path: PathBuf) -> Self {
@@ -84,8 +84,7 @@ impl JournalRawImpl {
             sd_journal_open(&mut journal, 0);
         }
 
-        let fd = unsafe { sd_journal_get_fd(journal) };
-        let wait_fd = PollFd::new(fd, nix::poll::PollFlags::POLLIN);
+        let wait_fd = unsafe { sd_journal_get_fd(journal) };
 
         if let Some(cursor) = cursor_string {
             let cursor = cursor.trim();
@@ -161,10 +160,10 @@ impl JournalRawImpl {
             return Err(eyre!("Failed to get journal entry timestamp: {}", ret));
         }
 
-        let datetime = NaiveDateTime::from_timestamp_micros(timestamp as i64)
+        let datetime = DateTime::from_timestamp_micros(timestamp as i64)
             .ok_or_else(|| eyre!("Failed to convert journal timestamp to DateTime"))?;
 
-        Ok(DateTime::<Utc>::from_utc(datetime, Utc))
+        Ok(datetime)
     }
 }
 
@@ -223,20 +222,22 @@ impl JournalRaw for JournalRawImpl {
         }
     }
 
-    fn wait_for_entry(&mut self) -> Result<()> {
-        let mut fds = [self.wait_fd];
-        let ret = poll(&mut fds, Self::POLL_TIMEOUT_MS)?;
-        if ret < 0 {
-            return Err(eyre!("Failed to poll for journal entry: {}", ret));
-        }
+    fn wait_for_entry(&mut self) -> LocalBoxFuture<'_, Result<(), &'static str>> {
+        Box::pin(async {
+            let async_fd =
+                AsyncFd::new(self.wait_fd).map_err(|_| "Failed to open async poll FD")?;
+            let _guard = async_fd
+                .readable()
+                .await
+                .map_err(|_| "Failed to wait for journald FD")?;
 
-        // This call clears the queue status of the poll fd
-        let ret = unsafe { sd_journal_process(self.journal) };
-        if ret < 0 {
-            return Err(eyre!("Failed to process journal entry: {}", ret));
-        }
-
-        Ok(())
+            // This call clears the queue status of the poll fd
+            let ret = unsafe { sd_journal_process(self.journal) };
+            if ret < 0 {
+                return Err("Failed to process journal entry");
+            }
+            Ok(())
+        })
     }
 }
 
@@ -338,8 +339,12 @@ impl<J: JournalRaw> Journal<J> {
         })
     }
 
-    pub fn wait_for_entry(&mut self) -> Result<()> {
-        self.journal.wait_for_entry()
+    pub async fn wait_for_entry(&mut self) -> Result<()> {
+        self.journal
+            .wait_for_entry()
+            .await
+            .map_err(|e| eyre!("Failed to wait for journal entry, {}", e))?;
+        Ok(())
     }
 }
 
@@ -395,8 +400,7 @@ mod test {
     }
 
     fn timestamp() -> DateTime<Utc> {
-        let timestamp = NaiveDateTime::from_timestamp_millis(1713462571).unwrap();
-        DateTime::<Utc>::from_utc(timestamp, Utc)
+        DateTime::from_timestamp_millis(1713462571).unwrap()
     }
 
     fn raw_journal_entry() -> JournalEntryRaw {

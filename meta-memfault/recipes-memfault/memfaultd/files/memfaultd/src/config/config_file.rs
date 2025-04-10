@@ -135,6 +135,46 @@ pub struct LogsConfig {
     pub level_mapping: LevelMappingConfig,
     pub extra_attributes: Vec<String>,
     pub max_buffered_lines: usize,
+    pub filtering: Option<LogFilterConfig>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct LogFilterConfig {
+    pub default_action: LogRuleAction,
+    pub rules: Vec<LogFilterRule>,
+}
+
+impl Default for LogFilterConfig {
+    fn default() -> Self {
+        LogFilterConfig {
+            rules: vec![],
+            default_action: LogRuleAction::Include,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct LogFiltersConfig {
+    pub default_action: LogRuleAction,
+    pub rules: Vec<LogFilterRule>,
+}
+
+#[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum LogRuleAction {
+    Pass,
+    Include,
+    Exclude,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct LogFilterRule {
+    pub service: Option<String>,
+    pub counter_name: Option<String>,
+    pub pattern: Option<String>,
+    pub level: Option<String>,
+    pub extra_fields: Option<HashMap<String, String>>,
+    pub action: Option<LogRuleAction>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -512,6 +552,7 @@ mod test {
     #[case("with_connectivity_monitor")]
     #[case("with_sessions")]
     #[case("metrics_config")]
+    #[case("log_filters")]
     fn can_parse_test_files(#[case] name: &str) {
         let input_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("src/config/test-config")

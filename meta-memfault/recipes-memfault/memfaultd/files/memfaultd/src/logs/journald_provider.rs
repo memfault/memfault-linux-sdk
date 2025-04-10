@@ -1,14 +1,12 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use crate::logs::journald_parser::{Journal, JournalRaw, JournalRawImpl};
+use crate::logs::journald_parser::{Journal, JournalRaw};
 
 use eyre::Result;
-use log::error;
-use ssf::MsgMailbox;
+use ssf::{MsgMailbox, Service, TaskService};
 
-use std::path::PathBuf;
-use std::thread::spawn;
+use std::{future::Future, pin::Pin};
 
 use super::{log_collector::LogEntrySender, log_entry::LogEntry, messages::LogEntryMsg};
 
@@ -22,15 +20,17 @@ pub struct JournaldLogProvider<J: JournalRaw> {
 impl<J: JournalRaw> JournaldLogProvider<J> {
     pub fn new(journal: J, entry_sender: MsgMailbox<LogEntryMsg>, extra_attr: Vec<String>) -> Self {
         let entry_sender = LogEntrySender::new(entry_sender);
+        let journal = Journal::new(journal);
 
         Self {
-            journal: Journal::new(journal),
+            journal,
             extra_attr,
             entry_sender,
         }
     }
 
-    fn run_once(&mut self) -> Result<()> {
+    pub async fn run_once(&mut self) -> Result<()> {
+        self.journal.wait_for_entry().await?;
         for entry in self
             .journal
             .iter()
@@ -44,39 +44,27 @@ impl<J: JournalRaw> JournaldLogProvider<J> {
         }
         Ok(())
     }
+}
 
-    pub fn start(&mut self) -> Result<()> {
-        loop {
-            // Block until another entry is available
-            self.journal.wait_for_entry()?;
-
-            self.run_once()?;
-        }
+impl<J: JournalRaw> Service for JournaldLogProvider<J> {
+    fn name(&self) -> &str {
+        "JournaldLogProvider"
     }
 }
 
-/// Start a Journald log provider and return a receiver for the log entries.
-///
-/// This function will start a new thread that reads log entries from Journald and sends them to the
-/// returned receiver. It takes in the temporary storage path to use as the location of storing the
-/// cursor file.
-pub fn start_journald_provider(
-    tmp_path: PathBuf,
-    extra_attr: Vec<String>,
-    entry_sender: MsgMailbox<LogEntryMsg>,
-) {
-    spawn(move || {
-        let journal_raw = JournalRawImpl::new(tmp_path);
-        let mut provider = JournaldLogProvider::new(journal_raw, entry_sender, extra_attr);
-        if let Err(e) = provider.start() {
-            error!("Journald provider failed: {}", e);
-        }
-    });
+impl<J: JournalRaw> TaskService for JournaldLogProvider<J> {
+    fn run_task(&mut self) -> Pin<Box<dyn Future<Output = std::result::Result<(), String>> + '_>> {
+        Box::pin(async {
+            self.run_once()
+                .await
+                .map_err(|e| format!("journald parser failed: {}", e))
+        })
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use chrono::{DateTime, NaiveDateTime, Utc};
+    use chrono::DateTime;
     use insta::{assert_json_snapshot, with_settings};
     use mockall::Sequence;
     use rstest::rstest;
@@ -89,12 +77,18 @@ mod test {
     #[rstest]
     #[case("no_extra_attr".to_string(), vec![])]
     #[case("extra_attr".to_string(), vec!["EXTRA_FIELD".to_string()])]
-    fn test_happy_path(#[case] test_name: String, #[case] extra_attr: Vec<String>) {
+    #[tokio::test]
+    async fn test_happy_path(#[case] test_name: String, #[case] extra_attr: Vec<String>) {
         let mut journal_raw = MockJournalRaw::new();
         let mut seq = Sequence::new();
 
         let mut service = ServiceMock::new();
 
+        journal_raw
+            .expect_wait_for_entry()
+            .times(1)
+            .in_sequence(&mut seq)
+            .returning(|| Box::pin(async { Ok(()) }));
         journal_raw
             .expect_next_entry_available()
             .times(1)
@@ -111,7 +105,7 @@ mod test {
 
         let mut provider = JournaldLogProvider::new(journal_raw, service.mbox.clone(), extra_attr);
 
-        assert!(provider.run_once().is_ok());
+        assert!(provider.run_once().await.is_ok());
         let entries = service.take_messages();
         assert_eq!(entries.len(), 1);
         with_settings!({sort_maps => true}, {
@@ -119,8 +113,8 @@ mod test {
         });
     }
 
-    #[test]
-    fn test_channel_dropped() {
+    #[tokio::test]
+    async fn test_channel_dropped() {
         let mut journal_raw = MockJournalRaw::new();
         let mut seq = Sequence::new();
 
@@ -128,6 +122,11 @@ mod test {
         let mbox = service.mbox.clone();
         drop(service);
 
+        journal_raw
+            .expect_wait_for_entry()
+            .times(1)
+            .in_sequence(&mut seq)
+            .returning(|| Box::pin(async { Ok(()) }));
         journal_raw
             .expect_next_entry_available()
             .times(1)
@@ -139,7 +138,7 @@ mod test {
 
         let mut provider = JournaldLogProvider::new(journal_raw, mbox, vec![]);
 
-        assert!(provider.run_once().is_err());
+        assert!(provider.run_once().await.is_err());
     }
 
     fn raw_journal_entry() -> JournalEntryRaw {
@@ -149,8 +148,7 @@ mod test {
             "EXTRA_FIELD=extra",
         ];
 
-        let timestamp = NaiveDateTime::from_timestamp_millis(1337).unwrap();
-        let timestamp = DateTime::<Utc>::from_utc(timestamp, Utc);
+        let timestamp = DateTime::from_timestamp_millis(1337).unwrap();
 
         JournalEntryRaw::new(fields.iter().map(|s| s.to_string()).collect(), timestamp)
     }

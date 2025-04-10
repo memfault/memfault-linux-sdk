@@ -30,8 +30,9 @@ use self::device_info::DeviceInfoValue;
 pub use self::device_info::MockDeviceInfoDefaults;
 pub use self::{
     config_file::{
-        ConnectivityMonitorConfig, ConnectivityMonitorTarget, JsonConfigs, LogSource,
-        LogToMetricRule, MemfaultdConfig, SessionConfig, StorageConfig, SystemMetricConfig,
+        ConnectivityMonitorConfig, ConnectivityMonitorTarget, JsonConfigs, LogFilterConfig,
+        LogFilterRule, LogRuleAction, LogSource, LogToMetricRule, MemfaultdConfig, SessionConfig,
+        StorageConfig, SystemMetricConfig,
     },
     device_config::{DeviceConfig, Resolution, Sampling},
     device_info::{DeviceInfo, DeviceInfoDefaultsImpl, DeviceInfoWarning},

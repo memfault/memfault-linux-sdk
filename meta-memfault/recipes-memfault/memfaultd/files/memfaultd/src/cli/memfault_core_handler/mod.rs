@@ -37,6 +37,7 @@ use crate::util::io::{ForwardOnlySeeker, StreamPositionTracker};
 use crate::util::persistent_rate_limiter::PersistentRateLimiter;
 use crate::{cli, util::fs::DEFAULT_GZIP_COMPRESSION_LEVEL};
 use argh::FromArgs;
+use chrono::Utc;
 use core_elf_note::iterate_elf_notes;
 use eyre::{eyre, Result, WrapErr};
 use flate2::write::GzEncoder;
@@ -150,9 +151,8 @@ pub fn main() -> Result<()> {
                     if let Err(e) = client.notify_crash(args.comm) {
                         debug!("Failed to notify memfaultd of crash: {:?}", e);
                     }
-
                     debug!("Getting crash logs");
-                    match client.get_crash_logs() {
+                    match client.get_crash_logs(Utc::now()) {
                         Ok(logs) => {
                             if let Err(e) = app_logs_tx.send(logs) {
                                 debug!("Application logs channel rx already dropped: {:?}", e);

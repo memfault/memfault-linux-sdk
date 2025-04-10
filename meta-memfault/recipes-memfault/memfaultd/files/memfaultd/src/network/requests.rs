@@ -171,6 +171,7 @@ mod test {
     use super::*;
 
     use insta::assert_json_snapshot;
+    use serde_json::json;
 
     #[test]
     fn test_prepare_upload_serialization() {
@@ -186,5 +187,51 @@ mod test {
             UploadPrepareRequest::prepare(&network_config, 123, false, UploadPrepareKind::Mar);
 
         assert_json_snapshot!(prepare_request);
+    }
+
+    #[test]
+    fn test_unknown_device_config_field_deserialize() {
+        let json_with_unknown = json!({
+            "data": {
+                "config": {
+                    "memfault": {
+                        "sampling": {
+                            "debugging.resolution": "normal",
+                            "logging.resolution": "high",
+                            "monitoring.resolution": "low",
+                            "unknown_sampling_field": "some_value"
+                        },
+                        "unknown_memfault_field": true
+                    },
+                    "unknown_config_field": 42
+                },
+                "revision": 123,
+                "completed": 100,
+                "unknown_data_field": "hello"
+            },
+            "unknown_root_field": ["array", "values"]
+        });
+
+        let json_string = json_with_unknown.to_string();
+        let parsed: Result<DeviceConfigResponse, _> = serde_json::from_str(&json_string);
+
+        assert!(parsed.is_ok());
+
+        let response = parsed.unwrap();
+
+        assert_eq!(response.data.revision, 123);
+        assert_eq!(response.data.completed, Some(100));
+        assert!(matches!(
+            response.data.config.memfault.sampling.debugging_resolution,
+            DeviceConfigResponseResolution::Normal
+        ));
+        assert!(matches!(
+            response.data.config.memfault.sampling.logging_resolution,
+            DeviceConfigResponseResolution::High
+        ));
+        assert!(matches!(
+            response.data.config.memfault.sampling.monitoring_resolution,
+            DeviceConfigResponseResolution::Low
+        ));
     }
 }

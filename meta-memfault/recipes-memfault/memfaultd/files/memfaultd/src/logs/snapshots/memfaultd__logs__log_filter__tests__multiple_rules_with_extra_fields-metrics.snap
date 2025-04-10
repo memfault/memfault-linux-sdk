@@ -1,0 +1,9 @@
+---
+source: memfaultd/src/logs/log_filter.rs
+expression: service.take_metrics().unwrap()
+---
+{
+  "foobar_hello_count": 2.0,
+  "foobaz_goodbye_count": 1.0,
+  "total_goodbye_count": 1.0
+}
