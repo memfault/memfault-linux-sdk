@@ -22,7 +22,7 @@ pub struct SharedServiceThread<S: Service> {
     service: Arc<Mutex<S>>,
 }
 
-impl<S: Service + 'static> SharedServiceThread<S> {
+impl<S: Service + Send + 'static> SharedServiceThread<S> {
     pub fn spawn_with(service: S) -> Self {
         let (mailbox, receiver) = Mailbox::create();
         let shared_service = Arc::new(Mutex::new(service));

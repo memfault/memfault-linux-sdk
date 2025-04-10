@@ -1,0 +1,22 @@
+---
+source: memfaultd/src/logs/log_filter.rs
+expression: "log_entries.into_iter().flat_map(|entry|\n            log_filter.apply_rules(entry)).collect::<Vec<_>>()"
+---
+[
+  {
+    "ts": "2004-06-16T12:00:00+00:00",
+    "data": {
+      "MESSAGE": "Knock, knock",
+      "_SYSTEMD_UNIT": "room_service",
+      "PRIORITY": "4"
+    }
+  },
+  {
+    "ts": "2004-06-16T12:00:00+00:00",
+    "data": {
+      "MESSAGE": "What can I help you with today?",
+      "_SYSTEMD_UNIT": "customer_service",
+      "PRIORITY": "4"
+    }
+  }
+]

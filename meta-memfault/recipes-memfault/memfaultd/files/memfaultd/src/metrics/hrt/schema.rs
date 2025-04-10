@@ -7,7 +7,8 @@
 //! It also provides implementations to convert the in memory representation of the data to the on
 //! disk format.
 
-use std::{fs::File, path::Path, time::Duration};
+use std::io::Write;
+use std::{fs::File, io::BufWriter, path::Path, time::Duration};
 
 use chrono::Utc;
 use eyre::{Error, Result};
@@ -195,8 +196,9 @@ pub fn write_report_to_disk(
 
     let hrt_path = mar_builder.make_attachment_path_in_entry_dir(FILE_NAME);
     let hrt_file = File::create(hrt_path)?;
-    let gz_encoder = GzEncoder::new(hrt_file, DEFAULT_GZIP_COMPRESSION_LEVEL);
-    to_writer(gz_encoder, &hrt)?;
+    let mut gz_encoder = BufWriter::new(GzEncoder::new(hrt_file, DEFAULT_GZIP_COMPRESSION_LEVEL));
+    to_writer(&mut gz_encoder, &hrt)?;
+    gz_encoder.flush()?;
 
     mar_builder.save(network_config)
 }

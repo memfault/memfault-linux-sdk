@@ -1,0 +1,42 @@
+{
+  "logs": {
+    "filtering": {
+      "default_action": "exclude",
+	    "rules": [ 
+		    { 
+		      "service": "init.scope",
+		      "pattern": "(.*): Scheduled restart job, restart counter is at",
+		      "counter_name": "systemd_unit_restart_$1",
+		      "action": "include"
+		    },
+		    { 
+		      "extra_fields": { "pod_identifier": "init.scope" },
+		      "pattern": "(.*): Scheduled restart job, restart counter is at",
+		      "counter_name": "systemd_unit_restart_$1",
+		      "action": "include"
+		    },
+		    {
+		      "message": "Out of memory: Killed process \\d+ \\((.*)\\)",
+		      "counter_name": "oom_killed_$1",
+		      "action": "include"
+		    },
+		    {
+			    "message": "Connected to * port 443",
+			    "service": "camera_monitor",
+			    "level": "DEBUG",
+				  "action": "exclude"	
+		    }, 
+		    {
+			    "service": "NetworkManager",
+			    "level": "TRACE",
+				   "action": "exclude"	
+		    }, 
+			  {
+			    "service": "NetworkManager",
+			    "level": "DEBUG",
+			    "action": "exclude"
+		    }
+	    ]
+    }
+  }
+}

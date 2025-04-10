@@ -53,6 +53,19 @@ impl MarCollectorFixture {
         path
     }
 
+    pub fn create_corrupted_manifest_entry(&mut self) -> PathBuf {
+        let uuid = Uuid::new_v4();
+        let path = self.mar_staging.join(uuid.to_string());
+        create_dir(&path).unwrap();
+        let manifest_path = path.join("manifest.json");
+
+        let mut manifest_file = File::create(manifest_path).unwrap();
+        manifest_file
+            .write_all("{ \"foo\": 1.0 }".as_bytes())
+            .unwrap();
+        path
+    }
+
     pub fn create_device_attributes_entry(
         &mut self,
         attributes: Vec<DeviceAttribute>,

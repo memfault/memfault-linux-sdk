@@ -1,0 +1,62 @@
+---
+source: memfaultd/src/logs/log_filter.rs
+expression: "log_entries.into_iter().flat_map(|entry|\n            log_filter.apply_rules(entry)).collect::<Vec<_>>()"
+---
+[
+  {
+    "ts": "2004-06-16T12:00:00+00:00",
+    "data": {
+      "MESSAGE": "Out of memory: Killed process 29116 (wefaultd) total-vm:518632kB, anon-rss:255728kB, file-rss:0kB, shmem-rss:0kB, UID:0 pgtables:568kB oom_score_adj:0",
+      "_SYSTEMD_UNIT": "",
+      "PRIORITY": "6"
+    }
+  },
+  {
+    "ts": "2004-06-16T12:00:00+00:00",
+    "data": {
+      "MESSAGE": "Out of memory: Killed process 29116 (wefaultd) total-vm:518632kB, anon-rss:255728kB, file-rss:0kB, shmem-rss:0kB, UID:0 pgtables:568kB oom_score_adj:0",
+      "_SYSTEMD_UNIT": "",
+      "PRIORITY": "6"
+    }
+  },
+  {
+    "ts": "2004-06-16T12:00:00+00:00",
+    "data": {
+      "MESSAGE": "wefaultd.service: Scheduled restart job, restart counter is at 263.",
+      "_SYSTEMD_UNIT": "init.scope",
+      "PRIORITY": "6"
+    }
+  },
+  {
+    "ts": "2004-06-16T12:00:00+00:00",
+    "data": {
+      "MESSAGE": "memfaultd.service: Scheduled restart job, restart counter is at 110.",
+      "_SYSTEMD_UNIT": "init.scope",
+      "PRIORITY": "6"
+    }
+  },
+  {
+    "ts": "2004-06-16T12:00:00+00:00",
+    "data": {
+      "MESSAGE": "Out of memory: Killed process 29116 (collectd) total-vm:518632kB, anon-rss:255728kB, file-rss:0kB, shmem-rss:0kB, UID:0 pgtables:568kB oom_score_adj:0",
+      "_SYSTEMD_UNIT": "",
+      "PRIORITY": "6"
+    }
+  },
+  {
+    "ts": "2004-06-16T12:00:00+00:00",
+    "data": {
+      "MESSAGE": "Out of memory: Killed process 29116 (wefaultd) total-vm:518632kB, anon-rss:255728kB, file-rss:0kB, shmem-rss:0kB, UID:0 pgtables:568kB oom_score_adj:0",
+      "_SYSTEMD_UNIT": "",
+      "PRIORITY": "6"
+    }
+  },
+  {
+    "ts": "2004-06-16T12:00:00+00:00",
+    "data": {
+      "MESSAGE": "wefaultd.service: Scheduled restart job, restart counter is at 264.",
+      "_SYSTEMD_UNIT": "init.scope",
+      "PRIORITY": "6"
+    }
+  }
+]

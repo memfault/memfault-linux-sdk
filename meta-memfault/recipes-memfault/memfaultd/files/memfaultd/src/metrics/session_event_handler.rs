@@ -371,6 +371,7 @@ mod tests {
             true,
             NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN).unwrap(),
             &[session_config],
+            true,
         ));
 
         let tempdir = TempDir::new().unwrap();

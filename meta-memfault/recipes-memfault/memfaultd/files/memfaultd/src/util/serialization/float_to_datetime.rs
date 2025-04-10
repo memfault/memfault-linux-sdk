@@ -1,7 +1,7 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serializer};
 
 pub fn serialize<S>(time: &DateTime<Utc>, serializer: S) -> Result<S::Ok, S::Error>
@@ -23,8 +23,8 @@ where
     // to avoid precision error.
     let ms = ((secs.rem_euclid(1.0)) * 1e3).round() as u32;
 
-    match NaiveDateTime::from_timestamp_opt(secs.floor() as i64, ms * 1_000_000) {
-        Some(naive) => Ok(DateTime::<Utc>::from_utc(naive, Utc)),
+    match DateTime::from_timestamp(secs.floor() as i64, ms * 1_000_000) {
+        Some(datetime) => Ok(datetime),
         None => Err(serde::de::Error::custom("invalid timestamp")),
     }
 }

@@ -41,6 +41,7 @@ mod mailbox;
 mod msg_mailbox;
 mod scheduler;
 mod service_jig;
+mod service_manager;
 mod service_mock;
 mod service_thread;
 mod shared_service_thread;
@@ -48,10 +49,12 @@ mod stats;
 mod system_messages;
 
 pub use envelope::*;
+use futures::future::LocalBoxFuture;
 pub use mailbox::*;
 pub use msg_mailbox::*;
 pub use scheduler::*;
 pub use service_jig::*;
+pub use service_manager::*;
 pub use service_mock::*;
 pub use service_thread::*;
 pub use shared_service_thread::*;
@@ -60,8 +63,16 @@ pub use system_messages::*;
 
 /// All services should implement this trait. It guarantees that we will be able
 /// to run the service inside a thread (it is `Send`).
-pub trait Service: Send {
+pub trait Service {
     fn name(&self) -> &str;
+}
+
+/// Implement this trait if your service needs to run a task in the background.
+///
+/// The implementation here does not need to be `Send` as we only run the
+/// task on a single thread executor.
+pub trait TaskService: Service {
+    fn run_task(&mut self) -> LocalBoxFuture<'_, Result<(), String>>;
 }
 
 /// Any type that will be sent between services needs to implement this trait.

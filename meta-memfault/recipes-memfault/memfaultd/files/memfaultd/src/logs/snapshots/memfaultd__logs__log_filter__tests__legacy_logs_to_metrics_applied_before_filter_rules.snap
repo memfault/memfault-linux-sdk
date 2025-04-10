@@ -1,0 +1,54 @@
+---
+source: memfaultd/src/logs/log_filter.rs
+expression: "log_entries.into_iter().flat_map(|entry|\n            log_filter.apply_rules(entry)).collect::<Vec<_>>()"
+---
+[
+  {
+    "ts": "2004-06-16T12:00:00+00:00",
+    "data": {
+      "MESSAGE": "session opened for user thomas(uid=1000)",
+      "_SYSTEMD_UNIT": "sshd",
+      "PRIORITY": "6"
+    }
+  },
+  {
+    "ts": "2004-06-16T12:00:00+00:00",
+    "data": {
+      "MESSAGE": "session opened for user blake(uid=1001)",
+      "_SYSTEMD_UNIT": "sshd",
+      "PRIORITY": "6"
+    }
+  },
+  {
+    "ts": "2004-06-16T12:00:00+00:00",
+    "data": {
+      "MESSAGE": "session opened for user thomas(uid=1000)",
+      "_SYSTEMD_UNIT": "sshd",
+      "PRIORITY": "6"
+    }
+  },
+  {
+    "ts": "2004-06-16T12:00:00+00:00",
+    "data": {
+      "MESSAGE": "session opened for user thomas(uid=1000)",
+      "_SYSTEMD_UNIT": "sshd",
+      "PRIORITY": "6"
+    }
+  },
+  {
+    "ts": "2004-06-16T12:00:00+00:00",
+    "data": {
+      "MESSAGE": "session opened for user pat(uid=1002)",
+      "_SYSTEMD_UNIT": "sshd",
+      "PRIORITY": "6"
+    }
+  },
+  {
+    "ts": "2004-06-16T12:00:00+00:00",
+    "data": {
+      "MESSAGE": "session opened for user thomas(uid=1000)",
+      "_SYSTEMD_UNIT": "sshd",
+      "PRIORITY": "6"
+    }
+  }
+]

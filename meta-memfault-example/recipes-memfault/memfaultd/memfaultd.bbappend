@@ -1,7 +1,3 @@
-# Turn on log-to-metrics for meta-memfault-memfaultd_example
-# This feature is not enabled by default in meta-memfault.
-CARGO_FEATURES:append = " log-to-metrics"
-
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 
 SRC_URI:append = " \
