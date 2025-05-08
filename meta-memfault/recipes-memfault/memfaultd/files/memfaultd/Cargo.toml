@@ -65,7 +65,7 @@ flate2 = { version = "1.0.28", default-features = false, features = ["zlib"] }
 take_mut = "0.2.2"
 itertools = "0.10.5"
 governor = { version = "0.5.1", default-features = false, features = ["std"] }
-nix = { version = "0.26.2", default-features = false, features = ["process", "signal", "poll", "fs"]}
+nix = { version = "0.26.2", default-features = false, features = ["process", "signal", "poll", "fs", "ioctl"]}
 kernlog = { version = "0.3.1", optional = true }
 tiny_http = {version = "0.12.0" }
 crc = "3.0.1"
@@ -77,6 +77,10 @@ zip = { version = "1.1.4", default-features = false, features = ["deflate"]}
 lazy_static = "1.5.0"
 tokio = { version = "1.43.0", features = ["net"] }
 futures = "0.3.31"
+syslog_loose = { version = "0.21.0", optional = true }
+chrono-tz = { version =  "0.10.3", optional = true }
+iana-time-zone = { version = "0.1.63", optional = true }
+rand = "0.8.5"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 procfs = { version = "0.15.1", optional = true }
@@ -105,7 +109,7 @@ name = "log_level_mapper"
 harness = false
 
 [features]
-default = ["coredump", "logging", "systemd", "rust-tls"]
+default = ["coredump", "logging", "systemd", "rust-tls", "syslog"]
 coredump = [
     "memfaultc-sys/coredump",
     "dep:prctl",
@@ -123,5 +127,6 @@ systemd = ["memfaultc-sys/systemd"]
 rust-tls = ["reqwest/rustls-tls"]
 openssl-tls = ["reqwest/native-tls"]
 openssl-vendored-tls = ["reqwest/native-tls-vendored"]
+syslog = ["dep:syslog_loose", "dep:chrono-tz", "dep:iana-time-zone"]
 experimental = ["mfw"]
 mfw = []

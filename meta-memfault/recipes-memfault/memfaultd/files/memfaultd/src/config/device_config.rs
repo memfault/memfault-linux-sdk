@@ -1,6 +1,7 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::network::{DeviceConfigResponse, DeviceConfigResponseResolution, DeviceConfigRevision};
@@ -36,6 +37,7 @@ pub struct Sampling {
 pub struct DeviceConfig {
     pub revision: Option<DeviceConfigRevision>,
     pub sampling: Sampling,
+    pub data_upload_start_date: Option<DateTime<Utc>>,
 }
 
 impl From<DeviceConfigResponse> for DeviceConfig {
@@ -65,6 +67,7 @@ impl From<DeviceConfigResponse> for DeviceConfig {
                     .monitoring_resolution
                     .into(),
             },
+            data_upload_start_date: response.data.config.memfault.data_upload_start_date,
         }
     }
 }
@@ -78,6 +81,7 @@ impl Default for DeviceConfig {
                 logging_resolution: Resolution::Off,
                 monitoring_resolution: Resolution::Off,
             },
+            data_upload_start_date: None,
         }
     }
 }

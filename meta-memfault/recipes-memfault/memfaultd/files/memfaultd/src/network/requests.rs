@@ -2,7 +2,10 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 use super::NetworkConfig;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+use crate::util::serialization::optional_datetime_to_rfc3339;
 
 /// Device metadata required to prepare and commit uploads.
 #[derive(Serialize, Deserialize, Debug)]
@@ -143,6 +146,8 @@ pub struct DeviceConfigResponseConfig {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DeviceConfigResponseMemfault {
     pub sampling: DeviceConfigResponseSampling,
+    #[serde(with = "optional_datetime_to_rfc3339", default)]
+    pub data_upload_start_date: Option<DateTime<Utc>>,
 }
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DeviceConfigResponseSampling {
@@ -187,6 +192,63 @@ mod test {
             UploadPrepareRequest::prepare(&network_config, 123, false, UploadPrepareKind::Mar);
 
         assert_json_snapshot!(prepare_request);
+    }
+
+    #[test]
+    fn test_device_config() {
+        let json = json!({
+            "data": {
+                "config": {
+                    "memfault": {
+                        "sampling": {
+                            "debugging.resolution": "normal",
+                            "logging.resolution": "high",
+                            "monitoring.resolution": "low"
+                        },
+                        "data_upload_start_date": "1991-03-25T00:00:00Z"
+                    }
+                },
+                "revision": 123,
+                "completed": 100
+            }
+        });
+
+        let json_string = json.to_string();
+        let parsed: Result<DeviceConfigResponse, _> = serde_json::from_str(&json_string);
+
+        assert!(parsed.is_ok());
+
+        let response = parsed.unwrap();
+
+        assert_json_snapshot!(response);
+    }
+
+    #[test]
+    fn test_device_config_missing_upload_start() {
+        let json = json!({
+            "data": {
+                "config": {
+                    "memfault": {
+                        "sampling": {
+                            "debugging.resolution": "normal",
+                            "logging.resolution": "high",
+                            "monitoring.resolution": "low"
+                        }
+                    },
+                },
+                "revision": 123,
+                "completed": 100
+            }
+        });
+
+        let json_string = json.to_string();
+        let parsed: Result<DeviceConfigResponse, _> = serde_json::from_str(&json_string);
+
+        assert!(parsed.is_ok());
+
+        let response = parsed.unwrap();
+
+        assert_json_snapshot!(response);
     }
 
     #[test]

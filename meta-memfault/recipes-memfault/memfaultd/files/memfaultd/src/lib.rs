@@ -17,6 +17,7 @@ pub mod logs;
 pub mod mar;
 mod memfaultd;
 pub mod metrics;
+mod mmc;
 mod network;
 mod reboot;
 mod retriable_error;

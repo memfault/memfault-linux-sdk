@@ -98,7 +98,9 @@ where
     }
     fn disk_is_monitored(&self, disk: &str) -> bool {
         match &self.config {
-            DiskSpaceMetricsConfig::Auto => disk.starts_with("/dev"),
+            DiskSpaceMetricsConfig::Auto => {
+                disk.starts_with("/dev") && !(disk.contains("loop") || disk.contains("ram"))
+            }
             DiskSpaceMetricsConfig::Disks(configured_disks) => configured_disks.contains(disk),
         }
     }
@@ -314,6 +316,7 @@ mod test {
 
         dir.close().unwrap();
     }
+
     #[rstest]
     fn test_unmonitored_disks_not_initialized() {
         let mock_statfs = MockDiskSpaceInfoForPath::new();
@@ -345,5 +348,18 @@ mod test {
         assert!(disk_space_collector.mounts.is_empty());
 
         dir.close().unwrap();
+    }
+
+    #[rstest]
+    #[case("/dev/sda2", true)]
+    #[case("/dev/loop0", false)]
+    #[case("/dev/ram0", false)]
+    fn test_disk_monitored(#[case] disk: &str, #[case] expected: bool) {
+        let mock_statfs = MockDiskSpaceInfoForPath::new();
+
+        let disk_space_collector =
+            DiskSpaceMetricCollector::new(mock_statfs, DiskSpaceMetricsConfig::Auto);
+
+        assert_eq!(disk_space_collector.disk_is_monitored(disk), expected);
     }
 }

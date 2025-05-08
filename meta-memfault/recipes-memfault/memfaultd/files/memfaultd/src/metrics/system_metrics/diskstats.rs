@@ -32,6 +32,7 @@ use eyre::{eyre, Result};
 const PROC_DISKSTATS_PATH: &str = "/proc/diskstats";
 pub const DISKSTATS_METRIC_NAMESPACE: &str = "diskstats";
 
+#[derive(Clone)]
 pub enum DiskstatsMetricsConfig {
     Auto,
     Devices(HashSet<String>),
@@ -74,7 +75,7 @@ where
         for line in reader.lines() {
             // Discard errors - the assumption here is that we are only parsing
             // lines that follow the specified format and expect other lines in the file to error
-            if let Ok((device_name, disk_stats)) = Self::parse_proc_diskstats_line(line?.trim()) {
+            if let Ok((device_name, disk_stats)) = parse_proc_diskstats_line(line?.trim()) {
                 no_parseable_lines = false;
 
                 if self.device_is_monitored(&device_name) {
@@ -106,40 +107,6 @@ where
         }
     }
 
-    /// Parses the disk stats from the content of a line of /proc/diskstats
-    /// following the disk ID
-    ///
-    /// Example input:
-    ///  57839 46346 3776180 24107 2868024 458991 39327918 1458693 0 839132 1568407 285564 2 308337155 49208 141738 36397
-    ///
-    /// Parsed to [57839, 46346, 3776180, 24107, 2868024 458991, 39327918, 1458693]
-    fn parse_disk_stats(input: &str) -> IResult<&str, Vec<u64>> {
-        count(preceded(multispace1, u64), 8)(input)
-    }
-
-    /// Parses the disk ID str from a line of /proc/diskstats
-    ///
-    /// Example input:
-    ///    8       0 sda 57839 46346 3776180 24107 2868024 458991 39327918 1458693 0 839132 1568407 285564 2 308337155 49208 141738 36397
-    ///
-    /// Parsed to "sda", with everything after the disk ID returned as the other str
-    /// in the IResult
-    fn parse_device_name(input: &str) -> IResult<&str, &str> {
-        // Use multispace0 here as there is not guaranteed to be a leading
-        // space depending on the number of digits in the device's major number
-        let (rest, _first_int) = preceded(multispace0, u64)(input)?;
-        let (rest, _second_int) = preceded(multispace1, u64)(rest)?;
-        preceded(multispace1, alphanumeric1)(rest)
-    }
-
-    fn parse_proc_diskstats_line(line: &str) -> Result<(String, Vec<u64>)> {
-        let (stats_str, device_name) =
-            Self::parse_device_name(line).map_err(|e| eyre!("Failed to parse disk ID: {}", e))?;
-        let (_, disk_stats) = Self::parse_disk_stats(stats_str)
-            .map_err(|e| eyre!("Failed to parse disk stats: {}", e))?;
-        Ok((device_name.to_string(), disk_stats))
-    }
-
     fn delta_since_last_reading(
         &mut self,
         device_name: String,
@@ -147,6 +114,7 @@ where
     ) -> Result<Option<Vec<KeyedMetricReading>>> {
         let num_reads = diskstats.first().ok_or(eyre!("No num_reads"))?;
         let num_writes = diskstats.get(4).ok_or(eyre!("No num_writes"))?;
+
         let now = T::now();
         // Check to make sure there was a previous reading to calculate a delta with
         if let Some(last_stats) = self.disks.insert(
@@ -199,6 +167,40 @@ where
     }
 }
 
+pub fn parse_proc_diskstats_line(line: &str) -> Result<(String, Vec<u64>)> {
+    let (stats_str, device_name) =
+        parse_device_name(line).map_err(|e| eyre!("Failed to parse disk ID: {}", e))?;
+    let (_, disk_stats) =
+        parse_disk_stats(stats_str).map_err(|e| eyre!("Failed to parse disk stats: {}", e))?;
+    Ok((device_name.to_string(), disk_stats))
+}
+
+/// Parses the disk stats from the content of a line of /proc/diskstats
+/// following the disk ID
+///
+/// Example input:
+///  57839 46346 3776180 24107 2868024 458991 39327918 1458693 0 839132 1568407 285564 2 308337155 49208 141738 36397
+///
+/// Parsed to [57839, 46346, 3776180, 24107, 2868024 458991, 39327918, 1458693]
+fn parse_disk_stats(input: &str) -> IResult<&str, Vec<u64>> {
+    count(preceded(multispace1, u64), 8)(input)
+}
+
+/// Parses the disk ID str from a line of /proc/diskstats
+///
+/// Example input:
+///    8       0 sda 57839 46346 3776180 24107 2868024 458991 39327918 1458693 0 839132 1568407 285564 2 308337155 49208 141738 36397
+///
+/// Parsed to "sda", with everything after the disk ID returned as the other str
+/// in the IResult
+fn parse_device_name(input: &str) -> IResult<&str, &str> {
+    // Use multispace0 here as there is not guaranteed to be a leading
+    // space depending on the number of digits in the device's major number
+    let (rest, _first_int) = preceded(multispace0, u64)(input)?;
+    let (rest, _second_int) = preceded(multispace1, u64)(rest)?;
+    preceded(multispace1, alphanumeric1)(rest)
+}
+
 #[cfg(test)]
 mod test {
 
@@ -222,16 +224,14 @@ mod test {
         #[case] expected_device_name: &str,
         #[case] test_name: &str,
     ) {
-        let (device_name, disk_stats) =
-            DiskstatsMetricCollector::<TestInstant>::parse_proc_diskstats_line(proc_diskstats_line)
-                .unwrap();
+        let (device_name, disk_stats) = parse_proc_diskstats_line(proc_diskstats_line).unwrap();
         assert_eq!(device_name, expected_device_name);
         assert_json_snapshot!(test_name, disk_stats);
     }
 
     #[rstest]
-    #[case("   8       0 sda 57839 46346 3776180 24107 2868024 458991 39327918 1458693 0 839132 1568407 285564 2 308337155 49208 141738 36397",  
-           "   8       0 sda 57939 46346 3776180 24107 2868224 458991 39327918 1458693 0 839132 1568407 285564 2 308337155 49208 141738 36397",
+    #[case("   8       0 sda 57839 46346 3776180 24107 2868024 458991 39327918 1458693 0 839132 1568407 285564 2 308337155 49208 141738 36397",
+           "   8       0 sda 57939 46346 3776180 24107 2868224 458991 39327928 1458693 0 839132 1568407 285564 2 308337155 49208 141738 36397",
            "basic_diskstats_calc")]
     fn test_calculate_metrics(
         #[case] proc_diskstats_line_a: &str,
@@ -241,11 +241,7 @@ mod test {
         let mut collector =
             DiskstatsMetricCollector::<TestInstant>::new(DiskstatsMetricsConfig::Auto);
 
-        let (device_name, disk_stats) =
-            DiskstatsMetricCollector::<TestInstant>::parse_proc_diskstats_line(
-                proc_diskstats_line_a,
-            )
-            .unwrap();
+        let (device_name, disk_stats) = parse_proc_diskstats_line(proc_diskstats_line_a).unwrap();
 
         assert_eq!(device_name, "sda");
 
@@ -257,11 +253,7 @@ mod test {
 
         TestInstant::sleep(Duration::from_secs(10));
 
-        let (device_name, disk_stats) =
-            DiskstatsMetricCollector::<TestInstant>::parse_proc_diskstats_line(
-                proc_diskstats_line_b,
-            )
-            .unwrap();
+        let (device_name, disk_stats) = parse_proc_diskstats_line(proc_diskstats_line_b).unwrap();
 
         assert_eq!(device_name, "sda");
 
@@ -282,11 +274,7 @@ mod test {
             DiskstatsMetricsConfig::Devices(HashSet::from(["vda".to_string()])),
         );
 
-        let (device_name, _disk_stats) =
-            DiskstatsMetricCollector::<TestInstant>::parse_proc_diskstats_line(
-                proc_diskstats_line_a,
-            )
-            .unwrap();
+        let (device_name, _disk_stats) = parse_proc_diskstats_line(proc_diskstats_line_a).unwrap();
 
         assert_eq!(device_name, "sda");
         assert!(!collector.device_is_monitored(&device_name));

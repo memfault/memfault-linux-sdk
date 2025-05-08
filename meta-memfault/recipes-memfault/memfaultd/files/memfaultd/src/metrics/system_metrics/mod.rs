@@ -3,15 +3,18 @@
 // See License.txt for details
 use std::{
     collections::HashSet,
+    path::PathBuf,
     thread::sleep,
     time::{Duration, Instant},
 };
 
+use disk::{get_tracked_disks, DiskMetricsCollector, DISK_METRIC_NAMESPACE};
 use eyre::{eyre, Result};
-use log::debug;
+use log::{debug, error};
 
 use crate::{
     metrics::KeyedMetricReading,
+    mmc::MmcImpl,
     util::system::{bytes_per_page, clock_ticks_per_second},
 };
 
@@ -36,6 +39,8 @@ mod processes;
 pub use processes::ProcessMetricsConfig;
 use processes::{ProcessMetricsCollector, PROCESSES_METRIC_NAMESPACE};
 
+mod disk;
+
 mod disk_space;
 pub use disk_space::DiskSpaceMetricsConfig;
 use disk_space::{
@@ -47,15 +52,19 @@ mod diskstats;
 pub use diskstats::DiskstatsMetricsConfig;
 use diskstats::{DiskstatsMetricCollector, DISKSTATS_METRIC_NAMESPACE};
 
-use self::memory::{MemInfoParser, MemInfoParserImpl};
+use self::{
+    memory::{MemInfoParser, MemInfoParserImpl},
+    processes::ProcfsProcessNameMapper,
+};
 use super::MetricsMBox;
 
-pub const BUILTIN_SYSTEM_METRIC_NAMESPACES: &[&str; 8] = &[
+pub const BUILTIN_SYSTEM_METRIC_NAMESPACES: &[&str; 9] = &[
     CPU_METRIC_NAMESPACE,
     MEMORY_METRIC_NAMESPACE,
     THERMAL_METRIC_NAMESPACE,
     NETWORK_INTERFACE_METRIC_NAMESPACE,
     PROCESSES_METRIC_NAMESPACE,
+    DISK_METRIC_NAMESPACE,
     DISKSPACE_METRIC_NAMESPACE,
     DISKSTATS_METRIC_NAMESPACE,
     // Include in list of namespaces so that
@@ -68,7 +77,6 @@ pub trait SystemMetricFamilyCollector {
     fn collect_metrics(&mut self) -> Result<Vec<KeyedMetricReading>>;
     fn family_name(&self) -> &'static str;
 }
-
 pub struct SystemMetricsCollector {
     metric_family_collectors: Vec<Box<dyn SystemMetricFamilyCollector>>,
     metrics_mbox: MetricsMBox,
@@ -98,14 +106,15 @@ impl SystemMetricsCollector {
                 // We need the total memory for the system to calculate the
                 // percent used by each individual process
                 if let Ok(mem_total) = Self::get_total_memory() {
-                    metric_family_collectors.push(Box::new(
-                        ProcessMetricsCollector::<Instant>::new(
-                            process_metrics_config,
-                            clock_ticks_per_second() as f64 / 1000.0,
-                            bytes_per_page() as f64,
-                            mem_total,
-                        ),
-                    ))
+                    metric_family_collectors.push(Box::new(ProcessMetricsCollector::<
+                        Instant,
+                        ProcfsProcessNameMapper,
+                    >::new(
+                        process_metrics_config,
+                        clock_ticks_per_second() as f64 / 1000.0,
+                        bytes_per_page() as f64,
+                        mem_total,
+                    )))
                 }
             }
         };
@@ -120,12 +129,34 @@ impl SystemMetricsCollector {
         };
 
         // Check if diskstats metrics have been manually configured
-        match diskstats_config {
+        match diskstats_config.clone() {
             // Monitoring no devices means this collector is disabled
             DiskstatsMetricsConfig::Devices(devices) if devices.is_empty() => {}
             diskstats_config => metric_family_collectors.push(Box::new(
                 DiskstatsMetricCollector::<Instant>::new(diskstats_config),
             )),
+        };
+
+        // TODO: Implement actual config values for disk metrics
+        match diskstats_config {
+            // Monitoring no devices means this collector is disabled
+            DiskstatsMetricsConfig::Devices(devices) if devices.is_empty() => {}
+            diskstats_config => match get_tracked_disks(diskstats_config, "/sys/block") {
+                Ok(disks) => {
+                    let mmc = disks
+                        .into_iter()
+                        .filter_map(|disk_path| match MmcImpl::new(PathBuf::from(disk_path)) {
+                            Ok(mmc) => Some(mmc),
+                            Err(e) => {
+                                debug!("Failed to open disk: {}", e);
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    metric_family_collectors.push(Box::new(DiskMetricsCollector::new(mmc)));
+                }
+                Err(e) => error!("Failed to start disk metrics collector: {}", e),
+            },
         };
 
         // Check if network interface metrics have been manually configured

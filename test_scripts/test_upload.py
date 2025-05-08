@@ -17,6 +17,12 @@ def memfault_extra_config() -> object:
 
 
 def test_upload_does_not_dump_data(qemu: QEMU) -> None:
+    # Sync to clear out any data in MAR staging area before test
+    qemu.exec_cmd("memfaultctl sync")
+
+    # Let sync complete
+    time.sleep(5)
+
     # Force an upload
     # This should only upload data and not serialize any additional
     # data

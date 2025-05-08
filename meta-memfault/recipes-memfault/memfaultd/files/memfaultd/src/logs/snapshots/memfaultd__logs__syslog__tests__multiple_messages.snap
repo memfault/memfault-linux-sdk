@@ -1,0 +1,23 @@
+---
+source: memfaultd/src/logs/syslog.rs
+expression: results
+---
+[
+  {
+    "ts": "2025-05-15T14:30:45+00:00",
+    "data": {
+      "MESSAGE": "System started",
+      "_PID": "1234",
+      "_SYSTEMD_UNIT": "systemd",
+      "PRIORITY": "2"
+    }
+  },
+  {
+    "ts": "2025-05-15T14:30:46+00:00",
+    "data": {
+      "MESSAGE": "Kernel panic detected!!",
+      "_SYSTEMD_UNIT": "kernel",
+      "PRIORITY": "5"
+    }
+  }
+]

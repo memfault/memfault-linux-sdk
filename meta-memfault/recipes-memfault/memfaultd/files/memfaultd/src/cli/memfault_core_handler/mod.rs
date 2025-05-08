@@ -24,7 +24,7 @@ use self::arch::{coredump_thread_filter_supported, stacktrace_supported};
 use self::core_reader::CoreReader;
 use self::log_wrapper::CoreHandlerLogWrapper;
 use self::log_wrapper::CAPTURE_LOG_CHANNEL_SIZE;
-use self::procfs::{proc_mem_stream, read_proc_cmdline, ProcMapsImpl};
+use self::procfs::{proc_mem_stream, ProcMapsImpl};
 use self::{core_elf_memfault_note::CoredumpMetadata, core_transformer::CoreTransformerOptions};
 use self::{core_reader::CoreReaderImpl, core_transformer::CoreTransformerLogFetcher};
 use self::{core_writer::CoreWriterImpl, log_wrapper::CAPTURE_LOG_MAX_LEVEL};
@@ -35,6 +35,7 @@ use crate::network::NetworkConfig;
 use crate::util::disk_size::get_disk_space;
 use crate::util::io::{ForwardOnlySeeker, StreamPositionTracker};
 use crate::util::persistent_rate_limiter::PersistentRateLimiter;
+use crate::util::system::{get_process_name, read_proc_cmdline};
 use crate::{cli, util::fs::DEFAULT_GZIP_COMPRESSION_LEVEL};
 use argh::FromArgs;
 use chrono::Utc;
@@ -87,12 +88,6 @@ struct MemfaultCoreHandlerArgs {
     #[argh(positional)]
     pid: i32,
 
-    /// populated by the %e in the core_pattern
-    /// This is the value stored in /proc/<pid>/comm
-    /// for the crashing process's PID
-    #[argh(positional)]
-    comm: String,
-
     /// thread ID of the crashing thread.
     ///
     /// Populated by the %I in the core_pattern.
@@ -139,16 +134,18 @@ pub fn main() -> Result<()> {
         return Ok(());
     }
 
+    let process_name = get_process_name(args.pid as u32)?;
     let (app_logs_tx, app_logs_rx) = sync_channel(1);
     let log_fetcher = CoreTransformerLogFetcher::new(core_handler_logs_rx, app_logs_rx);
 
     // Asynchronously notify memfaultd that a crash occurred and fetch any crash logs.
     scope(|s| {
+        let p = process_name.clone();
         s.spawn(|| {
             let client = MemfaultdClient::from_config(&config);
             match client {
                 Ok(client) => {
-                    if let Err(e) = client.notify_crash(args.comm) {
+                    if let Err(e) = client.notify_crash(p) {
                         debug!("Failed to notify memfaultd of crash: {:?}", e);
                     }
                     debug!("Getting crash logs");
@@ -168,8 +165,15 @@ pub fn main() -> Result<()> {
                 }
             }
         });
-        process_corefile(&config, args.pid, log_fetcher, args.tid, args.signal)
-            .wrap_err(format!("Error processing coredump for PID {}", args.pid))
+        process_corefile(
+            &config,
+            args.pid,
+            log_fetcher,
+            args.tid,
+            args.signal,
+            process_name,
+        )
+        .wrap_err(format!("Error processing coredump for PID {}", args.pid))
     })
 }
 
@@ -179,6 +183,7 @@ pub fn process_corefile(
     log_fetcher: CoreTransformerLogFetcher,
     tid: i32,
     signal: i32,
+    process_name: String,
 ) -> Result<()> {
     let rate_limiter = if !config.config_file.enable_dev_mode {
         config.coredump_rate_limiter_file_path();
@@ -213,15 +218,16 @@ pub fn process_corefile(
     let compression = config.config_file.coredump.compression;
     let capture_strategy = config.config_file.coredump.capture_strategy;
 
-    let cmd_line_file_name = format!("/proc/{}/cmdline", pid);
-    let mut cmd_line_file = File::open(cmd_line_file_name)?;
-    let cmd_line = read_proc_cmdline(&mut cmd_line_file)?;
     let thread_filter_supported = coredump_thread_filter_supported();
     let transformer_options = CoreTransformerOptions {
         max_size,
         capture_strategy,
         thread_filter_supported,
     };
+
+    let cmd_line_file_name = format!("/proc/{}/cmdline", pid);
+    let mut cmd_line_file = File::open(cmd_line_file_name)?;
+    let cmd_line = read_proc_cmdline(&mut cmd_line_file)?;
 
     let input_stream = ForwardOnlySeeker::new(BufReader::new(std::io::stdin()));
     let proc_maps = ProcMapsImpl::new(pid);
@@ -273,7 +279,11 @@ pub fn process_corefile(
 
                     Ok(())
                 }
-                Err(e) => Err(eyre!("Failed to capture coredump: {}", e)),
+                Err(e) => Err(eyre!(
+                    "Failed to capture coredump from {}: {}",
+                    process_name,
+                    e
+                )),
             }
         }
         CoredumpCaptureStrategy::Stacktrace => {
@@ -346,6 +356,7 @@ fn generate_tmp_file_name(compression: CoredumpCompression) -> String {
 fn calculate_available_space(config: &Config) -> Result<usize> {
     let min_headroom = config.tmp_dir_min_headroom();
     let available = get_disk_space(&config.tmp_dir())?;
+
     let has_headroom = available.exceeds(&min_headroom);
     if !has_headroom {
         return Ok(0);

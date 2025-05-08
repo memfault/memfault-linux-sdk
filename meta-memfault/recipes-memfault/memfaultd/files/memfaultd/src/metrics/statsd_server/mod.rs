@@ -14,13 +14,19 @@ use super::MetricsMBox;
 
 pub struct StatsDServer {
     legacy_gauge_aggregation: bool,
+    legacy_key_names: bool,
     metrics_mailbox: MetricsMBox,
 }
 
 impl StatsDServer {
-    pub fn new(legacy_gauge_aggregation: bool, metrics_mailbox: MetricsMBox) -> StatsDServer {
+    pub fn new(
+        legacy_gauge_aggregation: bool,
+        legacy_key_names: bool,
+        metrics_mailbox: MetricsMBox,
+    ) -> StatsDServer {
         StatsDServer {
             legacy_gauge_aggregation,
+            legacy_key_names,
             metrics_mailbox,
         }
     }
@@ -48,7 +54,7 @@ impl StatsDServer {
         let metric_readings = message
             .trim()
             .lines()
-            .map(KeyedMetricReading::from_statsd_str)
+            .map(|line| KeyedMetricReading::from_statsd_str(line, self.legacy_key_names))
             // Drop strings that couldn't be parsed as a KeyedMetricReading
             .filter_map(|res| {
                 if let Err(e) = &res {
@@ -156,7 +162,7 @@ mod test {
     #[fixture]
     fn fixture() -> Fixture {
         let mock = ServiceMock::new();
-        let server = StatsDServer::new(false, mock.mbox.clone());
+        let server = StatsDServer::new(false, false, mock.mbox.clone());
 
         Fixture { server, mock }
     }
@@ -164,7 +170,7 @@ mod test {
     #[fixture]
     fn fixture_legacy_gauge_aggregation() -> Fixture {
         let mock = ServiceMock::new();
-        let server = StatsDServer::new(true, mock.mbox.clone());
+        let server = StatsDServer::new(true, false, mock.mbox.clone());
 
         Fixture { server, mock }
     }

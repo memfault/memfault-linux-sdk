@@ -11,6 +11,12 @@ from .qemu import QEMU
 def test_export_zip(
     qemu: QEMU, memfault_service_tester: MemfaultServiceTester, qemu_device_id: str
 ) -> None:
+    # Sync to clear out any data in MAR staging area before test
+    qemu.exec_cmd("memfaultctl sync")
+
+    # Let sync complete
+    time.sleep(5)
+
     qemu.exec_cmd("memfaultctl export -o test.zip")
     qemu.child().expect("Nothing to export right now.")
 

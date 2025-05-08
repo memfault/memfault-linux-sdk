@@ -1,6 +1,8 @@
 #
 # Copyright (c) Memfault, Inc.
 # See License.txt for details
+import time
+
 from .memfault_service_tester import MemfaultServiceTester
 from .qemu import QEMU
 
@@ -23,6 +25,11 @@ def test_customer_reboot_reason_user_reset(
     qemu.exec_cmd("reboot")
     qemu.child().expect("reboot: Restarting system")
     qemu.child().expect(" login:")
+    qemu.child().sendline("root")  # pyright: ignore[reportUnknownMemberType]
+
+    qemu.exec_cmd("memfaultctl sync")
+    # Let sync complete
+    time.sleep(5)
 
     events = memfault_service_tester.poll_reboot_events_until_count(2, device_serial=qemu_device_id)
     assert events
