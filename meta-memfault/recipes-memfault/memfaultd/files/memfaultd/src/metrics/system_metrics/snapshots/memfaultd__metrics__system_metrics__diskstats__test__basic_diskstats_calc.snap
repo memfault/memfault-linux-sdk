@@ -1,6 +1,7 @@
 ---
 source: memfaultd/src/metrics/system_metrics/diskstats.rs
 expression: result_b
+snapshot_kind: text
 ---
 [
   {

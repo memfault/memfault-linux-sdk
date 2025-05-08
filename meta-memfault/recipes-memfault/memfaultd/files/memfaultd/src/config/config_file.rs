@@ -113,11 +113,18 @@ pub struct HttpServerConfig {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub struct SyslogConfig {
+    pub bind_address: SocketAddr,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub enum LogSource {
     #[serde(rename = "fluent-bit")]
     FluentBit,
     #[serde(rename = "journald")]
     Journald,
+    #[serde(rename = "syslog")]
+    Syslog(SyslogConfig),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -277,6 +284,7 @@ pub struct SessionConfig {
 pub struct StatsDServerConfig {
     pub bind_address: SocketAddr,
     pub legacy_gauge_aggregation: Option<bool>,
+    pub legacy_key_names: Option<bool>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -553,6 +561,7 @@ mod test {
     #[case("with_sessions")]
     #[case("metrics_config")]
     #[case("log_filters")]
+    #[case("syslog")]
     fn can_parse_test_files(#[case] name: &str) {
         let input_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("src/config/test-config")

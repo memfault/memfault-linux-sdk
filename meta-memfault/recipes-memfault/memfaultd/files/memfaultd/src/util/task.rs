@@ -34,20 +34,28 @@ pub fn loop_with_exponential_error_backoff<
         condition,
         period,
         error_retry,
-        interruptiple_sleep,
+        interruptible_sleep,
     )
 }
 
 // std::thread::sleep automatically continues sleeping on SIGINT but we want to be interrupted so we use shuteye::sleep.
-fn interruptiple_sleep(d: Duration) {
+pub fn interruptible_sleep(d: Duration) {
     shuteye::sleep(d);
+}
+
+#[derive(PartialEq, Eq)]
+pub enum PreviousIterationKind {
+    First,
+    Subsequent,
 }
 
 /// Specify how to continue execution
 #[derive(PartialEq, Eq)]
 pub enum LoopContinuation {
-    /// Continue running the loop normally
-    KeepRunning,
+    /// Continue running the loop normally,
+    /// boolean indicates if this is the
+    /// first continuation after the initial iteration
+    KeepRunning(PreviousIterationKind),
     /// Immediately re-process the loop
     RerunImmediately,
     /// Stop running the loop
@@ -88,11 +96,26 @@ fn loop_with_exponential_error_backoff_internal<
             }
         };
 
-        if condition() == LoopContinuation::KeepRunning {
-            let sleep_maybe = next_run_in.checked_sub(start_work.elapsed());
-            if let Some(howlong) = sleep_maybe {
-                trace!("Sleep for {:?}", howlong);
-                sleep(howlong);
+        if let LoopContinuation::KeepRunning(prev_iteration_kind) = condition() {
+            match prev_iteration_kind {
+                // We need a special case for the sleep following the
+                // first iteration because we need to wait for the full
+                // duration so that subsequent iterations maintain the
+                // offset established by the jitter in the first iteration
+                // while remaining evenly spaced out from each other.
+                PreviousIterationKind::First => {
+                    trace!("Finished first sync: Sleep for {:?}", next_run_in);
+                    sleep(next_run_in);
+                }
+                // Space subsequent iterations out evenly regardless of how long
+                // the body of the loop took to complete
+                PreviousIterationKind::Subsequent => {
+                    let sleep_maybe = next_run_in.checked_sub(start_work.elapsed());
+                    if let Some(howlong) = sleep_maybe {
+                        trace!("Sleep for {:?}", howlong);
+                        sleep(howlong);
+                    }
+                }
             }
         }
     }
@@ -218,7 +241,7 @@ mod tests {
                 if step.get() < calls.len() && calls[step.get()].run_immediately {
                     LoopContinuation::RerunImmediately
                 } else {
-                    LoopContinuation::KeepRunning
+                    LoopContinuation::KeepRunning(PreviousIterationKind::Subsequent)
                 }
             } else {
                 LoopContinuation::Stop

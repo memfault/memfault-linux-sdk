@@ -34,18 +34,12 @@ use nom::{
     IResult,
 };
 
-use crate::metrics::core_metrics::{
-    METRIC_CONNECTIVITY_INTERFACE_RECV_BYTES_PREFIX,
-    METRIC_CONNECTIVITY_INTERFACE_RECV_BYTES_SUFFIX,
-    METRIC_CONNECTIVITY_INTERFACE_SENT_BYTES_PREFIX,
-    METRIC_CONNECTIVITY_INTERFACE_SENT_BYTES_SUFFIX,
-};
 use crate::{
     metrics::{
         system_metrics::SystemMetricFamilyCollector, KeyedMetricReading, MetricReading,
         MetricStringKey,
     },
-    util::{math::counter_delta_with_overflow, time_measure::TimeMeasure},
+    util::time_measure::TimeMeasure,
 };
 
 use eyre::{eyre, ErrReport, Result};
@@ -160,8 +154,6 @@ where
         let reader = BufReader::new(file);
 
         let mut net_metric_readings = vec![];
-        let mut total_bytes_rx = 0;
-        let mut total_bytes_tx = 0;
 
         for line in reader.lines() {
             // Discard errors - the assumption here is that we are only parsing
@@ -177,8 +169,6 @@ where
                             stats: net_stats,
                             reading_time: T::now(),
                         },
-                        &mut total_bytes_rx,
-                        &mut total_bytes_tx,
                     ) {
                         net_metric_readings.append(&mut readings);
                     }
@@ -256,8 +246,6 @@ where
         &mut self,
         interface: String,
         current_reading: ProcNetDevReading<T>,
-        total_bytes_rx: &mut u64,
-        total_bytes_tx: &mut u64,
     ) -> Result<Vec<KeyedMetricReading>> {
         // Check to make sure there was a previous reading to calculate a delta with
         if let Some(ProcNetDevReading {
@@ -275,8 +263,7 @@ where
             let prev_interface_bytes_rx = previous_net_stats
                 .first()
                 .ok_or(eyre!("Previous reading is missing bytes received value"))?;
-            let interface_bytes_rx =
-                counter_delta_with_overflow(*curr_interface_bytes_rx, *prev_interface_bytes_rx);
+            let interface_bytes_rx = curr_interface_bytes_rx.checked_sub(*prev_interface_bytes_rx);
 
             // Bytes sent is the 9th numeric value in a /proc/net/dev line
             let curr_interface_bytes_tx = current_reading
@@ -286,37 +273,27 @@ where
             let prev_interface_bytes_tx = previous_net_stats
                 .get(8)
                 .ok_or(eyre!("Previous reading is missing bytes sent value"))?;
-            let interface_bytes_tx =
-                counter_delta_with_overflow(*curr_interface_bytes_tx, *prev_interface_bytes_tx);
-
-            *total_bytes_rx += interface_bytes_rx;
-            *total_bytes_tx += interface_bytes_tx;
+            let interface_bytes_tx = curr_interface_bytes_tx.checked_sub(*prev_interface_bytes_tx);
 
             let interface_rx_key = MetricStringKey::from_str(
-                format!(
-                    "{}{}{}",
-                    METRIC_CONNECTIVITY_INTERFACE_RECV_BYTES_PREFIX,
-                    interface,
-                    METRIC_CONNECTIVITY_INTERFACE_RECV_BYTES_SUFFIX
-                )
-                .as_str(),
-            )
-            .map_err(|e| eyre!("Couldn't construct metric key: {}", e))?;
-            let interface_tx_key = MetricStringKey::from_str(
-                format!(
-                    "{}{}{}",
-                    METRIC_CONNECTIVITY_INTERFACE_SENT_BYTES_PREFIX,
-                    interface,
-                    METRIC_CONNECTIVITY_INTERFACE_SENT_BYTES_SUFFIX
-                )
-                .as_str(),
+                format!("interface/{}/total_bytes/rx", interface).as_str(),
             )
             .map_err(|e| eyre!("Couldn't construct metric key: {}", e))?;
 
-            let _interface_core_metrics = [
-                KeyedMetricReading::new_counter(interface_rx_key, interface_bytes_rx as f64),
-                KeyedMetricReading::new_counter(interface_tx_key, interface_bytes_tx as f64),
-            ];
+            let interface_tx_key = MetricStringKey::from_str(
+                format!("interface/{}/total_bytes/tx", interface).as_str(),
+            )
+            .map_err(|e| eyre!("Couldn't construct metric key: {}", e))?;
+
+            let mut interface_counter_readings = [
+                (interface_tx_key, interface_bytes_tx),
+                (interface_rx_key, interface_bytes_rx),
+            ]
+            .into_iter()
+            .filter_map(|(key, value)| {
+                value.map(|v| KeyedMetricReading::new_counter(key, v as f64))
+            })
+            .collect::<Vec<KeyedMetricReading>>();
 
             let current_period_rates =
                 current_reading
@@ -324,11 +301,17 @@ where
                     .iter()
                     .zip(previous_net_stats)
                     .map(|(current, previous)| {
-                        counter_delta_with_overflow(*current, previous) as f64
-                            / (current_reading
-                                .reading_time
-                                .since(&previous_reading_time)
-                                .as_secs_f64())
+                        if *current >= previous {
+                            Some(
+                                (*current - previous) as f64
+                                    / current_reading
+                                        .reading_time
+                                        .since(&previous_reading_time)
+                                        .as_secs_f64(),
+                            )
+                        } else {
+                            None
+                        }
                     });
 
             let net_keys_with_stats = zip(
@@ -353,11 +336,16 @@ where
                 current_period_rates,
             )
             // Filter out metrics we don't want memfaultd to include in reports like fifo and colls
-            .filter(|(key, _)| NETWORK_INTERFACE_METRIC_KEYS.contains(key))
+            .filter_map(|(key, value)| {
+                match (NETWORK_INTERFACE_METRIC_KEYS.contains(&key), value) {
+                    (true, Some(value)) => Some((key, value)),
+                    _ => None,
+                }
+            })
             .collect::<Vec<(&str, f64)>>();
 
             let timestamp = Utc::now();
-            let readings = net_keys_with_stats
+            let mut readings = net_keys_with_stats
                 .iter()
                 .map(|(key, value)| -> Result<KeyedMetricReading, ErrReport> {
                     Ok(KeyedMetricReading::new(
@@ -372,8 +360,11 @@ where
                         },
                     ))
                 })
-                .collect::<Result<Vec<KeyedMetricReading>>>();
-            Ok(readings?)
+                .collect::<Result<Vec<KeyedMetricReading>>>()?;
+
+            readings.append(&mut interface_counter_readings);
+
+            Ok(readings)
         } else {
             Ok(vec![])
         }
@@ -409,7 +400,7 @@ mod test {
     #[case("   eth0:    2707      25    0    0    0     0          0         0     2707      25    0    0    0     0       0          0", "eth0")]
     #[case("wlan1:    2707      25    0    0    0     0          0         0     2707      25    0    0    0     0       0          0", "wlan1")]
     fn test_parse_netdev_line(#[case] proc_net_dev_line: &str, #[case] test_name: &str) {
-        assert_json_snapshot!(test_name, 
+        assert_json_snapshot!(test_name,
                               NetworkInterfaceMetricCollector::<TestInstant>::parse_proc_net_dev_line(proc_net_dev_line).unwrap(),
                               {"[].value.**.timestamp" => "[timestamp]", "[].value.**.value" => rounded_redaction(5)})
     }
@@ -472,8 +463,7 @@ mod test {
             stats,
             reading_time: TestInstant::now(),
         };
-        let result_a =
-            net_metric_collector.calculate_network_metrics(net_if, reading_a, &mut 0, &mut 0);
+        let result_a = net_metric_collector.calculate_network_metrics(net_if, reading_a);
         assert!(result_a.unwrap().is_empty());
 
         TestInstant::sleep(Duration::from_secs(10));
@@ -487,8 +477,7 @@ mod test {
             stats,
             reading_time: TestInstant::now(),
         };
-        let result_b =
-            net_metric_collector.calculate_network_metrics(net_if, reading_b, &mut 0, &mut 0);
+        let result_b = net_metric_collector.calculate_network_metrics(net_if, reading_b);
 
         assert!(result_b.is_ok());
 
@@ -509,8 +498,7 @@ mod test {
             stats,
             reading_time: TestInstant::now(),
         };
-        let result_c =
-            net_metric_collector.calculate_network_metrics(net_if, reading_c, &mut 0, &mut 0);
+        let result_c = net_metric_collector.calculate_network_metrics(net_if, reading_c);
 
         assert!(result_c.is_ok());
 
@@ -538,9 +526,6 @@ mod test {
         #[case] use_auto_config: bool,
         #[case] test_name: &str,
     ) {
-        let mut total_bytes_rx: u64 = 0;
-        let mut total_bytes_tx: u64 = 0;
-
         let mut net_metric_collector =
             NetworkInterfaceMetricCollector::<TestInstant>::new(if use_auto_config {
                 NetworkInterfaceMetricsConfig::Auto
@@ -557,12 +542,7 @@ mod test {
             stats,
             reading_time: TestInstant::now(),
         };
-        let result_a = net_metric_collector.calculate_network_metrics(
-            net_if,
-            reading_a,
-            &mut total_bytes_rx,
-            &mut total_bytes_tx,
-        );
+        let result_a = net_metric_collector.calculate_network_metrics(net_if, reading_a);
         assert!(result_a.unwrap().is_empty());
 
         TestInstant::sleep(Duration::from_secs(10));
@@ -576,12 +556,7 @@ mod test {
             stats,
             reading_time: TestInstant::now(),
         };
-        let result_b = net_metric_collector.calculate_network_metrics(
-            net_if,
-            reading_b,
-            &mut total_bytes_rx,
-            &mut total_bytes_tx,
-        );
+        let result_b = net_metric_collector.calculate_network_metrics(net_if, reading_b);
         assert!(result_b.unwrap().is_empty());
 
         TestInstant::sleep(Duration::from_secs(30));
@@ -595,12 +570,7 @@ mod test {
             stats,
             reading_time: TestInstant::now(),
         };
-        let result_c = net_metric_collector.calculate_network_metrics(
-            net_if,
-            reading_c,
-            &mut total_bytes_rx,
-            &mut total_bytes_tx,
-        );
+        let result_c = net_metric_collector.calculate_network_metrics(net_if, reading_c);
 
         assert!(result_c.is_ok());
         // 2 readings are required to calculate metrics (since they are rates),
@@ -623,17 +593,9 @@ mod test {
             stats,
             reading_time: TestInstant::now(),
         };
-        let result_d = net_metric_collector.calculate_network_metrics(
-            net_if,
-            reading_d,
-            &mut total_bytes_rx,
-            &mut total_bytes_tx,
-        );
+        let result_d = net_metric_collector.calculate_network_metrics(net_if, reading_d);
 
         assert!(result_d.is_ok());
-
-        assert_eq!(total_bytes_tx, 3200);
-        assert_eq!(total_bytes_rx, 5200);
 
         with_settings!({sort_maps => true}, {
             assert_json_snapshot!(format!("{}_{}", test_name, "b_d_metrics"),

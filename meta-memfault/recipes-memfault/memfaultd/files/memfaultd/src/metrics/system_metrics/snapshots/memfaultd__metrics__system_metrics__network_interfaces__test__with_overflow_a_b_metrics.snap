@@ -4,15 +4,6 @@ expression: result_b.unwrap()
 ---
 [
   {
-    "name": "interface/eth0/bytes_per_second/rx",
-    "value": {
-      "Histogram": {
-        "value": 250.0,
-        "timestamp": "[timestamp]"
-      }
-    }
-  },
-  {
     "name": "interface/eth0/packets_per_second/rx",
     "value": {
       "Histogram": {
@@ -71,6 +62,15 @@ expression: result_b.unwrap()
     "value": {
       "Histogram": {
         "value": 0.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "interface/eth0/total_bytes/tx",
+    "value": {
+      "Counter": {
+        "value": 1000.0,
         "timestamp": "[timestamp]"
       }
     }

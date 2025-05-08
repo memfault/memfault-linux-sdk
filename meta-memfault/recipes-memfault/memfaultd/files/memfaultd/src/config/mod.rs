@@ -32,7 +32,7 @@ pub use self::{
     config_file::{
         ConnectivityMonitorConfig, ConnectivityMonitorTarget, JsonConfigs, LogFilterConfig,
         LogFilterRule, LogRuleAction, LogSource, LogToMetricRule, MemfaultdConfig, SessionConfig,
-        StorageConfig, SystemMetricConfig,
+        StorageConfig, SyslogConfig, SystemMetricConfig,
     },
     device_config::{DeviceConfig, Resolution, Sampling},
     device_info::{DeviceInfo, DeviceInfoDefaultsImpl, DeviceInfoWarning},
@@ -285,6 +285,15 @@ impl Config {
                 .legacy_gauge_aggregation
                 .unwrap_or(false),
         }
+    }
+
+    pub fn statsd_server_legacy_key_names_enabled(&self) -> bool {
+        self.config_file
+            .metrics
+            .statsd_server
+            .as_ref()
+            .and_then(|server| server.legacy_key_names)
+            .unwrap_or(false)
     }
 
     pub fn hrt_enabled(&self) -> bool {
@@ -576,6 +585,23 @@ mod tests {
         assert_eq!(actual_max, expected);
     }
 
+    #[rstest]
+    #[case(Some(true), true)]
+    #[case(None, false)]
+    #[case(Some(false), false)]
+    fn legacy_key_names(#[case] legacy_key_names_enabled: Option<bool>, #[case] expected: bool) {
+        let mut config = Config::test_fixture();
+        config
+            .config_file
+            .metrics
+            .statsd_server
+            .as_mut()
+            .unwrap()
+            .legacy_key_names = legacy_key_names_enabled;
+
+        assert_eq!(config.statsd_server_legacy_key_names_enabled(), expected);
+    }
+
     struct Fixture {
         config: Config,
         _tmp_dir: tempfile::TempDir,
@@ -618,6 +644,7 @@ mod tests {
                         logging_resolution: DeviceConfigResponseResolution::High,
                         monitoring_resolution: DeviceConfigResponseResolution::High,
                     },
+                    data_upload_start_date: None,
                 },
             },
         },

@@ -13,6 +13,10 @@ use regex::{Captures, Regex};
 
 use crate::{
     config::{LogFilterRule, LogRuleAction, LogToMetricRule},
+    logs::levels::{
+        LOG_LEVEL_ALERT, LOG_LEVEL_CRITICAL, LOG_LEVEL_DEBUG, LOG_LEVEL_EMERGENCY, LOG_LEVEL_ERROR,
+        LOG_LEVEL_INFO, LOG_LEVEL_NOTICE, LOG_LEVEL_WARN,
+    },
     metrics::{KeyedMetricReading, MetricStringKey, MetricsMBox},
 };
 
@@ -41,14 +45,14 @@ impl From<&LogRuleAction> for LogRuleResult {
 
 fn level_str_from_priority(priority: &str) -> &'static str {
     match priority {
-        "0" => "EMERGENCY",
-        "1" => "ALERT",
-        "2" => "CRITICAL",
-        "3" => "ERROR",
-        "4" => "WARN",
-        "5" => "NOTICE",
-        "6" => "INFO",
-        "7" => "DEBUG",
+        "0" => LOG_LEVEL_EMERGENCY,
+        "1" => LOG_LEVEL_ALERT,
+        "2" => LOG_LEVEL_CRITICAL,
+        "3" => LOG_LEVEL_ERROR,
+        "4" => LOG_LEVEL_WARN,
+        "5" => LOG_LEVEL_NOTICE,
+        "6" => LOG_LEVEL_INFO,
+        "7" => LOG_LEVEL_DEBUG,
         _ => {
             warn!("LogToMetrics rule has invalid priority: {}", priority);
             "UNKNOWN"
@@ -279,14 +283,14 @@ impl LogFilter {
     /// Docs on systemd journal priority codes: https://wiki.archlinux.org/title/Systemd/Journal
     fn priority_matches_level_str(priority: &str, level_str: &str) -> bool {
         match priority {
-            "0" => level_str == "EMERGENCY",
-            "1" => level_str == "ALERT",
-            "2" => level_str == "CRITICAL",
-            "3" => level_str == "ERROR",
-            "4" => level_str == "WARN",
-            "5" => level_str == "NOTICE",
-            "6" => level_str == "INFO",
-            "7" => level_str == "DEBUG",
+            "0" => level_str == LOG_LEVEL_EMERGENCY,
+            "1" => level_str == LOG_LEVEL_ALERT,
+            "2" => level_str == LOG_LEVEL_CRITICAL,
+            "3" => level_str == LOG_LEVEL_ERROR,
+            "4" => level_str == LOG_LEVEL_WARN,
+            "5" => level_str == LOG_LEVEL_NOTICE,
+            "6" => level_str == LOG_LEVEL_INFO,
+            "7" => level_str == LOG_LEVEL_DEBUG,
             _ => false,
         }
     }

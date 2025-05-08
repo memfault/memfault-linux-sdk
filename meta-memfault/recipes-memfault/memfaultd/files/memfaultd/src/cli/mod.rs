@@ -10,7 +10,7 @@ use std::path::Path;
 use stderrlog::{LogLevelNum, StdErrLog};
 
 #[cfg(all(target_os = "linux", feature = "coredump"))]
-mod memfault_core_handler;
+pub mod memfault_core_handler;
 #[cfg(feature = "mfw")]
 mod memfault_watch;
 mod memfaultctl;

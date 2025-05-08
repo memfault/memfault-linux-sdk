@@ -34,6 +34,7 @@ PACKAGECONFIG[collectd] = ""
 PACKAGECONFIG[swupdate] = ""
 PACKAGECONFIG[logging] = ""
 PACKAGECONFIG[openssl-tls] = ""
+PACKAGECONFIG[syslog] = ""
 
 # Tell Cargo to disable all features and only enable the ones we will use.
 EXTRA_CARGO_FLAGS = "--no-default-features"
@@ -98,6 +99,14 @@ CARGO_FEATURES_append = " \
 DEPENDS_append = " \
     ${@bb.utils.contains('DISTRO_FEATURES', 'systemd', \
         'systemd', \
+        '', \
+    d)} \
+"
+
+# Syslog
+CARGO_FEATURES_append = " \
+    ${@bb.utils.contains('PACKAGECONFIG', 'syslog', \
+        'syslog', \
         '', \
     d)} \
 "

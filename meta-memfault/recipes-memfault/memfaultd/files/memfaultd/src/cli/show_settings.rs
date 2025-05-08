@@ -118,6 +118,8 @@ pub fn show_settings(config_path: Option<&Path>) -> Result<()> {
         "logging",
         #[cfg(feature = "systemd")]
         "systemd",
+        #[cfg(feature = "syslog")]
+        "syslog",
     ];
 
     dump_settings(
