@@ -19,6 +19,7 @@ use std::{
     collections::HashMap,
     collections::HashSet,
     fs::{read_dir, read_to_string},
+    marker::PhantomData,
 };
 
 use eyre::{eyre, Result};
@@ -33,8 +34,11 @@ use nom::{
     IResult,
 };
 
-use crate::metrics::{system_metrics::SystemMetricFamilyCollector, KeyedMetricReading};
 use crate::util::{math::counter_delta_with_overflow, time_measure::TimeMeasure};
+use crate::{
+    metrics::{system_metrics::SystemMetricFamilyCollector, KeyedMetricReading},
+    util::system::get_process_name,
+};
 
 const PROC_DIR: &str = "/proc/";
 pub const PROCESSES_METRIC_NAMESPACE: &str = "processes";
@@ -59,17 +63,32 @@ struct ProcessReading<T: TimeMeasure> {
     reading_time: T,
 }
 
-pub struct ProcessMetricsCollector<T: TimeMeasure> {
+pub trait ProcessNameMapper {
+    fn get_process_name(pid: u32) -> Result<String>;
+}
+
+#[derive(Clone, Copy)]
+pub struct ProcfsProcessNameMapper {}
+
+impl ProcessNameMapper for ProcfsProcessNameMapper {
+    fn get_process_name(pid: u32) -> Result<String> {
+        get_process_name(pid)
+    }
+}
+
+pub struct ProcessMetricsCollector<T: TimeMeasure, P: ProcessNameMapper> {
     config: ProcessMetricsConfig,
     processes: HashMap<u64, ProcessReading<T>>,
     clock_ticks_per_ms: f64,
     bytes_per_page: f64,
     mem_total: f64,
+    _marker: PhantomData<P>,
 }
 
-impl<T> ProcessMetricsCollector<T>
+impl<T, P> ProcessMetricsCollector<T, P>
 where
     T: TimeMeasure + Copy + Send + Sync + 'static,
+    P: ProcessNameMapper + Copy + Send + Sync,
 {
     pub fn new(
         config: ProcessMetricsConfig,
@@ -83,6 +102,7 @@ where
             clock_ticks_per_ms,
             bytes_per_page,
             mem_total,
+            _marker: PhantomData,
         }
     }
 
@@ -121,7 +141,7 @@ where
     /// (memfaultd) S 1 55270 55270 0 -1 4194368 825 0 0 0 100 50 0 0 20 0 19 0 18548522 1411293184 4397 18446744073709551615 1 1 0 0 0 0 0 4096 17987 0 0 0 17 7 0 0 0 0 0 0 0 0 0 0 0 0 0",
     /// Example output:
     /// memfaultd
-    fn parse_name(proc_pid_stat_line: &str) -> IResult<&str, &str> {
+    fn parse_comm(proc_pid_stat_line: &str) -> IResult<&str, &str> {
         // This will break if there's a ')' in the process name - that seems unlikely
         // enough to leave as-is for now
         delimited(tag("("), is_not(")"), tag(")"))(proc_pid_stat_line)
@@ -171,12 +191,14 @@ where
     fn parse_process_stat(&self, proc_pid_stat_line: &str) -> Result<Option<ProcessReading<T>>> {
         let (after_pid, pid) = Self::parse_pid(proc_pid_stat_line)
             .map_err(|_e| eyre!("Failed to parse PID for process"))?;
-        let (after_name, name) =
-            Self::parse_name(after_pid).map_err(|_e| eyre!("Failed to parse process name"))?;
+        let (after_comm, _comm) = Self::parse_comm(after_pid)
+            .map_err(|_e| eyre!("Failed to parse process comm value"))?;
+
+        let name = P::get_process_name(pid as u32)?;
 
         // Don't bother continuing to parse processes that aren't monitored
-        if self.process_is_monitored(name) {
-            let (after_state, _) = Self::parse_state(after_name)
+        if self.process_is_monitored(&name) {
+            let (after_state, _) = Self::parse_state(after_comm)
                 .map_err(|_e| eyre!("Failed to parse process state for {}", name))?;
             let (_, stats) = Self::parse_stats(after_state)
                 .map_err(|_e| eyre!("Failed to parse process stats for {}", name))?;
@@ -201,7 +223,7 @@ where
 
             Ok(Some(ProcessReading {
                 pid,
-                name: name.to_string(),
+                name,
                 cputime_user,
                 cputime_system,
                 num_threads,
@@ -373,9 +395,10 @@ where
     }
 }
 
-impl<T> SystemMetricFamilyCollector for ProcessMetricsCollector<T>
+impl<T, P> SystemMetricFamilyCollector for ProcessMetricsCollector<T, P>
 where
     T: TimeMeasure + Copy + Send + Sync + 'static,
+    P: ProcessNameMapper + Copy + Send + Sync,
 {
     fn family_name(&self) -> &'static str {
         PROCESSES_METRIC_NAMESPACE
@@ -401,9 +424,21 @@ mod tests {
     use super::*;
     use crate::test_utils::TestInstant;
 
+    #[derive(Copy, Clone)]
+    struct MockProcessNameMapper {}
+    impl ProcessNameMapper for MockProcessNameMapper {
+        fn get_process_name(pid: u32) -> Result<String> {
+            match pid {
+                55270 => Ok("memfaultd".to_string()),
+                24071 => Ok("systemd".to_string()),
+                _ => Err(eyre!("Unmapped PID in test case")),
+            }
+        }
+    }
+
     #[rstest]
     fn test_parse_single_line() {
-        let collector = ProcessMetricsCollector::<TestInstant>::new(
+        let collector = ProcessMetricsCollector::<TestInstant, MockProcessNameMapper>::new(
             ProcessMetricsConfig::Processes(HashSet::from_iter(["memfaultd".to_string()])),
             100.0,
             4096.0,
@@ -412,7 +447,10 @@ mod tests {
 
         let line = "55270 (memfaultd) S 1 55270 55270 0 -1 4194368 825 0 0 0 155 102 0 0 20 0 19 0 18548522 1411293184 4397 18446744073709551615 1 1 0 0 0 0 0 4096 17987 0 0 0 17 7 0 0 0 0 0 0 0 0 0 0 0 0 0";
         assert!(
-            ProcessMetricsCollector::<TestInstant>::parse_process_stat(&collector, line).is_ok()
+            ProcessMetricsCollector::<TestInstant, MockProcessNameMapper>::parse_process_stat(
+                &collector, line
+            )
+            .is_ok()
         );
     }
 
@@ -423,7 +461,7 @@ mod tests {
         "simple_cpu_delta",
     )]
     fn test_collect_metrics(#[case] line1: &str, #[case] line2: &str, #[case] test_name: &str) {
-        let collector = ProcessMetricsCollector::<TestInstant>::new(
+        let collector = ProcessMetricsCollector::<TestInstant, MockProcessNameMapper>::new(
             ProcessMetricsConfig::Processes(HashSet::from_iter(["memfaultd".to_string()])),
             100.0,
             4096.0,
@@ -431,16 +469,20 @@ mod tests {
         );
 
         let first_reading =
-            ProcessMetricsCollector::<TestInstant>::parse_process_stat(&collector, line1)
-                .unwrap()
-                .unwrap();
+            ProcessMetricsCollector::<TestInstant, MockProcessNameMapper>::parse_process_stat(
+                &collector, line1,
+            )
+            .unwrap()
+            .unwrap();
 
         TestInstant::sleep(Duration::from_secs(10));
 
         let second_reading =
-            ProcessMetricsCollector::<TestInstant>::parse_process_stat(&collector, line2)
-                .unwrap()
-                .unwrap();
+            ProcessMetricsCollector::<TestInstant, MockProcessNameMapper>::parse_process_stat(
+                &collector, line2,
+            )
+            .unwrap()
+            .unwrap();
 
         let process_metric_readings =
             collector.calculate_metric_readings(first_reading, second_reading);
@@ -474,7 +516,7 @@ mod tests {
         #[case] use_auto: bool,
     ) {
         let mut collector = if use_auto {
-            ProcessMetricsCollector::<TestInstant>::new(
+            ProcessMetricsCollector::<TestInstant, MockProcessNameMapper>::new(
                 ProcessMetricsConfig::Auto,
                 100.0,
                 4096.0,
@@ -482,7 +524,7 @@ mod tests {
             )
         } else {
             // If auto is not used, the configuration should capture metrics from both processes
-            ProcessMetricsCollector::<TestInstant>::new(
+            ProcessMetricsCollector::<TestInstant, MockProcessNameMapper>::new(
                 ProcessMetricsConfig::Processes(HashSet::from_iter([
                     "memfaultd".to_string(),
                     "systemd".to_string(),

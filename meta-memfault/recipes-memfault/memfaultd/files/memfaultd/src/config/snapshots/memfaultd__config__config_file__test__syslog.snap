@@ -1,7 +1,6 @@
 ---
 source: memfaultd/src/config/config_file.rs
 expression: content
-snapshot_kind: text
 ---
 {
   "persist_dir": "/media/memfault",
@@ -48,7 +47,11 @@ snapshot_kind: text
     "max_lines_per_minute": 1000,
     "log_to_metrics": null,
     "storage": "persist",
-    "source": "journald",
+    "source": {
+      "syslog": {
+        "bind_address": "127.0.0.1:514"
+      }
+    },
     "level_mapping": {
       "enable": false,
       "regex": null
@@ -71,18 +74,12 @@ snapshot_kind: text
   "metrics": {
     "enable_daily_heartbeats": false,
     "system_metric_collection": {
-      "enable": false,
+      "enable": true,
       "poll_interval_seconds": 10,
-      "processes": [
-        "wefaultd"
-      ],
-      "disk_space": [
-        "/dev/sda1"
-      ],
+      "processes": null,
+      "disk_space": null,
       "diskstats": null,
-      "network_interfaces": [
-        "eth1"
-      ]
+      "network_interfaces": null
     },
     "statsd_server": {
       "bind_address": "127.0.0.1:8125",

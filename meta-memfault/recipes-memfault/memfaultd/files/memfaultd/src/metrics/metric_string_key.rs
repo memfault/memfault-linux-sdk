@@ -42,7 +42,9 @@ impl FromStr for MetricStringKey {
             return Err("Invalid key: must be ASCII");
         }
         Ok(Self {
-            inner: s.to_string(),
+            // Sanitize metric key by replacing any NUL (0x0) characters
+            // with an empty string
+            inner: s.replace('\0', ""),
         })
     }
 }
@@ -110,5 +112,11 @@ mod tests {
     fn parsed_ok(#[case] input: &str) {
         let result: Result<MetricStringKey, &str> = str::parse(input);
         assert_eq!(result.ok().unwrap().as_str(), input);
+    }
+
+    #[rstest]
+    fn null_gets_removed() {
+        let result: Result<MetricStringKey, &str> = str::parse("foo\0");
+        assert_eq!(result.ok().unwrap().as_str(), "foo");
     }
 }

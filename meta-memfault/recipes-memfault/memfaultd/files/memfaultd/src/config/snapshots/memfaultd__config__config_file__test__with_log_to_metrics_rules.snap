@@ -1,6 +1,7 @@
 ---
 source: memfaultd/src/config/config_file.rs
 expression: content
+snapshot_kind: text
 ---
 {
   "persist_dir": "/media/memfault",
@@ -96,7 +97,8 @@ expression: content
     },
     "statsd_server": {
       "bind_address": "127.0.0.1:8125",
-      "legacy_gauge_aggregation": false
+      "legacy_gauge_aggregation": false,
+      "legacy_key_names": false
     },
     "high_resolution_telemetry": {
       "enable": true,

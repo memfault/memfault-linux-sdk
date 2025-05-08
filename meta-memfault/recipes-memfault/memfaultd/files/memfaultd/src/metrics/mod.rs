@@ -59,7 +59,7 @@ pub mod internal_metrics;
 pub mod statsd_server;
 pub use statsd_server::StatsDServer;
 
-mod system_metrics;
+pub mod system_metrics;
 pub use system_metrics::DiskSpaceMetricsConfig;
 pub use system_metrics::DiskstatsMetricsConfig;
 pub use system_metrics::ProcessMetricsConfig;

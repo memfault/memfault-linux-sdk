@@ -74,5 +74,23 @@ expression: result_d.unwrap()
         "timestamp": "[timestamp]"
       }
     }
+  },
+  {
+    "name": "interface/eth1/total_bytes/tx",
+    "value": {
+      "Counter": {
+        "value": 200.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "interface/eth1/total_bytes/rx",
+    "value": {
+      "Counter": {
+        "value": 1200.0,
+        "timestamp": "[timestamp]"
+      }
+    }
   }
 ]

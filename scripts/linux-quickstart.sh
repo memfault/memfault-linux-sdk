@@ -277,8 +277,10 @@ install_memfault_device_info() {
 echo "MEMFAULT_DEVICE_ID=$2"
 echo "MEMFAULT_HARDWARE_VERSION=$(uname -n)"
 EOM
-  $sudo_cmd mv "$1"/memfault-device-info /usr/bin/
-  $sudo_cmd chmod +x /usr/bin/memfault-device-info
+  if [ ! -f /usr/bin/memfault-device-info ]; then
+    $sudo_cmd mv "$1"/memfault-device-info /usr/bin/
+    $sudo_cmd chmod +x /usr/bin/memfault-device-info
+  fi
 }
 
 # This wraps curl or wget. Try curl first, if not installed,

@@ -1,6 +1,8 @@
 #
 # Copyright (c) Memfault, Inc.
 # See License.txt for details
+import time
+
 from .memfault_service_tester import MemfaultServiceTester
 from .qemu import QEMU
 
@@ -23,6 +25,12 @@ def test_start(
     qemu.exec_cmd("echo c > /proc/sysrq-trigger")
     qemu.child().expect(" login:")
 
+    qemu.child().sendline("root")  # pyright: ignore[reportUnknownMemberType]
+    qemu.exec_cmd("memfaultctl sync")
+
+    # Let sync complete
+    time.sleep(5)
+
     events = memfault_service_tester.poll_reboot_events_until_count(2, device_serial=qemu_device_id)
     assert events
     assert events[-1]["reason"] == 0x8008
@@ -30,7 +38,13 @@ def test_start(
     qemu.child().sendline("root")
     qemu.exec_cmd("reboot")
     qemu.child().expect("reboot: Restarting system")
-    qemu.child().expect(" login:")
+    qemu.child().expect(" login:")  # pyright: ignore[reportUnknownMemberType]
+
+    qemu.child().sendline("root")  # pyright: ignore[reportUnknownMemberType]
+    qemu.exec_cmd("memfaultctl sync")
+
+    # Let sync complete
+    time.sleep(5)
 
     events = memfault_service_tester.poll_reboot_events_until_count(3, device_serial=qemu_device_id)
     assert events

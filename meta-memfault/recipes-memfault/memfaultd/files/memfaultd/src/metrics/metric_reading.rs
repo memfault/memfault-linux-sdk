@@ -9,7 +9,7 @@ use nom::{
     branch::alt,
     bytes::complete::take_while_m_n,
     character::complete::char,
-    combinator::{map_res, value},
+    combinator::value,
     number::complete::double,
     sequence::{separated_pair, terminated},
     Finish,
@@ -155,6 +155,16 @@ impl KeyedMetricReading {
         }
     }
 
+    pub fn new_report_tag(name: MetricStringKey, value: String) -> Self {
+        Self {
+            name,
+            value: MetricReading::ReportTag {
+                value,
+                timestamp: Utc::now(),
+            },
+        }
+    }
+
     /// Construct a KeyedMetricReading from a string in the StatsD format
     /// <MetricStringKey:<f64>|<StatsDMetricType>
     ///
@@ -164,9 +174,13 @@ impl KeyedMetricReading {
     ///  test_histo:100|h
     ///  test_gauge:1.7|g
     ///  cpu3_idle:100.9898|g
-    pub fn from_statsd_str(s: &str) -> Result<Self, ErrReport> {
-        match Self::parse_statsd(s).finish() {
-            Ok((_, reading)) => Ok(reading),
+    pub fn from_statsd_str(s: &str, legacy_key: bool) -> Result<Self, ErrReport> {
+        match Self::parse_statsd(s, legacy_key).finish() {
+            Ok((_, (string_key, reading))) => {
+                let metric_key = MetricStringKey::from_str(&string_key)
+                    .map_err(|e| eyre!("Invalid metric key: {}", e))?;
+                Ok(KeyedMetricReading::new(metric_key, reading))
+            }
             Err(e) => Err(eyre!(
                 "Failed to parse string \"{}\" as a StatsD metric reading: {}",
                 s,
@@ -197,16 +211,25 @@ impl KeyedMetricReading {
 
     /// Helper that handles `nom` details for parsing a StatsD string as
     /// a KeyedMetricReading
-    fn parse_statsd(input: &str) -> IResult<&str, KeyedMetricReading> {
+    fn parse_statsd(input: &str, use_legacy_keys: bool) -> IResult<&str, (String, MetricReading)> {
         let is_valid_ascii = |c: char| c.is_ascii() && c != ':';
 
-        let (value_str, name) = map_res(
-            terminated(take_while_m_n(0, 128, is_valid_ascii), char(':')),
-            MetricStringKey::from_str,
-        )(input)?;
+        let (value_str, name) =
+            terminated(take_while_m_n(0, 128, is_valid_ascii), char(':'))(input)?;
 
         let (remaining, value) = MetricReading::parse(value_str)?;
-        Ok((remaining, KeyedMetricReading { name, value }))
+        let prefix = match &value {
+            MetricReading::Counter { .. } => "statsd/count",
+            _ => "statsd/gauge",
+        };
+
+        let key_string = if use_legacy_keys {
+            format!("{}/{}", prefix, name)
+        } else {
+            name.to_string()
+        };
+
+        Ok((remaining, (key_string, value)))
     }
 
     /// Deserialize a string in the form <MetricStringKey>=<f64> to a Gauge metric reading
@@ -240,7 +263,7 @@ impl FromStr for KeyedMetricReading {
     type Err = ErrReport;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match Self::from_statsd_str(s) {
+        match Self::from_statsd_str(s, false) {
             Ok(reading) => Ok(reading),
             Err(_) => match Self::from_arg_str(s) {
                 Ok(reading) => Ok(reading),
@@ -310,5 +333,19 @@ mod tests {
     #[case("test_gauge:string-value|g")]
     fn fail_on_invalid_statsd_reading(#[case] reading_str: &str, _setup_logger: ()) {
         assert!(KeyedMetricReading::from_str(reading_str).is_err())
+    }
+
+    #[rstest]
+    #[case("testCounter:1|c", "statsd/count/testCounter")]
+    #[case("testgauge:1.7|g", "statsd/gauge/testgauge")]
+    #[case("test_histo:100|h", "statsd/gauge/test_histo")]
+    #[case("test_timer:3600000|ms", "statsd/count/test_timer")]
+    fn parse_statsd_key_with_legacy(#[case] reading_str: &str, #[case] expected_str: &str) {
+        let reading = KeyedMetricReading::from_statsd_str(reading_str, true).unwrap();
+
+        assert_eq!(
+            reading.name,
+            MetricStringKey::from_str(expected_str).unwrap()
+        );
     }
 }

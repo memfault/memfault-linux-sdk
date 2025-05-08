@@ -10,11 +10,12 @@ use std::sync::{
 };
 use std::thread::{sleep, spawn};
 use std::time::Duration;
-use std::{fs::create_dir_all, time::Instant};
+use std::{cmp::max, fs::create_dir_all, time::Instant};
 
 use eyre::Result;
 use eyre::{eyre, Context};
 use log::{debug, error, info, trace, warn};
+use rand::{thread_rng, Rng};
 
 use ssf::{MsgMailbox, Scheduler, ServiceManager};
 
@@ -23,6 +24,7 @@ use crate::metrics::{
     DumpMetricReportMessage, KeyedMetricReading, MetricReportType, ReportSyncEventHandler,
     ReportsToDump, SessionEventHandler, SystemMetricsCollector,
 };
+use crate::util::task::{interruptible_sleep, PreviousIterationKind};
 use crate::{config::Resolution, metrics::MetricsEventHandler};
 
 use crate::{
@@ -230,9 +232,11 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     if config.statsd_server_enabled() && config.config_file.enable_data_collection {
         if let Ok(bind_address) = config.statsd_server_address() {
             let legacy_gauge_aggregation = config.statsd_server_legacy_gauge_aggregation_enabled();
+            let legacy_key_names = config.statsd_server_legacy_key_names_enabled();
             let metrics_mailbox = metrics_mbox.clone().into();
             spawn(move || {
-                let statsd_server = StatsDServer::new(legacy_gauge_aggregation, metrics_mailbox);
+                let statsd_server =
+                    StatsDServer::new(legacy_gauge_aggregation, legacy_key_names, metrics_mailbox);
                 if let Err(e) = statsd_server.run(bind_address) {
                     warn!("Couldn't start StatsD server: {}", e);
                 };
@@ -525,6 +529,19 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                         extra_attr,
                     )?;
                 }
+                #[cfg(feature = "syslog")]
+                LogSource::Syslog(syslog_config) => {
+                    use crate::logs::syslog::SyslogServer;
+
+                    let log_mbox = log_collector_mbox.clone();
+                    spawn(move || {
+                        if let Err(e) = SyslogServer ::run(syslog_config.bind_address, log_mbox.into()) {
+                            warn!("Couldn't start syslog receiver: {}", e)
+                        }
+                    });
+                }
+                #[cfg(not(feature = "syslog"))]
+                LogSource::Syslog(_) => warn!("logs.source configuration set to \"syslog\", but memfaultd was not compiled with the syslog feature. Logs will not be collected."),
                 #[cfg(feature = "systemd")]
                 LogSource::Journald => {
                     use crate::logs::journald_provider::JournaldLogProvider;
@@ -606,8 +623,51 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         Ok(())
     }));
 
+    // Determine a random duration to wait
+    // before the first iteration in order to avoid thundering herd
+    // issues if a large number of devices are rebooted or have
+    // memfaultd restarted at the same moment
+    //
+    // The jitter duration is a randomly selected duration of seconds
+    // between zero and one-fourth of the configured `upload_interval_seconds`
+    //
+    // Set a lower bound of 1 for the range to avoid sampling an empty range
+    // (which causes a panic)
+    let mut rng = thread_rng();
+    let first_iteration_jitter_duration =
+        Duration::from_secs(rng.gen_range(0..max(1, upload_interval.as_secs() / 4)));
+    let is_first_iteration = Arc::new(AtomicBool::new(true));
+    let first_iteration_completed = Arc::new(AtomicBool::new(false));
+
     loop_with_exponential_error_backoff(
         || {
+            // Since this sleep is only performed on the first sync,
+            // all subsequent syncs will be spaced out evenly (by
+            // upload_interval_seconds)
+            if is_first_iteration.swap(false, Ordering::Relaxed) {
+                info!(
+                    "Introducing {} seconds of jitter on first network request...",
+                    first_iteration_jitter_duration.as_secs()
+                );
+                // Need to make this sleep interruptible so a forced
+                // sync via SIGINT still responds immediately
+                interruptible_sleep(first_iteration_jitter_duration);
+
+                // If sleep is interrupted due to shutdown,
+                // exit early to avoid delaying system shutdown
+                if term.load(Ordering::Relaxed) {
+                    return Ok(());
+                }
+            } else {
+                // Flag that the first iteration (with jitter applied) has been completed
+                // and that we should *not* subtract the duration of this `work` closure
+                // from the subsequent sleep
+                // If we do subtract the duration of this closure, the jitter will
+                // be subtracted as well and subsequent requests will be
+                // sync'd up with the time `memfaultd` started up.
+                first_iteration_completed.store(true, Ordering::Relaxed);
+            }
+
             // Reset the forced sync flag before doing any work so we can detect
             // if it's set again while we run and RerunImmediately.
             let forced = force_sync.swap(false, Ordering::Relaxed);
@@ -669,11 +729,19 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
 
             if enable_data_collection && !forced_sync_only || forced {
                 trace!("Collect MAR entries...");
+                let data_retention_start = config
+                    .cached_device_config
+                    .read()
+                    .expect("RWLock Poisoned")
+                    .get()
+                    .data_upload_start_date;
+
                 let result = collect_and_upload(
                     &config.mar_staging_path(),
                     &client,
                     config.config_file.mar.mar_file_max_size,
                     config.sampling(),
+                    data_retention_start,
                 );
                 let _metric_result =
                     match result {
@@ -687,18 +755,23 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                     };
                 return result.map(|_| ());
             }
+
             Ok(())
         },
         || match (
             term.load(Ordering::Relaxed) || reload.load(Ordering::Relaxed),
             force_sync.load(Ordering::Relaxed),
+            first_iteration_completed.load(Ordering::Relaxed),
         ) {
             // Stop when we receive a term signal
-            (true, _) => LoopContinuation::Stop,
+            (true, _, _) => LoopContinuation::Stop,
             // If we received a SIGUSR1 signal while we were in the loop, rerun immediately.
-            (false, true) => LoopContinuation::RerunImmediately,
+            (false, true, _) => LoopContinuation::RerunImmediately,
             // Otherwise, keep running normally
-            (false, false) => LoopContinuation::KeepRunning,
+            (false, false, false) => LoopContinuation::KeepRunning(PreviousIterationKind::First),
+            (false, false, true) => {
+                LoopContinuation::KeepRunning(PreviousIterationKind::Subsequent)
+            }
         },
         upload_interval,
         Duration::new(60, 0),

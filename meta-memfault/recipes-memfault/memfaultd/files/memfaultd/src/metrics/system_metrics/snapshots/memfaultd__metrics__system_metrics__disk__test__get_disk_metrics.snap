@@ -1,0 +1,61 @@
+---
+source: memfaultd/src/metrics/system_metrics/disk.rs
+expression: metrics
+snapshot_kind: text
+---
+[
+  {
+    "name": "diskstats/mmcblk0/lifetime_pct",
+    "value": {
+      "Gauge": {
+        "value": 90.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "diskstats/mmcblk0/bytes_written",
+    "value": {
+      "Counter": {
+        "value": 512000.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "diskstats/mmcblk0/name",
+    "value": {
+      "ReportTag": {
+        "value": "SG123",
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "diskstats/mmcblk0/manufacturer_id",
+    "value": {
+      "ReportTag": {
+        "value": "0x00015",
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "diskstats/mmcblk0/total_size_bytes",
+    "value": {
+      "Gauge": {
+        "value": 51200.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "diskstats/mmcblk0/manufacture_date",
+    "value": {
+      "ReportTag": {
+        "value": "11/2023",
+        "timestamp": "[timestamp]"
+      }
+    }
+  }
+]

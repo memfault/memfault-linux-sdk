@@ -257,6 +257,24 @@ impl MarCollectorFixture {
 
         path
     }
+
+    pub fn create_device_config_entry(&mut self) -> PathBuf {
+        let path = self.create_empty_entry();
+        let manifest_path = path.join("manifest.json");
+
+        let manifest_file = File::create(manifest_path).unwrap();
+
+        let collection_time = CollectionTime::test_fixture();
+
+        let manifest = Manifest::new(
+            &self.config,
+            collection_time,
+            Metadata::new_device_config(42),
+        );
+        serde_json::to_writer(BufWriter::new(manifest_file), &manifest).unwrap();
+
+        path
+    }
 }
 
 /// Check the content of a MAR zip encoder against a list of expected files.

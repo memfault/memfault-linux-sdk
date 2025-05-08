@@ -28,13 +28,6 @@ pub fn read_proc_mem<P: Read + Seek>(
     Ok(buf)
 }
 
-pub fn read_proc_cmdline<P: Read>(cmd_line_stream: &mut P) -> Result<String> {
-    let mut cmd_line_buf = Vec::new();
-    cmd_line_stream.read_to_end(&mut cmd_line_buf)?;
-
-    Ok(String::from_utf8_lossy(&cmd_line_buf).into_owned())
-}
-
 /// Wrapper trait for reading /proc/<pid>/maps.
 ///
 /// Provides a useful abstraction that can be mocked out for testing.

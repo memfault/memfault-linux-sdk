@@ -31,6 +31,7 @@ use std::fs::{remove_dir_all, File};
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
+use chrono::{DateTime, Utc};
 use eyre::{eyre, Context, Result};
 use itertools::Itertools;
 use log::{debug, trace};
@@ -43,6 +44,8 @@ use crate::{
     util::zip::{zip_stream_len_empty, zip_stream_len_for_file, ZipEncoder, ZipEntryInfo},
 };
 
+use super::Manifest;
+
 /// Collect all valid MAR entries, upload them and delete them on success.
 ///
 /// Returns the number of MAR entries that were uploaded.
@@ -53,11 +56,12 @@ pub fn collect_and_upload(
     client: &impl NetworkClient,
     max_zip_size: usize,
     sampling: Sampling,
+    data_retention_start: Option<DateTime<Utc>>,
 ) -> Result<usize> {
     let mut entries = MarEntry::iterate_from_container(mar_staging)?
         // Apply fleet sampling to the MAR entries
         .filter(|entry_result| match entry_result {
-            Ok(entry) => should_upload(&entry.manifest.metadata, &sampling),
+            Ok(entry) => should_upload(&entry.manifest, &sampling, data_retention_start),
             _ => true,
         });
 
@@ -70,8 +74,25 @@ pub fn collect_and_upload(
 }
 
 /// Given the current sampling configuration determine if the given MAR entry should be uploaded.
-fn should_upload(metadata: &Metadata, sampling: &Sampling) -> bool {
-    match metadata {
+fn should_upload(
+    manifest: &Manifest,
+    sampling: &Sampling,
+    data_retention_start: Option<DateTime<Utc>>,
+) -> bool {
+    // Always upload device config and reboots
+    if matches!(manifest.metadata, Metadata::LinuxReboot { .. })
+        || matches!(manifest.metadata, Metadata::DeviceConfig { .. })
+    {
+        return true;
+    }
+
+    if let Some(data_retention_start) = data_retention_start {
+        if manifest.collection_time.timestamp < data_retention_start {
+            return false;
+        }
+    }
+
+    match &manifest.metadata {
         Metadata::DeviceAttributes { .. } => sampling.monitoring_resolution >= Resolution::Normal,
         Metadata::DeviceConfig { .. } => true, // Always upload device config
         Metadata::ElfCoredump { .. } => sampling.debugging_resolution >= Resolution::Normal,
@@ -209,6 +230,7 @@ fn upload_mar_entries(
 
 #[cfg(test)]
 mod tests {
+    use chrono::DateTime;
     use rstest::{fixture, rstest};
     use std::str::FromStr;
     use std::{
@@ -262,7 +284,6 @@ mod tests {
         // Add one valid entry so we can verify that this one is readable.
         mar_fixture.create_logentry();
         mar_fixture.create_logentry();
-
         let mut entries = MarEntry::iterate_from_container(&mar_fixture.mar_staging)
             .expect("We should still be able to collect.");
 
@@ -347,6 +368,7 @@ mod tests {
                 logging_resolution: Resolution::Normal,
                 monitoring_resolution: Resolution::Normal,
             },
+            None,
         )
         .unwrap();
     }
@@ -372,7 +394,7 @@ mod tests {
             logging_resolution: resolution,
             monitoring_resolution: Resolution::Off,
         };
-        upload_and_verify(mar_fixture, client, sampling_config, expected_files);
+        upload_and_verify(mar_fixture, client, sampling_config, expected_files, None);
     }
 
     #[rstest]
@@ -395,7 +417,7 @@ mod tests {
             monitoring_resolution: resolution,
         };
         let expected_files = should_upload.then(|| vec!["<entry>/manifest.json"]);
-        upload_and_verify(mar_fixture, client, sampling_config, expected_files);
+        upload_and_verify(mar_fixture, client, sampling_config, expected_files, None);
     }
 
     #[rstest]
@@ -419,7 +441,7 @@ mod tests {
             monitoring_resolution: Resolution::Off,
         };
         let expected_files = should_upload.then(|| vec!["<entry>/manifest.json"]);
-        upload_and_verify(mar_fixture, client, sampling_config, expected_files);
+        upload_and_verify(mar_fixture, client, sampling_config, expected_files, None);
     }
 
     #[rstest]
@@ -444,7 +466,7 @@ mod tests {
             monitoring_resolution: Resolution::Off,
         };
         let expected_files = should_upload.then(|| vec!["<entry>/data", "<entry>/manifest.json"]);
-        upload_and_verify(mar_fixture, client, sampling_config, expected_files);
+        upload_and_verify(mar_fixture, client, sampling_config, expected_files, None);
     }
 
     #[rstest]
@@ -504,7 +526,91 @@ mod tests {
             monitoring_resolution: resolution,
         };
         let expected_files = should_upload.then(|| vec!["<entry>/manifest.json"]);
-        upload_and_verify(mar_fixture, client, sampling_config, expected_files);
+        upload_and_verify(mar_fixture, client, sampling_config, expected_files, None);
+    }
+
+    #[rstest]
+    #[case(Duration::from_secs(1), false)]
+    #[case(Duration::from_secs(0), true)]
+    fn test_upload_data_retention_time(
+        #[case] duration_since_yesterday: Duration,
+        #[case] should_upload: bool,
+        _setup_logger: (),
+        client: MockNetworkClient,
+    ) {
+        let mut mar_fixture = MarCollectorFixture::new();
+        let now = SystemTime::now();
+        let yesterday = now - Duration::from_secs(24 * 60 * 60);
+        mar_fixture.create_logentry_with_size_and_age(1024, yesterday - duration_since_yesterday);
+
+        let data_retention_start = DateTime::from(yesterday);
+        let sampling_config = Sampling {
+            debugging_resolution: Resolution::Off,
+            logging_resolution: Resolution::Normal,
+            monitoring_resolution: Resolution::Off,
+        };
+        let expected_files =
+            should_upload.then(|| vec!["<entry>/manifest.json", "<entry>/system.log"]);
+        upload_and_verify(
+            mar_fixture,
+            client,
+            sampling_config,
+            expected_files,
+            Some(data_retention_start),
+        );
+    }
+
+    #[rstest]
+    fn test_upload_data_start_time_reboot(
+        _setup_logger: (),
+        client: MockNetworkClient,
+        mut mar_fixture: MarCollectorFixture,
+    ) {
+        let now = SystemTime::now();
+        let yesterday = now - Duration::from_secs(24 * 60 * 60);
+        mar_fixture.create_reboot_entry(RebootReason::Code(RebootReasonCode::Unknown));
+        mar_fixture.create_logentry_with_size_and_age(1024, yesterday - Duration::from_secs(1));
+
+        let data_retention_start = DateTime::from(yesterday);
+        let sampling_config = Sampling {
+            debugging_resolution: Resolution::Off,
+            logging_resolution: Resolution::Normal,
+            monitoring_resolution: Resolution::Off,
+        };
+        let expected_files = vec!["<entry>/manifest.json"];
+        upload_and_verify(
+            mar_fixture,
+            client,
+            sampling_config,
+            Some(expected_files),
+            Some(data_retention_start),
+        );
+    }
+
+    #[rstest]
+    fn test_upload_data_start_time_device_config(
+        _setup_logger: (),
+        client: MockNetworkClient,
+        mut mar_fixture: MarCollectorFixture,
+    ) {
+        let now = SystemTime::now();
+        let yesterday = now - Duration::from_secs(24 * 60 * 60);
+        mar_fixture.create_device_config_entry();
+
+        let data_retention_start = DateTime::from(yesterday);
+        let sampling_config = Sampling {
+            debugging_resolution: Resolution::Off,
+            logging_resolution: Resolution::Normal,
+            monitoring_resolution: Resolution::Off,
+        };
+        let expected_files = vec!["<entry>/manifest.json"];
+        upload_and_verify(
+            mar_fixture,
+            client,
+            sampling_config,
+            Some(expected_files),
+            Some(data_retention_start),
+        );
     }
 
     fn upload_and_verify(
@@ -512,6 +618,7 @@ mod tests {
         mut client: MockNetworkClient,
         sampling_config: Sampling,
         expected_files: Option<Vec<&'static str>>,
+        data_retention_start: Option<DateTime<Utc>>,
     ) {
         if let Some(expected_files) = expected_files {
             client
@@ -528,6 +635,7 @@ mod tests {
             &client,
             usize::MAX,
             sampling_config,
+            data_retention_start,
         )
         .unwrap();
     }

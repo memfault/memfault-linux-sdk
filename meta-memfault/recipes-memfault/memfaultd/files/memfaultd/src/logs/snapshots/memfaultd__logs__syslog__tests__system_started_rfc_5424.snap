@@ -1,0 +1,13 @@
+---
+source: memfaultd/src/logs/syslog.rs
+expression: result
+---
+{
+  "ts": "2023-05-15T14:30:45+00:00",
+  "data": {
+    "MESSAGE": "[meta key=\"value\"] System started",
+    "_PID": "1234",
+    "_SYSTEMD_UNIT": "systemd",
+    "PRIORITY": "2"
+  }
+}
