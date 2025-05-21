@@ -9,7 +9,7 @@ use std::{
 };
 
 use eyre::{eyre, Result};
-use log::{debug, error};
+use log::{debug, error, warn};
 
 use crate::{
     metrics::{KeyedMetricReading, MetricStringKey},
@@ -70,19 +70,10 @@ where
             .map(|sectors_written| *sectors_written * SECTOR_SIZE);
 
         if let Some(bytes_written) = bytes_written {
-            if let Some(prev_bytes_written) = prev_bytes_reading.replace(bytes_written) {
-                let bytes_metric_key = MetricStringKey::from_str(&format!(
-                    "{}/{}/bytes_written",
-                    DISK_METRIC_NAMESPACE, disk_name
-                ))
-                .map_err(|e| eyre!("Invalid metric key: {}", e))?;
-                let bytes_since_last_reading = bytes_written - prev_bytes_written;
-                let bytes_metric = KeyedMetricReading::new_counter(
-                    bytes_metric_key,
-                    bytes_since_last_reading as f64,
-                );
-
-                metrics.push(bytes_metric);
+            match Self::calc_bytes_written_reading(bytes_written, prev_bytes_reading, disk_name) {
+                Ok(Some(reading)) => metrics.push(reading),
+                Ok(None) => {}
+                Err(e) => debug!("Failed to calculate bytes_written: {}", e),
             }
         }
 
@@ -154,6 +145,36 @@ where
         }
 
         Ok(metrics)
+    }
+
+    fn calc_bytes_written_reading(
+        cur_bytes_written: u64,
+        prev_bytes_written: &mut Option<u64>,
+        disk_name: &str,
+    ) -> Result<Option<KeyedMetricReading>> {
+        if let Some(prev_bytes_written) = prev_bytes_written.replace(cur_bytes_written) {
+            match cur_bytes_written.checked_sub(prev_bytes_written) {
+                Some(_) => {
+                    let bytes_metric_key = MetricStringKey::from_str(&format!(
+                        "{}/{}/bytes_written",
+                        DISK_METRIC_NAMESPACE, disk_name
+                    ))
+                    .map_err(|e| eyre!("Invalid metric key: {}", e))?;
+                    let bytes_since_last_reading = cur_bytes_written - prev_bytes_written;
+                    let bytes_metric = KeyedMetricReading::new_counter(
+                        bytes_metric_key,
+                        bytes_since_last_reading as f64,
+                    );
+                    Ok(Some(bytes_metric))
+                }
+                None => {
+                    warn!("bytes_written metric overflow, discarding reading");
+                    Ok(None)
+                }
+            }
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -321,6 +342,21 @@ mod test {
             "[].value.**.timestamp" => "[timestamp]",
             "[].value.**.value" => rounded_redaction(5)
         });
+    }
+
+    #[test]
+    fn test_calc_bytes_reading_overflow() {
+        let mut prev_bytes_reading = Some(1000);
+        let cur_bytes_written = 500;
+
+        let result = DiskMetricsCollector::<FakeMmc>::calc_bytes_written_reading(
+            cur_bytes_written,
+            &mut prev_bytes_reading,
+            "mmcblk0",
+        )
+        .unwrap();
+
+        assert!(result.is_none());
     }
 
     #[rstest]

@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.21.1] - 2025-05-21
+
+This is a patch release that fixes an overflow issue with the recently added
+`diskstats/<disk>/bytes_written` metric.
+
+### Fixed
+
+- Fixed an issue with the `diskstats/<disk>/bytes_written` metric where it would
+  overflow when the diskstats counter wrapped. This would cause very large
+  readings to be sent. Whenever there is a potential overflow now the reading
+  will be discarded.
+
 ## [1.21.0] - 2025-05-08
 
 This release adds several new metrics for tracking flash wear, as well as a new
@@ -1360,3 +1372,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.20.0-kirkstone
 [1.21.0]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.21.0-kirkstone
+[1.21.1]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.21.1-kirkstone
