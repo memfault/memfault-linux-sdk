@@ -126,8 +126,14 @@ pub fn main() -> Result<()> {
     };
 
     let config_path = args.config_file.as_ref().map(Path::new);
-    let config =
-        Config::read_from_system(config_path).wrap_err(eyre!("Unable to load configuration"))?;
+    let warnings_handle_fn = |w: &_| warn!("{}", w);
+    let config = match Config::read_from_system(config_path, warnings_handle_fn) {
+        Ok(config) => config,
+        Err(e) => {
+            error!("Failed to read configuration: {}", e);
+            return Err(e);
+        }
+    };
 
     if !config.config_file.enable_data_collection {
         error!("Data collection disabled, not processing corefile");

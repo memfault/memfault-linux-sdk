@@ -79,7 +79,10 @@ expression: content
       "processes": null,
       "disk_space": null,
       "diskstats": null,
-      "network_interfaces": null
+      "network_interfaces": null,
+      "cpu": null,
+      "memory": null,
+      "thermal": null
     },
     "statsd_server": {
       "bind_address": "127.0.0.1:8125",

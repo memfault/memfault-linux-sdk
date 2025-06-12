@@ -1,0 +1,11 @@
+---
+source: memfaultd/src/mar/manifest.rs
+expression: producer
+snapshot_kind: text
+---
+{
+  "id": "memfaultd",
+  "version": "[version]",
+  "os_version": "OsRelease",
+  "os_name": "OsType"
+}

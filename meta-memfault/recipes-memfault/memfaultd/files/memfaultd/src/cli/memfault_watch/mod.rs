@@ -15,7 +15,7 @@ use buffer::{monitor_and_buffer, STOP_THREADS};
 use chrono::Local;
 use eyre::{eyre, Result};
 use flate2::{write::ZlibEncoder, Compression};
-use log::{debug, error, info, trace, LevelFilter};
+use log::{debug, error, info, trace, warn, LevelFilter};
 
 use crate::{
     cli::{init_logger, MemfaultdClient},
@@ -57,7 +57,8 @@ fn run_from_args(args: MemfaultWatchArgs) -> Result<i32> {
     })?;
 
     let config_path = args.config_file.as_ref().map(Path::new);
-    let config = Config::read_from_system(config_path)?;
+    let warnings_handle_fn = |w: &_| warn!("{}", w);
+    let config = Config::read_from_system(config_path, warnings_handle_fn)?;
 
     // Set up log files
     let file_name = format!("mfw-log-{}", Local::now().to_rfc3339());

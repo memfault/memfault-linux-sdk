@@ -1,7 +1,6 @@
 ---
 source: memfaultd/src/metrics/system_metrics/disk.rs
 expression: metrics
-snapshot_kind: text
 ---
 [
   {
@@ -9,6 +8,15 @@ snapshot_kind: text
     "value": {
       "Gauge": {
         "value": 90.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "diskstats/mmcblk0/lifetime_b_pct",
+    "value": {
+      "Gauge": {
+        "value": 85.0,
         "timestamp": "[timestamp]"
       }
     }
@@ -54,6 +62,24 @@ snapshot_kind: text
     "value": {
       "ReportTag": {
         "value": "11/2023",
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "diskstats/mmcblk0/revision",
+    "value": {
+      "ReportTag": {
+        "value": "1.0",
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "diskstats/mmcblk0/serial",
+    "value": {
+      "ReportTag": {
+        "value": "0x1234567890",
         "timestamp": "[timestamp]"
       }
     }

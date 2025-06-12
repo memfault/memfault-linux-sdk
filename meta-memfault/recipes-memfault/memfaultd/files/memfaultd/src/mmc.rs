@@ -30,6 +30,8 @@ pub trait Mmc {
     fn disk_name(&self) -> &str;
     fn disk_sector_count(&self) -> Result<u64>;
     fn manufacture_date(&self) -> Result<String>;
+    fn revision(&self) -> Result<String>;
+    fn serial(&self) -> Result<String>;
     fn disk_type(&self) -> MmcType;
 }
 
@@ -115,12 +117,26 @@ impl Mmc for MmcImpl {
 
         Ok(manf_date_string.trim().to_string())
     }
+
+    fn revision(&self) -> Result<String> {
+        let revision_path = self.sysfs_device_path.join("rev");
+        let revision_string = read_to_string(revision_path)?;
+
+        Ok(revision_string.trim().to_string())
+    }
+
+    fn serial(&self) -> Result<String> {
+        let serial_path = self.sysfs_device_path.join("serial");
+        let serial_string = read_to_string(serial_path)?;
+
+        Ok(serial_string.trim().to_string())
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct MmcLifeTime {
-    pub mlc_lifetime_pct: u8,
-    pub slc_lifetime_pct: u8,
+    pub lifetime_a_pct: u8,
+    pub lifetime_b_pct: u8,
 }
 
 impl MmcLifeTime {
@@ -132,19 +148,19 @@ impl TryFrom<[u8; EXT_CSD_SIZE]> for MmcLifeTime {
     type Error = Report;
 
     fn try_from(bytes: [u8; EXT_CSD_SIZE]) -> Result<Self, Self::Error> {
-        let raw_mlc_lifetime = bytes[Self::LIFETIME_A_OFFSET];
-        let raw_slc_lifetime = bytes[Self::LIFETIME_B_OFFSET];
+        let raw_lifetime_a = bytes[Self::LIFETIME_A_OFFSET];
+        let raw_lifetime_b = bytes[Self::LIFETIME_B_OFFSET];
 
-        if raw_mlc_lifetime == 0 || raw_slc_lifetime == 0 {
+        if raw_lifetime_a == 0 || raw_lifetime_b == 0 {
             return Err(eyre!("Invalid lifetime value read"));
         }
 
-        let mlc_lifetime_pct = (raw_mlc_lifetime - 1) * 10;
-        let slc_lifetime_pct = (raw_slc_lifetime - 1) * 10;
+        let lifetime_a_pct = (raw_lifetime_a - 1) * 10;
+        let lifetime_b_pct = (raw_lifetime_b - 1) * 10;
 
         Ok(Self {
-            mlc_lifetime_pct,
-            slc_lifetime_pct,
+            lifetime_a_pct,
+            lifetime_b_pct,
         })
     }
 }
@@ -262,8 +278,8 @@ mod test {
     fn test_lifetime_from_extcsd() {
         let lifetime = MmcLifeTime::try_from(EXT_CSD_TEST_BUFFER).unwrap();
 
-        assert_eq!(lifetime.mlc_lifetime_pct, 0);
-        assert_eq!(lifetime.slc_lifetime_pct, 0);
+        assert_eq!(lifetime.lifetime_a_pct, 0);
+        assert_eq!(lifetime.lifetime_b_pct, 0);
     }
 
     #[rstest]
