@@ -3,7 +3,6 @@
 // See License.txt for details
 use eyre::eyre;
 use itertools::Itertools;
-use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::num::NonZeroU32;
 use std::time::Duration;
@@ -12,6 +11,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use crate::metrics::system_metrics::SystemMetricConfig;
 use crate::{
     network::{NetworkClient, NetworkConfig},
     util::{DiskBacked, UnwrapOrDie, UpdateStatus},
@@ -32,16 +32,13 @@ pub use self::{
     config_file::{
         ConnectivityMonitorConfig, ConnectivityMonitorTarget, JsonConfigs, LogFilterConfig,
         LogFilterRule, LogRuleAction, LogSource, LogToMetricRule, MemfaultdConfig, SessionConfig,
-        StorageConfig, SyslogConfig, SystemMetricConfig,
+        StorageConfig, SyslogConfig,
     },
     device_config::{DeviceConfig, Resolution, Sampling},
     device_info::{DeviceInfo, DeviceInfoDefaultsImpl, DeviceInfoWarning},
 };
 
-use crate::{
-    mar::{MarEntryBuilder, Metadata},
-    metrics::{DiskSpaceMetricsConfig, DiskstatsMetricsConfig, ProcessMetricsConfig},
-};
+use crate::mar::{MarEntryBuilder, Metadata};
 
 use eyre::{Context, Result};
 
@@ -72,7 +69,10 @@ const COREDUMP_RATE_LIMITER_FILENAME: &str = "coredump_rate_limit";
 impl Config {
     pub const DEFAULT_CONFIG_PATH: &'static str = "/etc/memfaultd.conf";
 
-    pub fn read_from_system(user_config: Option<&Path>) -> Result<Self> {
+    pub fn read_from_system(
+        user_config: Option<&Path>,
+        warnings_handle_fn: impl Fn(&DeviceInfoWarning),
+    ) -> Result<Self> {
         // Select config file to read
         let config_file = user_config.unwrap_or_else(|| Path::new(Self::DEFAULT_CONFIG_PATH));
 
@@ -83,8 +83,7 @@ impl Config {
 
         let (device_info, warnings) =
             DeviceInfo::load().wrap_err(eyre!("Unable to load device info"))?;
-        #[allow(clippy::print_stderr)]
-        warnings.iter().for_each(|w| eprintln!("{}", w));
+        warnings.iter().for_each(warnings_handle_fn);
 
         let device_config = DiskBacked::from_path(&Self::device_config_path_from_config(&config));
 
@@ -309,64 +308,6 @@ impl Config {
 
     pub fn builtin_system_metric_collection_enabled(&self) -> bool {
         self.config_file.metrics.system_metric_collection.enable
-    }
-
-    pub fn system_metric_poll_interval(&self) -> Duration {
-        self.config_file
-            .metrics
-            .system_metric_collection
-            .poll_interval_seconds
-    }
-
-    pub fn system_metric_monitored_processes(&self) -> ProcessMetricsConfig {
-        match self
-            .config_file
-            .metrics
-            .system_metric_collection
-            .processes
-            .as_ref()
-        {
-            Some(processes) => {
-                let mut processes = processes.clone();
-                processes.insert("memfaultd".to_string());
-                ProcessMetricsConfig::Processes(processes)
-            }
-            None => ProcessMetricsConfig::Auto,
-        }
-    }
-
-    pub fn system_metric_disk_space_config(&self) -> DiskSpaceMetricsConfig {
-        match self
-            .config_file
-            .metrics
-            .system_metric_collection
-            .disk_space
-            .as_ref()
-        {
-            Some(mounts) => DiskSpaceMetricsConfig::Disks(mounts.clone()),
-            None => DiskSpaceMetricsConfig::Auto,
-        }
-    }
-
-    pub fn system_metric_diskstats_config(&self) -> DiskstatsMetricsConfig {
-        match self
-            .config_file
-            .metrics
-            .system_metric_collection
-            .diskstats
-            .as_ref()
-        {
-            Some(devices) => DiskstatsMetricsConfig::Devices(devices.clone()),
-            None => DiskstatsMetricsConfig::Auto,
-        }
-    }
-
-    pub fn system_metric_network_interfaces_config(&self) -> Option<&HashSet<String>> {
-        self.config_file
-            .metrics
-            .system_metric_collection
-            .network_interfaces
-            .as_ref()
     }
 
     pub fn system_metric_config(&self) -> SystemMetricConfig {

@@ -3,7 +3,7 @@ source: memfaultd/src/logs/syslog.rs
 expression: result
 ---
 {
-  "ts": "2025-05-15T21:30:45+00:00",
+  "ts": "2025-05-15T14:30:45+00:00",
   "data": {
     "MESSAGE": "System started",
     "_PID": "1234",

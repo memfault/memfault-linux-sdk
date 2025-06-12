@@ -53,16 +53,29 @@ where
         let mut metrics = vec![];
 
         if let Some(lifetime) = mmc.read_lifetime()? {
-            let mlc_metric_key = MetricStringKey::from_str(&format!(
+            let lifetime_a_metric_key = MetricStringKey::from_str(&format!(
                 "{}/{}/lifetime_pct",
                 DISK_METRIC_NAMESPACE, disk_name
             ))
             .map_err(|e| eyre!("Invalid metric key: {}", e))?;
+            let lifetime_b_metric_key = MetricStringKey::from_str(&format!(
+                "{}/{}/lifetime_b_pct",
+                DISK_METRIC_NAMESPACE, disk_name
+            ))
+            .map_err(|e| eyre!("Invalid metric key: {}", e))?;
 
-            let mlc_metric_reading =
-                KeyedMetricReading::new_gauge(mlc_metric_key, lifetime.mlc_lifetime_pct as f64);
+            let lifetime_a_metric_reading = KeyedMetricReading::new_gauge(
+                lifetime_a_metric_key,
+                lifetime.lifetime_a_pct as f64,
+            );
 
-            metrics.push(mlc_metric_reading);
+            let lifetime_b_metric_reading = KeyedMetricReading::new_gauge(
+                lifetime_b_metric_key,
+                lifetime.lifetime_b_pct as f64,
+            );
+
+            metrics.push(lifetime_a_metric_reading);
+            metrics.push(lifetime_b_metric_reading);
         }
 
         let bytes_written = disk_stats
@@ -141,6 +154,37 @@ where
             }
             Err(e) => {
                 debug!("Failed to read manufacture date: {}", e)
+            }
+        }
+
+        match mmc.revision() {
+            Ok(revision) => {
+                let revision_metric_key = MetricStringKey::from_str(&format!(
+                    "{}/{}/revision",
+                    DISK_METRIC_NAMESPACE, disk_name
+                ))
+                .map_err(|e| eyre!("Invalid metric key: {}", e))?;
+                let revision_reading =
+                    KeyedMetricReading::new_report_tag(revision_metric_key, revision);
+                metrics.push(revision_reading);
+            }
+            Err(e) => {
+                debug!("Failed to read revision: {}", e)
+            }
+        }
+
+        match mmc.serial() {
+            Ok(serial) => {
+                let serial_metric_key = MetricStringKey::from_str(&format!(
+                    "{}/{}/serial",
+                    DISK_METRIC_NAMESPACE, disk_name
+                ))
+                .map_err(|e| eyre!("Invalid metric key: {}", e))?;
+                let serial_reading = KeyedMetricReading::new_report_tag(serial_metric_key, serial);
+                metrics.push(serial_reading);
+            }
+            Err(e) => {
+                debug!("Failed to read serial: {}", e)
             }
         }
 
@@ -265,6 +309,8 @@ mod test {
         manufacturer_id: String,
         sector_count: u64,
         manufacture_date: String,
+        revision: String,
+        serial: String,
     }
 
     impl Mmc for FakeMmc {
@@ -295,6 +341,14 @@ mod test {
         fn manufacture_date(&self) -> Result<String> {
             Ok(self.manufacture_date.clone())
         }
+
+        fn revision(&self) -> Result<String> {
+            Ok(self.revision.clone())
+        }
+
+        fn serial(&self) -> Result<String> {
+            Ok(self.serial.clone())
+        }
     }
 
     #[test]
@@ -305,11 +359,13 @@ mod test {
             product_name: "SG123".to_string(),
             manufacturer_id: "0x00015".to_string(),
             lifetime: MmcLifeTime {
-                mlc_lifetime_pct: 90,
-                slc_lifetime_pct: 85,
+                lifetime_a_pct: 90,
+                lifetime_b_pct: 85,
             },
             sector_count: 100,
             manufacture_date: "11/2023".to_string(),
+            revision: "1.0".to_string(),
+            serial: "0x1234567890".to_string(),
         };
 
         // Create disk stats (sectors written = 1000)
@@ -324,7 +380,7 @@ mod test {
         )
         .unwrap();
 
-        assert_eq!(metrics.len(), 5);
+        assert_eq!(metrics.len(), 8);
 
         // Create updated disk stats (sectors written = 2000)
         let updated_disk_stats = vec![0, 0, 0, 0, 0, 0, 2000, 0, 0, 0, 0];
@@ -337,7 +393,7 @@ mod test {
         )
         .unwrap();
 
-        assert_eq!(metrics.len(), 6);
+        assert_eq!(metrics.len(), 9);
         assert_json_snapshot!(metrics, {
             "[].value.**.timestamp" => "[timestamp]",
             "[].value.**.value" => rounded_redaction(5)

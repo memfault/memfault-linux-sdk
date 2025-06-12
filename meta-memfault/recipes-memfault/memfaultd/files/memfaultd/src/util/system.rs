@@ -1,7 +1,7 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use std::{io::Read, str::FromStr};
+use std::io::Read;
 
 use eyre::{eyre, Result};
 use lazy_static::lazy_static;
@@ -12,9 +12,6 @@ use libc::{sysconf, _SC_CLK_TCK, _SC_PAGE_SIZE};
 
 #[cfg(target_os = "linux")]
 use std::fs::{read_to_string, File};
-
-#[cfg(feature = "syslog")]
-use chrono_tz::Tz;
 
 use uuid::Uuid;
 
@@ -34,6 +31,7 @@ pub fn read_proc_cmdline<P: Read>(cmd_line_stream: &mut P) -> Result<String> {
 #[cfg(target_os = "linux")]
 pub fn read_system_boot_id() -> Result<Uuid> {
     use eyre::Context;
+    use std::str::FromStr;
 
     const BOOT_ID_PATH: &str = "/proc/sys/kernel/random/boot_id";
     let boot_id = read_to_string(BOOT_ID_PATH);
@@ -60,13 +58,22 @@ fn read_ostype() -> Result<String> {
     Ok(os_type)
 }
 
-#[cfg(feature = "syslog")]
-pub fn get_system_timezone() -> Result<Tz> {
-    use iana_time_zone::get_timezone;
+#[cfg_attr(test, mockall::automock)]
+pub trait OsInfo {
+    fn get_osrelease(&self) -> Option<String>;
+    fn get_ostype(&self) -> Option<String>;
+}
 
-    let iana_tz = get_timezone().map_err(|e| eyre!("Couldn't get timezone: {}", e))?;
+pub struct OsInfoImpl;
 
-    Tz::from_str(&iana_tz).map_err(|e| eyre!("Couldn't parse timezone: {}", e))
+impl OsInfo for OsInfoImpl {
+    fn get_osrelease(&self) -> Option<String> {
+        get_osrelease()
+    }
+
+    fn get_ostype(&self) -> Option<String> {
+        get_ostype()
+    }
 }
 
 /// Returns the value stored in /proc/sys/kernel/osrelease
@@ -74,7 +81,7 @@ pub fn get_system_timezone() -> Result<Tz> {
 /// the value from procfs. On subsequent calls the cached value
 /// is returned. This is safe to do since this is a value set
 /// at kernel build-time and cannot be altered at runtime.
-pub fn get_osrelease() -> Option<String> {
+fn get_osrelease() -> Option<String> {
     OS_RELEASE.clone()
 }
 
@@ -83,7 +90,7 @@ pub fn get_osrelease() -> Option<String> {
 /// the value from procfs. On subsequent calls the cached value
 /// is returned. This is safe to do since this is a value set
 /// at kernel build-time and cannot be altered at runtime.
-pub fn get_ostype() -> Option<String> {
+fn get_ostype() -> Option<String> {
     OS_TYPE.clone()
 }
 

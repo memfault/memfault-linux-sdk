@@ -180,7 +180,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     {
         let collectd_handler = CollectdHandler::new(
             config.config_file.enable_data_collection,
-            config.builtin_system_metric_collection_enabled(),
+            config.system_metric_config(),
             metrics_mbox.clone().into(),
         );
         http_handlers.push(Box::new(collectd_handler));
@@ -248,21 +248,11 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     if config.builtin_system_metric_collection_enabled()
         && config.config_file.enable_data_collection
     {
-        let poll_interval = config.system_metric_poll_interval();
+        let system_metric_config = config.system_metric_config();
         let mbox = metrics_mbox.clone().into();
-        let processes_config = config.system_metric_monitored_processes();
-        let network_interfaces_config = config.system_metric_network_interfaces_config().cloned();
-        let disk_space_config = config.system_metric_disk_space_config();
-        let diskstats_config = config.system_metric_diskstats_config();
         spawn(move || {
-            let mut sys_metric_collector = SystemMetricsCollector::new(
-                processes_config,
-                network_interfaces_config,
-                disk_space_config,
-                diskstats_config,
-                mbox,
-            );
-            sys_metric_collector.run(poll_interval)
+            let mut sys_metric_collector = SystemMetricsCollector::new(system_metric_config, mbox);
+            sys_metric_collector.run()
         });
     }
 

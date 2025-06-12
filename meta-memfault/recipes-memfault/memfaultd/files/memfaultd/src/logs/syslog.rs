@@ -21,8 +21,7 @@
 use std::collections::HashMap;
 use std::net::{SocketAddr, UdpSocket};
 
-use chrono::{Datelike, Utc};
-use chrono_tz::Tz;
+use chrono::{Datelike, Local, TimeZone, Utc};
 
 use eyre::{eyre, Result};
 use log::warn;
@@ -34,7 +33,6 @@ use crate::logs::{
     log_entry::{LogData, LogEntry},
     messages::LogEntryMsg,
 };
-use crate::util::system::get_system_timezone;
 
 use super::levels::{
     LOG_LEVEL_CODE_ALERT, LOG_LEVEL_CODE_CRITICAL, LOG_LEVEL_CODE_DEBUG, LOG_LEVEL_CODE_EMERGENCY,
@@ -53,7 +51,6 @@ pub struct SyslogServer {}
 impl SyslogServer {
     pub fn run(bind_address: SocketAddr, sender: MsgMailbox<LogEntryMsg>) -> Result<()> {
         let sender = LogEntrySender::new(sender);
-        let timezone = get_system_timezone().ok();
         let socket = UdpSocket::bind(bind_address)?;
 
         loop {
@@ -63,7 +60,7 @@ impl SyslogServer {
             match socket.recv(&mut buf) {
                 Ok(amt) => {
                     let message = String::from_utf8_lossy(&buf[..amt]);
-                    if let Ok(log_entry) = Self::parse_syslog_message(&message, timezone) {
+                    if let Ok(log_entry) = Self::parse_syslog_message(&message, Local) {
                         if sender.send_entry(log_entry).is_err() {
                             // An error indicates that the channel has been closed, we should
                             // kill this thread.
@@ -105,11 +102,14 @@ impl SyslogServer {
     /// `system_timezone` is used as the timezone if it can be obtained
     /// from the system and there is not a timezone specified in the
     /// syslog timestamp
-    fn parse_syslog_message(raw_message: &str, system_timezone: Option<Tz>) -> Result<LogEntry> {
+    fn parse_syslog_message<Tz: TimeZone + Copy>(
+        raw_message: &str,
+        timezone: Tz,
+    ) -> Result<LogEntry> {
         let syslog_entry = parse_message_with_year_exact_tz(
             raw_message,
             Self::resolve_year,
-            system_timezone,
+            Some(timezone),
             syslog_loose::Variant::Either,
         )
         .map_err(|e| eyre!(e))?;
@@ -147,32 +147,24 @@ impl SyslogServer {
 mod tests {
 
     use super::*;
-    use chrono_tz::Tz;
     use insta::assert_json_snapshot;
     use rstest::rstest;
 
     #[rstest]
     #[case(
         "<34>1 2023-05-15T14:30:45Z hostname systemd 1234 ID - [meta key=\"value\"] System started",
-        Some(chrono_tz::UTC),
         "system_started_rfc_5424"
     )]
     #[case(
         "<34>May 15 14:30:45 hostname systemd[1234]: System started",
-        Some(chrono_tz::America::Los_Angeles),
         "system_started_rfc_3164"
     )]
     #[case(
         "<13>May 15 14:30:46 hostname kernel: Kernel panic detected!!",
-        Some(chrono_tz::America::Los_Angeles),
         "kernel_panic_rfc_3164"
     )]
-    fn test_read_syslog_message(
-        #[case] input: &str,
-        #[case] timezone: Option<Tz>,
-        #[case] snapshot_name: &str,
-    ) {
-        let result = SyslogServer::parse_syslog_message(input, timezone).unwrap();
+    fn test_read_syslog_message(#[case] input: &str, #[case] snapshot_name: &str) {
+        let result = SyslogServer::parse_syslog_message(input, Utc).unwrap();
 
         assert_json_snapshot!(snapshot_name, result);
     }
@@ -181,7 +173,7 @@ mod tests {
     fn test_missing_timestamp() {
         let input = "<34>hostname systemd[1234]: System started";
 
-        let result = SyslogServer::parse_syslog_message(input, Some(chrono_tz::UTC));
+        let result = SyslogServer::parse_syslog_message(input, Utc);
         assert!(result.is_err());
     }
 }

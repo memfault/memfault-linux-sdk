@@ -299,7 +299,8 @@ pub fn main() -> Result<()> {
     })?;
 
     let config_path = args.config_file.as_ref().map(Path::new);
-    let mut config = Config::read_from_system(config_path)?;
+    let warnings_handle_fn = |w: &_| eprintln!("{}", w);
+    let mut config = Config::read_from_system(config_path, warnings_handle_fn)?;
     let network_config = NetworkConfig::from(&config);
     let mar_staging_path = config.mar_staging_path();
 

@@ -105,13 +105,16 @@ pub struct DeviceInfo {
 
 #[derive(PartialEq, Eq, Debug)]
 pub struct DeviceInfoWarning {
-    line: String,
+    line: Option<String>,
     message: String,
 }
 
 impl std::fmt::Display for DeviceInfoWarning {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Skipped line: '{}' ({})", self.line, self.message)
+        match &self.line {
+            Some(line) => write!(f, "Skipped line: '{}' ({})", line, self.message),
+            None => write!(f, "{}", self.message),
+        }
     }
 }
 
@@ -126,7 +129,7 @@ impl DeviceInfo {
             .software_version()
             .unwrap_or_else(|_| {
                 warnings.push(DeviceInfoWarning {
-                    line: "".into(),
+                    line: None,
                     message: "Failed to get default software version.".to_string(),
                 });
                 None
@@ -135,7 +138,7 @@ impl DeviceInfo {
         let mut device_id = defaults.device_id().map_or_else(
             |_| {
                 warnings.push(DeviceInfoWarning {
-                    line: "".into(),
+                    line: None,
                     message: format!("Failed to open {}", DEVICE_ID_PATH),
                 });
                 None
@@ -145,7 +148,7 @@ impl DeviceInfo {
         let mut hardware_version = defaults.hardware_version().map_or_else(
             |_| {
                 warnings.push(DeviceInfoWarning {
-                    line: "".into(),
+                    line: None,
                     message: format!(
                         "Failed to to get hardware version from: '{}'",
                         HARDWARE_VERSION_COMMAND
@@ -159,7 +162,7 @@ impl DeviceInfo {
             .software_type()
             .unwrap_or_else(|_| {
                 warnings.push(DeviceInfoWarning {
-                    line: "".into(),
+                    line: None,
                     message: "Failed to get default software_type.".to_string(),
                 });
                 None
@@ -180,13 +183,13 @@ impl DeviceInfo {
                                 software_type = Some(DeviceInfoValue::Configured(value.into()))
                             }
                             _ => warnings.push(DeviceInfoWarning {
-                                line: line.into(),
+                                line: Some(line.into()),
                                 message: "Unknown variable.".to_string(),
                             }),
                         }
                     } else {
                         warnings.push(DeviceInfoWarning {
-                            line: line.into(),
+                            line: Some(line.into()),
                             message: "Expect '=' separated key/value pairs.".to_string(),
                         })
                     }
@@ -194,7 +197,7 @@ impl DeviceInfo {
             }
             None => {
                 warnings.push(DeviceInfoWarning {
-                    line: "".into(),
+                    line: None,
                     message: "No output from memfault-device-info.".to_string(),
                 });
             }
@@ -317,7 +320,7 @@ mod tests {
         assert_eq!(
             warnings[0],
             DeviceInfoWarning {
-                line: "blahblahblah".into(),
+                line: Some("blahblahblah".into()),
                 message: "Expect '=' separated key/value pairs.".to_string()
             }
         );

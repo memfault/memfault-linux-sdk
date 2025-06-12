@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.0] - 2025-06-12
+
+This release adds an additional metric for tracking the health of eMMCs as well
+as a change to how built-in and collectd-based metrics interact to improve the
+user experience for teams using a combination of the two.
+
+### Added
+
+- The Lifetime Estimation B value for monitored eMMCs is now reported as
+  `diskstats/<disk>/lifetime_b_pct`
+- A warning is now emitted when there is an issue parsing the output from
+  `memfault-device-info` in `memfault-core-handler`. Previously, this would
+  cause coredump collection to fail silently.
+- Built-in CPU, memory, and thermal metrics can now be disabled individually
+  with the new `metrics.system_metric_collection.{cpu,memory,thermal}.enable`
+  boolean config.
+- `memfaultd`'s `.cargo/config.toml` now sets `--compress-debug-sections` to
+  `zlib` and `--force-unwind-tables` to `yes` by default. These settings enable
+  building efficient debug sections and binaries whose coredumps can be fully
+  processed. We strongly recommend using them with any Rust programs you intend
+  to monitor with Memfault.
+
+### Changed
+
+- collectd-based metrics that overlap with built-in metrics will now be
+  selectively filtered out if both are enabled based on whether the overlapping
+  built-in metric group itself is enabled. This allows for using a mix of
+  collectd-based metrics and built-in metrics more easily.
+
+### Fixed
+
+- A bug in which the values for the `MemfaultSdkMetric_os_name` and
+  `MemfaultSdkMetric_os_version` built-in Attributes were reversed.
+
 ## [1.21.1] - 2025-05-21
 
 This is a patch release that fixes an overflow issue with the recently added
@@ -1374,3 +1408,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.21.0-kirkstone
 [1.21.1]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.21.1-kirkstone
+[1.22.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.22.0-kirkstone

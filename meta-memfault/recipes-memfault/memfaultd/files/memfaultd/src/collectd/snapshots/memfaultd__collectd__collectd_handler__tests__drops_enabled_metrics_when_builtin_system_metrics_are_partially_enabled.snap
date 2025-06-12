@@ -1,0 +1,7 @@
+---
+source: memfaultd/src/collectd/collectd_handler.rs
+expression: mock.take_metrics().unwrap()
+---
+{
+  "processes/0/memfaultd/utime": 0.0
+}
