@@ -11,7 +11,7 @@ use std::{
 };
 use std::{net::SocketAddr, path::PathBuf};
 
-use crate::metrics::{MetricStringKey, SessionName};
+use crate::metrics::{system_metrics::SystemMetricConfig, MetricStringKey, SessionName};
 use crate::util::*;
 use crate::util::{path::AbsolutePath, serialization::*};
 
@@ -285,17 +285,6 @@ pub struct StatsDServerConfig {
     pub bind_address: SocketAddr,
     pub legacy_gauge_aggregation: Option<bool>,
     pub legacy_key_names: Option<bool>,
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct SystemMetricConfig {
-    pub enable: bool,
-    #[serde(with = "seconds_to_duration")]
-    pub poll_interval_seconds: Duration,
-    pub processes: Option<HashSet<String>>,
-    pub disk_space: Option<HashSet<String>>,
-    pub diskstats: Option<HashSet<String>>,
-    pub network_interfaces: Option<HashSet<String>>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

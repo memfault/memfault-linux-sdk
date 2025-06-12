@@ -64,4 +64,3 @@ pub use system_metrics::DiskSpaceMetricsConfig;
 pub use system_metrics::DiskstatsMetricsConfig;
 pub use system_metrics::ProcessMetricsConfig;
 pub use system_metrics::SystemMetricsCollector;
-pub use system_metrics::BUILTIN_SYSTEM_METRIC_NAMESPACES;

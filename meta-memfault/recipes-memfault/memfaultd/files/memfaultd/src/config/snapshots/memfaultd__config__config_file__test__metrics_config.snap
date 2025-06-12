@@ -1,7 +1,6 @@
 ---
 source: memfaultd/src/config/config_file.rs
 expression: content
-snapshot_kind: text
 ---
 {
   "persist_dir": "/media/memfault",
@@ -82,7 +81,10 @@ snapshot_kind: text
       "diskstats": null,
       "network_interfaces": [
         "eth1"
-      ]
+      ],
+      "cpu": null,
+      "memory": null,
+      "thermal": null
     },
     "statsd_server": {
       "bind_address": "127.0.0.1:8125",

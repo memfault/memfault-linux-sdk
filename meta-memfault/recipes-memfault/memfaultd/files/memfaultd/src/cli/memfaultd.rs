@@ -65,8 +65,9 @@ pub fn main() -> Result<()> {
         return Ok(());
     }
 
-    let config =
-        Config::read_from_system(config_path).wrap_err(eyre!("Unable to load configuration"))?;
+    let warning_handle_fn = |w: &_| warn!("{}", w);
+    let config = Config::read_from_system(config_path, warning_handle_fn)
+        .wrap_err(eyre!("Unable to load configuration"))?;
 
     // Create directories early so we can fail early if we can't create them.
     mkdir_if_needed(&config.config_file.persist_dir)?;

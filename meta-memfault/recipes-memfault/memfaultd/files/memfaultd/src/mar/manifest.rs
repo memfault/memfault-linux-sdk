@@ -16,7 +16,7 @@ use crate::{
     reboot::RebootReason,
     util::{
         serialization::{milliseconds_to_duration, optional_milliseconds_to_duration},
-        system::{get_osrelease, get_ostype, get_system_clock, read_system_boot_id, Clock},
+        system::{get_system_clock, read_system_boot_id, Clock, OsInfo, OsInfoImpl},
     },
 };
 
@@ -60,14 +60,20 @@ pub struct Producer {
     pub os_name: Option<String>,
 }
 
-impl Default for Producer {
-    fn default() -> Self {
+impl Producer {
+    fn new<T: OsInfo>(os_info: T) -> Self {
         Self {
             id: "memfaultd".into(),
             version: VERSION.to_owned(),
-            os_version: get_ostype(),
-            os_name: get_osrelease(),
+            os_version: os_info.get_osrelease(),
+            os_name: os_info.get_ostype(),
         }
+    }
+}
+
+impl Default for Producer {
+    fn default() -> Self {
+        Self::new(OsInfoImpl)
     }
 }
 
@@ -379,7 +385,7 @@ impl Manifest {
         Manifest {
             collection_time,
             device: Device::from(config),
-            producer: Producer::default(),
+            producer: Producer::new(OsInfoImpl),
             schema_version: 1,
             metadata,
         }
@@ -423,11 +429,13 @@ impl Metadata {
 mod tests {
     use std::{collections::HashMap, path::PathBuf, str::FromStr};
 
+    use crate::util::system::MockOsInfo;
     use crate::{
         mar::CompressionAlgorithm,
         metrics::{MetricReportType, MetricValue},
         reboot::RebootReasonCode,
     };
+    use insta::assert_json_snapshot;
     use rstest::rstest;
     use uuid::uuid;
 
@@ -598,5 +606,23 @@ mod tests {
         };
 
         assert_eq!(actual_value, value);
+    }
+
+    #[rstest]
+    fn correct_os_info_read() {
+        let mut os_info = MockOsInfo::new();
+        let release_string = "OsRelease".to_string();
+        let type_string = "OsType".to_string();
+        os_info
+            .expect_get_osrelease()
+            .returning(move || Some(release_string.clone()));
+        os_info
+            .expect_get_ostype()
+            .returning(move || Some(type_string.clone()));
+
+        let producer = Producer::new(os_info);
+        assert_json_snapshot!(producer, {
+            ".version" => "[version]",
+        });
     }
 }
