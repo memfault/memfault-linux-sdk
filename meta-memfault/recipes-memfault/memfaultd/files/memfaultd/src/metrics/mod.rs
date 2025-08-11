@@ -43,6 +43,7 @@ pub type MetricTimestamp = DateTime<Utc>;
 
 mod crashfree_interval;
 pub use crashfree_interval::CrashFreeIntervalTracker;
+pub use crashfree_interval::CrashInfo;
 
 mod session_name;
 pub use session_name::SessionName;

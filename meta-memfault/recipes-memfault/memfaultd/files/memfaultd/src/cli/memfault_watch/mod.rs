@@ -20,7 +20,7 @@ use log::{debug, error, info, trace, warn, LevelFilter};
 use crate::{
     cli::{init_logger, MemfaultdClient},
     config::Config,
-    mar::{CompressionAlgorithm, MarEntryBuilder, Metadata},
+    mar::{MarEntryBuilder, Metadata},
     network::NetworkConfig,
 };
 
@@ -166,16 +166,22 @@ fn run_from_args(args: MemfaultWatchArgs) -> Result<i32> {
 
     trace!("Command completed in {} ms", duration.as_millis());
 
-    let metadata = Metadata::LinuxMemfaultWatch {
-        cmdline: args.command,
-        exit_code,
-        duration,
-        stdio_log_file_name: stdio_log_file_name.clone(),
-        compression: CompressionAlgorithm::Zlib,
-    };
+    let crash = !status.success();
+    // TODO: send real signature and reason
+    let metadata = Metadata::new_custom_trace(
+        args.command.join(" "),
+        String::new(),
+        Some(crash),
+        None,
+        None,
+        None,
+        None,
+    );
 
     if !status.success() {
         info!("Command failed with exit code {exit_code}!");
+
+        // TODO: Use new MemfaultdClient::save_trace().
 
         let network_config = NetworkConfig::from(&config);
         let mar_staging_path = config.mar_staging_path();

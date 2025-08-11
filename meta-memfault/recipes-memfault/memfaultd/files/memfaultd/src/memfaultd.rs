@@ -51,11 +51,14 @@ use crate::{mar::MarStagingCleaner, service_manager::get_service_manager};
 use crate::{reboot::RebootReasonTracker, util::disk_size::DiskSize};
 
 use crate::collectd::CollectdHandler;
+use crate::trace::SaveTraceHandler;
 
 #[cfg(feature = "logging")]
 use crate::{
     fluent_bit::{FluentBitConfig, FluentBitConnectionHandler},
-    logs::{CompletedLog, HeadroomLimiter, LogCollector, LogCollectorConfig},
+    logs::{
+        messages::GetQueuedLogsMsg, CompletedLog, HeadroomLimiter, LogCollector, LogCollectorConfig,
+    },
     mar::{MarEntryBuilder, Metadata},
     util::disk_size::get_disk_space,
 };
@@ -408,24 +411,15 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                 .map_err(|e| eyre!("Error dumping HRT: {}", e))
         }));
     }
-    // Schedule a task to compute operational and crashfree hours
-    if config.config_file.enable_data_collection {
-        let mut crashfree_tracker =
-            CrashFreeIntervalTracker::<Instant>::new_hourly(metrics_mbox.clone().into());
-        http_handlers.push(crashfree_tracker.http_handler());
-        spawn(move || {
-            let interval = Duration::from_secs(60);
-            loop {
-                if let Err(e) = crashfree_tracker.wait_and_update(interval) {
-                    warn!("Error updating crashfree hours: {}", e);
-                }
-            }
-        });
-    }
 
     // Only set to a non-None value when we build with the logging feature
     #[allow(unused_mut, /* reason = "Is unused when logging is disabled." */)]
     let mut logging_resolution_sender: Option<Sender<Resolution>> = None;
+
+    // Only set to a non-None value when we build with the logging feature
+    #[cfg(feature = "logging")]
+    #[allow(unused_mut)]
+    let mut trace_log_collector_mbox: Option<MsgMailbox<GetQueuedLogsMsg>> = None;
 
     #[cfg(feature = "logging")]
     {
@@ -553,6 +547,8 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
             // outside this logging code block
             logging_resolution_sender = Some(sender);
 
+            trace_log_collector_mbox = Some(log_collector_mbox.clone().into());
+
             let crash_log_handler = CrashLogHandler::new(
                 log_collector_mbox.clone().into(),
                 log_collector_mbox.clone().into(),
@@ -574,6 +570,45 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         } else {
             FluentBitConnectionHandler::start_null(fluent_bit_config)?;
         }
+    }
+
+    // Schedule a task to compute operational and crashfree hours
+    if config.config_file.enable_data_collection {
+        let mut crashfree_tracker =
+            CrashFreeIntervalTracker::<Instant>::new_hourly(metrics_mbox.clone().into());
+        http_handlers.push(crashfree_tracker.http_handler());
+        let trace_config = config.linux_custom_trace_config();
+        let rate_limiter_path = config.trace_rate_limiter_file_path();
+
+        #[cfg(feature = "logging")]
+        let save_trace_handler = SaveTraceHandler::new(
+            config.mar_staging_path(),
+            NetworkConfig::from(&config),
+            crashfree_tracker.channel_handler(),
+            trace_log_collector_mbox,
+            trace_config,
+            rate_limiter_path,
+        );
+
+        #[cfg(not(feature = "logging"))]
+        let save_trace_handler = SaveTraceHandler::new(
+            config.mar_staging_path(),
+            NetworkConfig::from(&config),
+            crashfree_tracker.channel_handler(),
+            trace_config,
+            rate_limiter_path,
+        );
+
+        http_handlers.push(Box::new(save_trace_handler));
+
+        spawn(move || {
+            let interval = Duration::from_secs(60);
+            loop {
+                if let Err(e) = crashfree_tracker.wait_and_update(interval) {
+                    warn!("Error updating crashfree hours: {}", e);
+                }
+            }
+        });
     }
 
     let reboot_tracker = RebootReasonTracker::new(&config, &service_manager);

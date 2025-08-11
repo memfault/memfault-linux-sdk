@@ -6,6 +6,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.23.0] - 2025-08-11
+
+This release adds support for Python based stacktraces, as well as a few minor
+changes. Additionally we've made some changes to flash lifetime metrics, and how
+they're collected.
+
+### Added
+
+- Add generic custom trace support
+  - This allows you to send text based backtraces to memfaultd.
+  - They can be sent via the `memfaultctl save-trace` command
+  - They can also be sent via `/v1/trace/save` local endpoint
+- Added Python stack trace support
+  - Python stack traces utilize the above custom backtrace support
+  - By integrating [pyfault](https://pypi.org/project/pyfault/) you can send
+    backtraces directly from a crashing python process.
+- Add new virtual memory metrics from `/proc/vmstat`. These are represented as
+  the following keys:
+  - `memory/vm/swaps_in_per_second`
+  - `memory/vm/swaps_out_per_second`
+  - `memory/vm/pages_in_per_second`
+  - `memory/vm/pages_out_per_second`
+- Added OUI (Organizationally Unique Identifier) collection for network device
+  identification and troubleshooting
+
+### Changed
+
+- Changed flash lifetime metrics to use `pct_remaining` format instead of
+  previous representation, providing clearer visibility into remaining device
+  lifespan
+
+### Fixed
+
+- Fixed MMC lifetime reading where `memfaultd` would attempt to read lifetime
+  values from older MMC devices that don't support this feature
+- Fixed handling of invalid individual lifetime values - they no longer cause
+  the entire lifetime collection to fail
+- Fixed overly verbose device info logging that was cluttering log output
+- Fixed build configuration for macOS by removing
+  `--compress-debug-sections=zlib` from cargo config that was causing
+  compilation issues
+- Fixed unit test reliability by properly mocking `boottime_ms` values
+
 ## [1.22.0] - 2025-06-12
 
 This release adds an additional metric for tracking the health of eMMCs as well
@@ -1410,3 +1453,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.21.1-kirkstone
 [1.22.0]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.22.0-kirkstone
+[1.23.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.23.0-kirkstone

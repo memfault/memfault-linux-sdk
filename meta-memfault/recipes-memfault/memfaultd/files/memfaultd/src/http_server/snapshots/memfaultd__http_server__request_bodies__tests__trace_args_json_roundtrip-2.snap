@@ -1,0 +1,5 @@
+---
+source: memfaultd/src/http_server/request_bodies.rs
+expression: json_2
+---
+{"signature":"test_signature","crash":true,"reason":"test_reason","program":"test_program","source":"MEMFAULTCTL","log_file_name":"test_log"}

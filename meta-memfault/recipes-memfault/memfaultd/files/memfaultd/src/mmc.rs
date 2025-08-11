@@ -6,6 +6,7 @@ use std::{path::Path, str::FromStr};
 
 use eyre::{eyre, Report, Result};
 use fs_extra::file::read_to_string;
+use log::warn;
 use nix::fcntl::{open, OFlag};
 use nix::ioctl_readwrite;
 use nix::sys::stat::Mode;
@@ -41,6 +42,7 @@ pub struct MmcImpl {
     mmc_type: MmcType,
     sysfs_path: PathBuf,
     sysfs_device_path: PathBuf,
+    lifetime_available: bool,
 }
 
 impl MmcImpl {
@@ -65,19 +67,44 @@ impl MmcImpl {
             .map_err(|e| eyre!("Failed to read MMC type string: {}", e))
             .and_then(|type_string| MmcType::from_str(type_string.trim()))?;
 
+        let jedec_rev = read_extcsd(&device_path)
+            .ok()
+            .map(|ext_csd| get_jedec_revision(&ext_csd));
+
+        let lifetime_available = Self::is_lifetime_available(jedec_rev);
+
         Ok(Self {
             device_path,
             disk_name,
             mmc_type,
             sysfs_path,
             sysfs_device_path,
+            lifetime_available,
         })
+    }
+
+    fn is_lifetime_available(jedec_rev: Option<u8>) -> bool {
+        match jedec_rev {
+            Some(rev) => {
+                // JEDEC revision 7 (5.0) is the minimum required for lifetime info
+                if rev < 7 {
+                    warn!("JEDEC spec before v5.0, lifetime values not available");
+                    false
+                } else {
+                    true
+                }
+            }
+            None => {
+                warn!("Unable to read EXT_CSD register, lifetime values not available");
+                false
+            }
+        }
     }
 }
 
 impl Mmc for MmcImpl {
     fn read_lifetime(&self) -> Result<Option<MmcLifeTime>> {
-        if self.mmc_type != MmcType::Mmc {
+        if self.mmc_type != MmcType::Mmc || !self.lifetime_available {
             return Ok(None);
         }
 
@@ -135,8 +162,8 @@ impl Mmc for MmcImpl {
 
 #[derive(Debug, Clone)]
 pub struct MmcLifeTime {
-    pub lifetime_a_pct: u8,
-    pub lifetime_b_pct: u8,
+    pub lifetime_a_pct: Option<u8>,
+    pub lifetime_b_pct: Option<u8>,
 }
 
 impl MmcLifeTime {
@@ -151,17 +178,22 @@ impl TryFrom<[u8; EXT_CSD_SIZE]> for MmcLifeTime {
         let raw_lifetime_a = bytes[Self::LIFETIME_A_OFFSET];
         let raw_lifetime_b = bytes[Self::LIFETIME_B_OFFSET];
 
-        if raw_lifetime_a == 0 || raw_lifetime_b == 0 {
-            return Err(eyre!("Invalid lifetime value read"));
-        }
-
-        let lifetime_a_pct = (raw_lifetime_a - 1) * 10;
-        let lifetime_b_pct = (raw_lifetime_b - 1) * 10;
+        let lifetime_a_pct = raw_lifetime_to_pct(raw_lifetime_a);
+        let lifetime_b_pct = raw_lifetime_to_pct(raw_lifetime_b);
 
         Ok(Self {
             lifetime_a_pct,
             lifetime_b_pct,
         })
+    }
+}
+
+fn raw_lifetime_to_pct(raw_lifetime: u8) -> Option<u8> {
+    if raw_lifetime > 0 && raw_lifetime <= 0xb {
+        let lifetime_pct = (raw_lifetime - 1) * 10;
+        Some(lifetime_pct)
+    } else {
+        None
     }
 }
 
@@ -245,6 +277,12 @@ fn read_extcsd(device_path: &Path) -> Result<[u8; EXT_CSD_SIZE]> {
     }
 }
 
+const JEDEC_REV_OFFSET: usize = 192;
+
+fn get_jedec_revision(ext_csd: &[u8; EXT_CSD_SIZE]) -> u8 {
+    ext_csd[JEDEC_REV_OFFSET]
+}
+
 #[cfg(test)]
 mod test {
 
@@ -278,8 +316,15 @@ mod test {
     fn test_lifetime_from_extcsd() {
         let lifetime = MmcLifeTime::try_from(EXT_CSD_TEST_BUFFER).unwrap();
 
-        assert_eq!(lifetime.lifetime_a_pct, 0);
-        assert_eq!(lifetime.lifetime_b_pct, 0);
+        assert_eq!(lifetime.lifetime_a_pct, Some(0));
+        assert_eq!(lifetime.lifetime_b_pct, Some(0));
+    }
+
+    #[test]
+    fn test_read_jedec_revision() {
+        let jedec_rev = get_jedec_revision(&EXT_CSD_TEST_BUFFER);
+
+        assert_eq!(jedec_rev, 8);
     }
 
     #[rstest]
@@ -290,9 +335,32 @@ mod test {
             mmc_type: MmcType::Sd,
             sysfs_path: PathBuf::new(),
             sysfs_device_path: PathBuf::new(),
+            lifetime_available: true,
         };
 
         let lifetime = mmc.read_lifetime().unwrap();
         assert!(lifetime.is_none());
+    }
+
+    #[rstest]
+    #[case(Some(6), false)]
+    #[case(None, false)]
+    #[case(Some(7), true)]
+    #[case(Some(8), true)]
+    fn test_lifetime_available(#[case] jedec_rev: Option<u8>, #[case] expected: bool) {
+        let lifetime_available = MmcImpl::is_lifetime_available(jedec_rev);
+
+        assert_eq!(lifetime_available, expected);
+    }
+
+    #[rstest]
+    #[case(0, None)]
+    #[case(1, Some(0))]
+    #[case(0xb, Some(100))]
+    #[case(0xc, None)]
+    fn test_lifetime_raw_to_pct(#[case] raw_lifetime: u8, #[case] expected_pct: Option<u8>) {
+        let lifetime_pct = raw_lifetime_to_pct(raw_lifetime);
+
+        assert_eq!(lifetime_pct, expected_pct);
     }
 }

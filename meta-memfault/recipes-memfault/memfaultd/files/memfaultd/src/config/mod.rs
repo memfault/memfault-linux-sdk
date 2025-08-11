@@ -43,7 +43,9 @@ use crate::mar::{MarEntryBuilder, Metadata};
 use eyre::{Context, Result};
 
 mod config_file;
-pub use config_file::{LevelMappingConfig, LevelMappingRegex};
+pub use config_file::{
+    LevelMappingConfig, LevelMappingRegex, LinuxCustomTraceConfig, LinuxCustomTraceLogCompression,
+};
 
 mod device_config;
 mod device_info;
@@ -65,6 +67,7 @@ const LOGS_SUBDIRECTORY: &str = "logs";
 const MAR_STAGING_SUBDIRECTORY: &str = "mar";
 const DEVICE_CONFIG_FILE: &str = "device_config.json";
 const COREDUMP_RATE_LIMITER_FILENAME: &str = "coredump_rate_limit";
+const TRACE_RATE_LIMITER_FILENAME: &str = "trace_rate_limit";
 
 impl Config {
     pub const DEFAULT_CONFIG_PATH: &'static str = "/etc/memfaultd.conf";
@@ -144,6 +147,10 @@ impl Config {
 
     pub fn coredump_rate_limiter_file_path(&self) -> PathBuf {
         self.tmp_dir().join(COREDUMP_RATE_LIMITER_FILENAME)
+    }
+
+    pub fn trace_rate_limiter_file_path(&self) -> PathBuf {
+        self.tmp_dir().join(TRACE_RATE_LIMITER_FILENAME)
     }
 
     pub fn logs_path(&self) -> PathBuf {
@@ -343,6 +350,17 @@ impl Config {
 
         fluent_bit_max.unwrap_or(log_max)
     }
+
+    pub fn linux_custom_trace_config(&self) -> LinuxCustomTraceConfig {
+        self.config_file.custom_trace.unwrap_or_default()
+    }
+
+    pub fn linux_custom_trace_log_compression(&self) -> LinuxCustomTraceLogCompression {
+        self.config_file
+            .custom_trace
+            .map(|config| config.log_compression)
+            .unwrap_or(LinuxCustomTraceLogCompression::Gzip)
+    }
 }
 
 #[cfg(test)]
@@ -541,6 +559,159 @@ mod tests {
             .legacy_key_names = legacy_key_names_enabled;
 
         assert_eq!(config.statsd_server_legacy_key_names_enabled(), expected);
+    }
+
+    #[rstest]
+    #[case(
+        Some(crate::config::LinuxCustomTraceLogCompression::Gzip),
+        crate::config::LinuxCustomTraceLogCompression::Gzip
+    )]
+    #[case(
+        Some(crate::config::LinuxCustomTraceLogCompression::Zlib),
+        crate::config::LinuxCustomTraceLogCompression::Zlib
+    )]
+    #[case(
+        Some(crate::config::LinuxCustomTraceLogCompression::None),
+        crate::config::LinuxCustomTraceLogCompression::None
+    )]
+    #[case(None, crate::config::LinuxCustomTraceLogCompression::Gzip)] // Default to Gzip when not specified
+    fn linux_custom_trace_log_compression(
+        #[case] compression_type: Option<LinuxCustomTraceLogCompression>,
+        #[case] expected: crate::config::LinuxCustomTraceLogCompression,
+    ) {
+        let mut config = Config::test_fixture();
+        config.config_file.custom_trace =
+            compression_type.map(|log_compression| crate::config::LinuxCustomTraceConfig {
+                log_compression,
+                rate_limit_count: 5,
+                rate_limit_duration: Duration::from_secs(3600),
+            });
+
+        assert_eq!(config.linux_custom_trace_log_compression(), expected);
+    }
+
+    #[test]
+    fn linux_custom_trace_config_is_optional() {
+        let mut config = Config::test_fixture();
+
+        // Test that config without linux_custom_trace section works
+        config.config_file.custom_trace = None;
+        assert_eq!(
+            config.linux_custom_trace_log_compression(),
+            LinuxCustomTraceLogCompression::Gzip
+        );
+    }
+
+    #[test]
+    fn linux_custom_trace_config_with_gzip_compression() {
+        let mut config = Config::test_fixture();
+        config.config_file.custom_trace = Some(LinuxCustomTraceConfig {
+            log_compression: LinuxCustomTraceLogCompression::Gzip,
+            rate_limit_count: 5,
+            rate_limit_duration: Duration::from_secs(3600),
+        });
+
+        assert_eq!(
+            config.linux_custom_trace_log_compression(),
+            LinuxCustomTraceLogCompression::Gzip
+        );
+    }
+
+    #[test]
+    fn linux_custom_trace_config_with_zlib_compression() {
+        let mut config = Config::test_fixture();
+        config.config_file.custom_trace = Some(LinuxCustomTraceConfig {
+            log_compression: LinuxCustomTraceLogCompression::Zlib,
+            rate_limit_count: 5,
+            rate_limit_duration: Duration::from_secs(3600),
+        });
+
+        assert_eq!(
+            config.linux_custom_trace_log_compression(),
+            LinuxCustomTraceLogCompression::Zlib
+        );
+    }
+
+    #[test]
+    fn linux_custom_trace_config_with_no_compression() {
+        let mut config = Config::test_fixture();
+        config.config_file.custom_trace = Some(LinuxCustomTraceConfig {
+            log_compression: LinuxCustomTraceLogCompression::None,
+            rate_limit_count: 5,
+            rate_limit_duration: Duration::from_secs(3600),
+        });
+
+        assert_eq!(
+            config.linux_custom_trace_log_compression(),
+            LinuxCustomTraceLogCompression::None
+        );
+    }
+
+    #[rstest]
+    #[case(None, LinuxCustomTraceLogCompression::Gzip)]
+    #[case(
+        Some(LinuxCustomTraceLogCompression::Gzip),
+        LinuxCustomTraceLogCompression::Gzip
+    )]
+    #[case(
+        Some(LinuxCustomTraceLogCompression::Zlib),
+        LinuxCustomTraceLogCompression::Zlib
+    )]
+    #[case(
+        Some(LinuxCustomTraceLogCompression::None),
+        LinuxCustomTraceLogCompression::None
+    )]
+    fn linux_custom_trace_config_defaults_and_overrides(
+        #[case] compression_setting: Option<LinuxCustomTraceLogCompression>,
+        #[case] expected: LinuxCustomTraceLogCompression,
+    ) {
+        let mut config = Config::test_fixture();
+
+        config.config_file.custom_trace =
+            compression_setting.map(|log_compression| LinuxCustomTraceConfig {
+                log_compression,
+                rate_limit_count: 5,
+                rate_limit_duration: Duration::from_secs(3600),
+            });
+
+        assert_eq!(config.linux_custom_trace_log_compression(), expected);
+    }
+
+    #[test]
+    fn linux_custom_trace_config_serialization_roundtrip() {
+        use serde_json;
+
+        let original_config = LinuxCustomTraceConfig {
+            log_compression: LinuxCustomTraceLogCompression::Gzip,
+            rate_limit_count: 5,
+            rate_limit_duration: Duration::from_secs(3600),
+        };
+
+        let json = serde_json::to_string(&original_config).unwrap();
+        let deserialized_config: LinuxCustomTraceConfig = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(
+            original_config.log_compression,
+            deserialized_config.log_compression
+        );
+
+        // Test all compression types
+        let compression_types = vec![
+            LinuxCustomTraceLogCompression::Gzip,
+            LinuxCustomTraceLogCompression::Zlib,
+            LinuxCustomTraceLogCompression::None,
+        ];
+
+        for compression_type in compression_types {
+            let config = LinuxCustomTraceConfig {
+                log_compression: compression_type,
+                rate_limit_count: 5,
+                rate_limit_duration: Duration::from_secs(3600),
+            };
+            let json = serde_json::to_string(&config).unwrap();
+            let deserialized: LinuxCustomTraceConfig = serde_json::from_str(&json).unwrap();
+            assert_eq!(config, deserialized);
+        }
     }
 
     struct Fixture {

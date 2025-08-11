@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config::Config,
-    http_server::{MetricsRequest, SessionRequest},
+    http_server::{MetricsRequest, SessionRequest, TraceRequest},
     mar::{ExportFormat, EXPORT_MAR_URL},
     metrics::{KeyedMetricReading, SessionName},
 };
@@ -124,6 +124,22 @@ impl MemfaultdClient {
             .json(&NotifyCrashRequest { process_name: comm })
             .send()?;
         Ok(())
+    }
+
+    pub fn save_trace(&self, trace_data: TraceRequest) -> Result<()> {
+        let r = self
+            .client
+            .post(format!("{}{}", self.base_url, "/v1/trace/save"))
+            .json(&trace_data)
+            .send()?;
+        match r.status() {
+            StatusCode::OK => Ok(()),
+            _ => Err(eyre!(
+                "Unexpected status code {}: {}",
+                r.status().as_u16(),
+                from_utf8(&r.bytes()?)?
+            )),
+        }
     }
 
     pub fn report_sync(&self, success: bool) -> Result<()> {

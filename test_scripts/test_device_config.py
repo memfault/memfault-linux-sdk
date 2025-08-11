@@ -15,8 +15,11 @@ from .qemu import QEMU
 # - The MEMFAULT_E2E_* environment variables are set to match whatever the underlying
 #   QEMU instance points at.
 def test(qemu: QEMU, memfault_service_tester: MemfaultServiceTester, qemu_device_id: str) -> None:
-    # Poke memfaultd to sync - This will force memfaultd to receive the device
     # config and send a 'device-config' mar entry to confirm the version.
+
+    qemu.exec_cmd("memfaultctl sync")
+
+    time.sleep(2)
     qemu.exec_cmd("memfaultctl sync")
 
     # Make sure device has updated the reported config revision

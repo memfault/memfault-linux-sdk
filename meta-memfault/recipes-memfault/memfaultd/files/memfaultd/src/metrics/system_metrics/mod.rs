@@ -18,7 +18,10 @@ use crate::{
 };
 
 mod config;
-pub use config::{CpuMetricsConfig, MemoryMetricsConfig, SystemMetricConfig, ThermalMetricsConfig};
+pub use config::{
+    CpuMetricsConfig, MemoryMetricsConfig, OuiMetricsConfig, SystemMetricConfig,
+    ThermalMetricsConfig,
+};
 
 mod cpu;
 use crate::metrics::system_metrics::cpu::CpuMetricCollector;
@@ -31,6 +34,8 @@ pub use thermal::THERMAL_METRIC_NAMESPACE;
 mod memory;
 use crate::metrics::system_metrics::memory::MemoryMetricsCollector;
 pub use crate::metrics::system_metrics::memory::MEMORY_METRIC_NAMESPACE;
+
+mod vm;
 
 mod network_interfaces;
 use network_interfaces::{NetworkInterfaceMetricCollector, NetworkInterfaceMetricsConfig};
@@ -54,9 +59,15 @@ mod diskstats;
 use diskstats::DiskstatsMetricCollector;
 pub use diskstats::{DiskstatsMetricsConfig, DISKSTATS_METRIC_NAMESPACE};
 
+mod oui_parse;
+
+mod oui;
+use oui::OuiMetricsCollector;
+
 use self::{
     memory::{MemInfoParser, MemInfoParserImpl},
     processes::ProcfsProcessNameMapper,
+    vm::VmMetricsCollector,
 };
 use super::MetricsMBox;
 
@@ -82,10 +93,15 @@ impl SystemMetricsCollector {
             metric_family_collectors.push(Box::new(MemoryMetricsCollector::new(
                 MemInfoParserImpl::new(),
             )));
+            metric_family_collectors.push(Box::new(VmMetricsCollector::<Instant>::new()));
         }
 
         if config.thermal_metrics_enabled() {
             metric_family_collectors.push(Box::new(ThermalMetricsCollector::new()));
+        }
+
+        if config.oui_metrics_enabled() {
+            metric_family_collectors.push(Box::new(OuiMetricsCollector::new()));
         }
 
         // Check if process metrics have been manually configured
