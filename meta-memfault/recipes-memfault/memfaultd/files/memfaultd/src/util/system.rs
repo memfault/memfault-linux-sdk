@@ -166,16 +166,41 @@ fn process_name_from_cmdline(cmd_line: String) -> Result<String> {
     // If the process is well-behaved, it is a
     // set of strings separated by null bytes ('\0'), with a
     // further null byte after the last string.
-    cmd_line
-        .split('\0')
-        .next()
-        .and_then(|exec_path| Path::new(exec_path).file_name())
+    let parts: Vec<&str> = cmd_line.split('\0').collect();
+
+    let first_part = parts.first().ok_or(eyre!(
+        "Couldn't parse process name from cmdline value: {}",
+        cmd_line
+    ))?;
+
+    let first_filename = Path::new(first_part)
+        .file_name()
         .and_then(|filename| filename.to_str())
-        .map(|s| s.to_string())
         .ok_or(eyre!(
             "Couldn't parse process name from cmdline value: {}",
             cmd_line
-        ))
+        ))?;
+
+    // For Python processes, we want to use the name of the entry point
+    // file rather than the filename of the Python interpreter.
+    if first_filename.starts_with("python") {
+        let entry_point_path = parts.get(1).ok_or_else(|| {
+            eyre!(
+                "No string following {} in this process's cmd_line file",
+                first_filename
+            )
+        })?;
+
+        let entry_point_filename = Path::new(entry_point_path)
+            .file_name()
+            .ok_or_else(|| eyre!("Could not extract a filename from {}", entry_point_path))?
+            .to_string_lossy()
+            .to_string();
+
+        Ok(entry_point_filename)
+    } else {
+        Ok(first_filename.to_string())
+    }
 }
 
 /// Provide some mock implementations for non-Linux systems. Designed for development. Not actual use.
@@ -226,7 +251,7 @@ mod test {
 
     #[rstest]
     #[case("/usr/bin/memfaultd\0--daemonize\0", "memfaultd")]
-    #[case("/usr/bin/python3\0myPythonProgram.py\0", "python3")]
+    #[case("/usr/bin/python3\0myPythonProgram.py\0", "myPythonProgram.py")]
     #[case("/usr/bin/wefaultd\0", "wefaultd")]
     fn test_cmdline_parsing(#[case] input: &str, #[case] process_name: &str) {
         assert_eq!(

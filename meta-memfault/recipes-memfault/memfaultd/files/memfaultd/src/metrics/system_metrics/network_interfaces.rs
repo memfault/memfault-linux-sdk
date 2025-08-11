@@ -221,10 +221,20 @@ where
         Ok((interface_id.to_string(), net_stats))
     }
 
+    /// Parse the wireless status from a line of /proc/net/wireless
     fn parse_wireless_status(input: &str) -> IResult<&str, u64> {
         preceded(multispace1, u64)(input)
     }
 
+    /// Parse the wireless stats from a line of `/proc/net/wireless`.
+    ///
+    /// Example contents of the `/proc/net/wireless` file:
+    ///
+    /// ```plaintext
+    /// Inter-| sta-|   Quality        |   Discarded packets               | Missed | WE
+    ///  face | tus | link level noise |  nwid  crypt   frag  retry   misc | beacon | 22
+    /// wlp0s20f3: 0000   64.  -46.  -256        0      0      0      0    255        0
+    /// ```
     fn parse_wireless_stats(input: &str) -> IResult<&str, Vec<i64>> {
         count(terminated(preceded(multispace1, i64), opt(tag("."))), 2)(input)
     }
@@ -241,7 +251,7 @@ where
         Ok((interface_id.to_string(), wireless_stats))
     }
 
-    /// Calculates network metrics     
+    /// Calculates network metrics
     fn calculate_network_metrics(
         &mut self,
         interface: String,

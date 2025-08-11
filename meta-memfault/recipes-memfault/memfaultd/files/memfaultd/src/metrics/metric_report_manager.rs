@@ -694,7 +694,10 @@ mod tests {
         for builder in builders {
             match builder.get_metadata() {
                 Metadata::LinuxMetricReport { report_type, .. } => {
-                    assert_json_snapshot!(report_type.as_str(), builder.get_metadata(), {".metadata.duration_ms" => 0})
+                    assert_json_snapshot!(report_type.as_str(), builder.get_metadata(), {
+                        ".metadata.duration_ms" => 0,
+                        ".metadata.boottime_duration_ms" => 0
+                    })
                 }
                 _ => panic!("Invalid MAR builder"),
             }

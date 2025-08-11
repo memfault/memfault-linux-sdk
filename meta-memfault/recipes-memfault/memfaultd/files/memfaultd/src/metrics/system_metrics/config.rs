@@ -20,6 +20,7 @@ pub struct SystemMetricConfig {
     pub cpu: Option<CpuMetricsConfig>,
     pub memory: Option<MemoryMetricsConfig>,
     pub thermal: Option<ThermalMetricsConfig>,
+    pub oui: Option<OuiMetricsConfig>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -34,6 +35,11 @@ pub struct MemoryMetricsConfig {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ThermalMetricsConfig {
+    pub enable: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct OuiMetricsConfig {
     pub enable: bool,
 }
 
@@ -56,6 +62,13 @@ impl SystemMetricConfig {
         match self.thermal {
             None => true,
             Some(ThermalMetricsConfig { enable }) => enable,
+        }
+    }
+
+    pub fn oui_metrics_enabled(&self) -> bool {
+        match self.oui {
+            None => true,
+            Some(OuiMetricsConfig { enable }) => enable,
         }
     }
 

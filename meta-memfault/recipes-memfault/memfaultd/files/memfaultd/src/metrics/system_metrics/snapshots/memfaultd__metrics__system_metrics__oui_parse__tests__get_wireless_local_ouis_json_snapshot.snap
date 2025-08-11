@@ -1,0 +1,8 @@
+---
+source: memfaultd/src/metrics/system_metrics/oui_parse.rs
+expression: ouis
+---
+{
+  "wlan0": "12:34:56",
+  "wlp3s0": "AA:BB:CC"
+}

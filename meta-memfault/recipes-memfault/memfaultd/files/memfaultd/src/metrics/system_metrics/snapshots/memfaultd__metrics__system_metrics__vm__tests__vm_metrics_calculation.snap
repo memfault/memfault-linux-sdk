@@ -1,0 +1,42 @@
+---
+source: memfaultd/src/metrics/system_metrics/vm.rs
+expression: metrics2
+---
+[
+  {
+    "name": "memory/vm/swaps_in_per_second",
+    "value": {
+      "Histogram": {
+        "value": 0.5,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/vm/swaps_out_per_second",
+    "value": {
+      "Histogram": {
+        "value": 1.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/vm/pages_in_per_second",
+    "value": {
+      "Histogram": {
+        "value": 10.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/vm/pages_out_per_second",
+    "value": {
+      "Histogram": {
+        "value": 20.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  }
+]

@@ -1,2 +1,2 @@
 [build]
-rustflags = ["-C", "link-arg=-Wl,--compress-debug-sections=zlib", "-C", "force-unwind-tables=yes"]
+rustflags = ["-C", "force-unwind-tables=yes"]

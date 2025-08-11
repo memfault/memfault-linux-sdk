@@ -26,6 +26,7 @@ mod service_manager;
 mod swupdate;
 #[cfg(test)]
 mod test_utils;
+pub mod trace;
 pub mod util;
 
 pub mod build_info {

@@ -11,6 +11,7 @@ use std::{
 };
 use std::{net::SocketAddr, path::PathBuf};
 
+use crate::mar::CompressionAlgorithm;
 use crate::metrics::{system_metrics::SystemMetricConfig, MetricStringKey, SessionName};
 use crate::util::*;
 use crate::util::{path::AbsolutePath, serialization::*};
@@ -46,6 +47,7 @@ pub struct MemfaultdConfig {
     pub connectivity_monitor: Option<ConnectivityMonitorConfig>,
     pub sessions: Option<Vec<SessionConfig>>,
     pub metrics: MetricReportConfig,
+    pub custom_trace: Option<LinuxCustomTraceConfig>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -84,6 +86,44 @@ pub enum CoredumpCaptureStrategy {
     #[serde(rename = "stacktrace")]
     /// Capture a stack trace only without locals or registers
     Stacktrace,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+pub struct LinuxCustomTraceConfig {
+    pub log_compression: LinuxCustomTraceLogCompression,
+    pub rate_limit_count: u32,
+    #[serde(rename = "rate_limit_duration_seconds", with = "seconds_to_duration")]
+    pub rate_limit_duration: Duration,
+}
+
+impl Default for LinuxCustomTraceConfig {
+    fn default() -> Self {
+        Self {
+            log_compression: LinuxCustomTraceLogCompression::Gzip,
+            rate_limit_count: 5,
+            rate_limit_duration: Duration::from_secs(3600),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq)]
+pub enum LinuxCustomTraceLogCompression {
+    #[serde(rename = "gzip")]
+    Gzip,
+    #[serde(rename = "zlib")]
+    Zlib,
+    #[serde(rename = "none")]
+    None,
+}
+
+impl From<LinuxCustomTraceLogCompression> for CompressionAlgorithm {
+    fn from(value: LinuxCustomTraceLogCompression) -> CompressionAlgorithm {
+        match value {
+            LinuxCustomTraceLogCompression::Gzip => CompressionAlgorithm::Gzip,
+            LinuxCustomTraceLogCompression::Zlib => CompressionAlgorithm::Zlib,
+            LinuxCustomTraceLogCompression::None => CompressionAlgorithm::None,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -551,6 +591,9 @@ mod test {
     #[case("metrics_config")]
     #[case("log_filters")]
     #[case("syslog")]
+    #[case("with_linux_custom_trace_gzip")]
+    #[case("with_linux_custom_trace_zlib")]
+    #[case("with_linux_custom_trace_none")]
     fn can_parse_test_files(#[case] name: &str) {
         let input_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("src/config/test-config")

@@ -5,28 +5,10 @@ snapshot_kind: text
 ---
 [
   {
-    "name": "diskstats/mmcblk0/lifetime_remaining_pct",
-    "value": {
-      "Gauge": {
-        "value": 10.0,
-        "timestamp": "[timestamp]"
-      }
-    }
-  },
-  {
     "name": "diskstats/mmcblk0/lifetime_b_remaining_pct",
     "value": {
       "Gauge": {
-        "value": 15.0,
-        "timestamp": "[timestamp]"
-      }
-    }
-  },
-  {
-    "name": "diskstats/mmcblk0/bytes_written",
-    "value": {
-      "Counter": {
-        "value": 512000.0,
+        "value": 20.0,
         "timestamp": "[timestamp]"
       }
     }

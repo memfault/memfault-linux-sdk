@@ -14,7 +14,7 @@ use crate::{
 };
 
 use eyre::{eyre, Context, Result};
-use log::{error, info, warn, LevelFilter};
+use log::{debug, error, info, warn, LevelFilter};
 
 use crate::cli::show_settings::show_settings;
 use crate::cli::version::format_version;
@@ -65,7 +65,7 @@ pub fn main() -> Result<()> {
         return Ok(());
     }
 
-    let warning_handle_fn = |w: &_| warn!("{}", w);
+    let warning_handle_fn = |w: &_| debug!("{}", w);
     let config = Config::read_from_system(config_path, warning_handle_fn)
         .wrap_err(eyre!("Unable to load configuration"))?;
 
