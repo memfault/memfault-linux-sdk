@@ -78,7 +78,8 @@ expression: content
       "network_interfaces": null,
       "cpu": null,
       "memory": null,
-      "thermal": null
+      "thermal": null,
+      "oui": null
     },
     "statsd_server": {
       "bind_address": "127.0.0.1:8125",
@@ -89,5 +90,10 @@ expression: content
       "enable": true,
       "max_samples_per_minute": 750
     }
+  },
+  "custom_trace": {
+    "log_compression": "gzip",
+    "rate_limit_count": 5,
+    "rate_limit_duration_seconds": 3600
   }
 }

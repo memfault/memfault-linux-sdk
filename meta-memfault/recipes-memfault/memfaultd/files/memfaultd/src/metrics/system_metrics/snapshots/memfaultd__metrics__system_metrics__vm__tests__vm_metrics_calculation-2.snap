@@ -1,0 +1,24 @@
+---
+source: memfaultd/src/metrics/system_metrics/vm.rs
+expression: metrics3
+---
+[
+  {
+    "name": "memory/vm/swaps_in_per_second",
+    "value": {
+      "Histogram": {
+        "value": 5.3,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/vm/swaps_out_per_second",
+    "value": {
+      "Histogram": {
+        "value": 2.6,
+        "timestamp": "[timestamp]"
+      }
+    }
+  }
+]

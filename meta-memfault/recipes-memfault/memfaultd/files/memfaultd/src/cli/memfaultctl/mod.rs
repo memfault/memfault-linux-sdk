@@ -13,6 +13,7 @@ mod export;
 mod report_sync;
 mod session;
 mod sync;
+mod trace;
 mod write_attributes;
 mod write_metrics;
 
@@ -112,6 +113,7 @@ enum MemfaultctlCommand {
     EndSession(EndSessionArgs),
     AddCustomDataRecording(AddCustomDataRecordingArgs),
     WriteMetrics(WriteMetricsArgs),
+    SaveTrace(SaveTraceArgs),
 }
 
 #[derive(FromArgs)]
@@ -275,6 +277,27 @@ struct AddCustomDataRecordingArgs {
     start_time: Option<DateTime<Utc>>,
 }
 
+#[derive(FromArgs)]
+/// Save custom trace
+#[argh(subcommand, name = "save-trace")]
+struct SaveTraceArgs {
+    /// name of program reporting the trace
+    #[argh(option)]
+    program: String,
+    /// reason for trace collection
+    #[argh(option)]
+    reason: String,
+    /// whether or not the trace represents a crash
+    #[argh(option)]
+    crash: Option<bool>,
+    /// what source to report
+    #[argh(option)]
+    source: Option<String>,
+    /// input for Memfault signature algorithm that determines which Traces are grouped together
+    #[argh(option)]
+    signature: Option<String>,
+}
+
 fn check_data_collection_enabled(config: &Config, do_what: &str) -> Result<()> {
     match config.config_file.enable_data_collection {
         true => Ok(()),
@@ -407,5 +430,12 @@ pub fn main() -> Result<()> {
 
             write_metrics(metrics, &config)
         }
+        MemfaultctlCommand::SaveTrace(SaveTraceArgs {
+            program,
+            reason,
+            crash,
+            source,
+            signature,
+        }) => trace::save_trace(&config, program, reason, crash, source, signature),
     }
 }

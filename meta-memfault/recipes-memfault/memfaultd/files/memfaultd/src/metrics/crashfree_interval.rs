@@ -175,6 +175,10 @@ where
         })
     }
 
+    pub fn channel_handler(&mut self) -> Box<Sender<CrashInfo<T>>> {
+        Box::new(self.sender.clone())
+    }
+
     pub fn capture_crash(&self, process_name: String) {
         self.sender
             .send(CrashInfo {
@@ -213,9 +217,9 @@ struct CrashFreeIntervalHttpHandler<T> {
 }
 
 #[derive(Serialize, Deserialize)]
-struct CrashInfo<T> {
-    process_name: String,
-    timestamp: T,
+pub struct CrashInfo<T> {
+    pub process_name: String,
+    pub timestamp: T,
 }
 
 impl<T> CrashFreeIntervalHttpHandler<T>

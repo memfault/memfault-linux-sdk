@@ -154,7 +154,8 @@ mod tests {
         http_server::{HttpHandler, HttpHandlerResult},
         metrics::{
             system_metrics::{
-                CpuMetricsConfig, MemoryMetricsConfig, SystemMetricConfig, ThermalMetricsConfig,
+                CpuMetricsConfig, MemoryMetricsConfig, OuiMetricsConfig, SystemMetricConfig,
+                ThermalMetricsConfig,
             },
             KeyedMetricReading, TakeMetrics,
         },
@@ -268,6 +269,7 @@ mod tests {
             cpu: Some(CpuMetricsConfig { enable: true }),
             memory: Some(MemoryMetricsConfig { enable: true }),
             thermal: Some(ThermalMetricsConfig { enable: true }),
+            oui: Some(OuiMetricsConfig { enable: true }),
         }
     }
 
@@ -282,6 +284,7 @@ mod tests {
             cpu: Some(CpuMetricsConfig { enable: false }),
             memory: Some(MemoryMetricsConfig { enable: false }),
             thermal: Some(ThermalMetricsConfig { enable: false }),
+            oui: Some(OuiMetricsConfig { enable: false }),
         }
     }
 
@@ -296,6 +299,7 @@ mod tests {
             cpu: Some(CpuMetricsConfig { enable: true }),
             memory: Some(MemoryMetricsConfig { enable: true }),
             thermal: Some(ThermalMetricsConfig { enable: true }),
+            oui: Some(OuiMetricsConfig { enable: true }),
         }
     }
 

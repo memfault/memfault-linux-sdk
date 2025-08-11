@@ -1,0 +1,5 @@
+{
+  "linux_custom_trace": {
+    "log_compression": "zlib"
+  }
+}

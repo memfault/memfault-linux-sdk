@@ -16,4 +16,4 @@ pub use server::HttpServer;
 
 pub use utils::{parse_query_params, ConvenientHeader};
 
-pub use request_bodies::{MetricsRequest, SessionRequest};
+pub use request_bodies::{MetricsRequest, SessionRequest, TraceRequest};

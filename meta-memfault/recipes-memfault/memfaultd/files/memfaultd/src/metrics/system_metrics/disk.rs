@@ -53,29 +53,51 @@ where
         let mut metrics = vec![];
 
         if let Some(lifetime) = mmc.read_lifetime()? {
-            let lifetime_a_metric_key = MetricStringKey::from_str(&format!(
-                "{}/{}/lifetime_pct",
-                DISK_METRIC_NAMESPACE, disk_name
-            ))
-            .map_err(|e| eyre!("Invalid metric key: {}", e))?;
-            let lifetime_b_metric_key = MetricStringKey::from_str(&format!(
-                "{}/{}/lifetime_b_pct",
-                DISK_METRIC_NAMESPACE, disk_name
-            ))
-            .map_err(|e| eyre!("Invalid metric key: {}", e))?;
+            match lifetime.lifetime_a_pct {
+                Some(lifetime_a_pct) => {
+                    let lifetime_a_metric_key = MetricStringKey::from_str(&format!(
+                        "{}/{}/lifetime_remaining_pct",
+                        DISK_METRIC_NAMESPACE, disk_name
+                    ))
+                    .map_err(|e| eyre!("Invalid metric key: {}", e))?;
+                    let lifetime_a_metric_reading =
+                        100u8.checked_sub(lifetime_a_pct).map(|pct_remaining| {
+                            KeyedMetricReading::new_gauge(
+                                lifetime_a_metric_key,
+                                pct_remaining as f64,
+                            )
+                        });
 
-            let lifetime_a_metric_reading = KeyedMetricReading::new_gauge(
-                lifetime_a_metric_key,
-                lifetime.lifetime_a_pct as f64,
-            );
+                    match lifetime_a_metric_reading {
+                        Some(reading) => metrics.push(reading),
+                        None => debug!("Underflow - lifetime a greater than 100"),
+                    }
+                }
+                None => debug!("Invalid lifetime a pct"),
+            }
 
-            let lifetime_b_metric_reading = KeyedMetricReading::new_gauge(
-                lifetime_b_metric_key,
-                lifetime.lifetime_b_pct as f64,
-            );
+            match lifetime.lifetime_b_pct {
+                Some(lifetime_b_pct) => {
+                    let lifetime_b_metric_key = MetricStringKey::from_str(&format!(
+                        "{}/{}/lifetime_b_remaining_pct",
+                        DISK_METRIC_NAMESPACE, disk_name
+                    ))
+                    .map_err(|e| eyre!("Invalid metric key: {}", e))?;
+                    let lifetime_b_metric_reading =
+                        100u8.checked_sub(lifetime_b_pct).map(|pct_remaining| {
+                            KeyedMetricReading::new_gauge(
+                                lifetime_b_metric_key,
+                                pct_remaining as f64,
+                            )
+                        });
 
-            metrics.push(lifetime_a_metric_reading);
-            metrics.push(lifetime_b_metric_reading);
+                    match lifetime_b_metric_reading {
+                        Some(reading) => metrics.push(reading),
+                        None => debug!("Underflow - lifetime b greater than 100"),
+                    }
+                }
+                None => debug!("Invalid lifetime b pct"),
+            }
         }
 
         let bytes_written = disk_stats
@@ -359,8 +381,8 @@ mod test {
             product_name: "SG123".to_string(),
             manufacturer_id: "0x00015".to_string(),
             lifetime: MmcLifeTime {
-                lifetime_a_pct: 90,
-                lifetime_b_pct: 85,
+                lifetime_a_pct: Some(90),
+                lifetime_b_pct: Some(85),
             },
             sector_count: 100,
             manufacture_date: "11/2023".to_string(),
@@ -394,6 +416,91 @@ mod test {
         .unwrap();
 
         assert_eq!(metrics.len(), 9);
+        assert_json_snapshot!(metrics, {
+            "[].value.**.timestamp" => "[timestamp]",
+            "[].value.**.value" => rounded_redaction(5)
+        });
+    }
+
+    #[test]
+    fn test_get_disk_metrics_without_lifetimes() {
+        // Create fake MMC
+        let fake_mmc = FakeMmc {
+            disk_name: "mmcblk0".to_string(),
+            product_name: "SG123".to_string(),
+            manufacturer_id: "0x00015".to_string(),
+            lifetime: MmcLifeTime {
+                lifetime_a_pct: None,
+                lifetime_b_pct: None,
+            },
+            sector_count: 100,
+            manufacture_date: "11/2023".to_string(),
+            revision: "1.0".to_string(),
+            serial: "0x1234567890".to_string(),
+        };
+
+        // Create disk stats (sectors written = 1000)
+        let disk_stats = vec![0, 0, 0, 0, 0, 0, 1000, 0, 0, 0, 0];
+        let mut prev_bytes_reading = None;
+
+        // First call should return MLC and SLC metrics but no bytes written (no previous reading)
+        let metrics = DiskMetricsCollector::get_disk_metrics(
+            &fake_mmc,
+            Some(&disk_stats),
+            &mut prev_bytes_reading,
+        )
+        .unwrap();
+
+        assert_eq!(metrics.len(), 6);
+
+        // Create updated disk stats (sectors written = 2000)
+        let updated_disk_stats = vec![0, 0, 0, 0, 0, 0, 2000, 0, 0, 0, 0];
+
+        // Second call should include bytes written metric
+        let metrics = DiskMetricsCollector::get_disk_metrics(
+            &fake_mmc,
+            Some(&updated_disk_stats),
+            &mut prev_bytes_reading,
+        )
+        .unwrap();
+
+        assert_eq!(metrics.len(), 7);
+        assert_json_snapshot!(metrics, {
+            "[].value.**.timestamp" => "[timestamp]",
+            "[].value.**.value" => rounded_redaction(5)
+        });
+    }
+
+    #[test]
+    fn test_lifetime_metric_underflow() {
+        // Create fake MMC
+        let fake_mmc = FakeMmc {
+            disk_name: "mmcblk0".to_string(),
+            product_name: "SG123".to_string(),
+            manufacturer_id: "0x00015".to_string(),
+            lifetime: MmcLifeTime {
+                lifetime_a_pct: Some(120),
+                lifetime_b_pct: Some(80),
+            },
+            sector_count: 100,
+            manufacture_date: "11/2023".to_string(),
+            revision: "1.0".to_string(),
+            serial: "0x1234567890".to_string(),
+        };
+
+        // Create disk stats (sectors written = 1000)
+        let disk_stats = vec![0, 0, 0, 0, 0, 0, 1000, 0, 0, 0, 0];
+        let mut prev_bytes_reading = None;
+
+        // First call should return MLC and SLC metrics but no bytes written (no previous reading)
+        let metrics = DiskMetricsCollector::get_disk_metrics(
+            &fake_mmc,
+            Some(&disk_stats),
+            &mut prev_bytes_reading,
+        )
+        .unwrap();
+
+        assert_eq!(metrics.len(), 7);
         assert_json_snapshot!(metrics, {
             "[].value.**.timestamp" => "[timestamp]",
             "[].value.**.value" => rounded_redaction(5)

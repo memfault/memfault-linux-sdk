@@ -1,0 +1,8 @@
+---
+source: memfaultd/src/metrics/system_metrics/oui_parse.rs
+expression: ap_ouis
+---
+{
+  "wlan0": "AA:BB:CC",
+  "wlp0s20f3": "EA:6F:B3"
+}

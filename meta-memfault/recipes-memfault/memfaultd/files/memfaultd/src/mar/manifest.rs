@@ -77,7 +77,7 @@ impl Default for Producer {
     }
 }
 
-#[derive(Serialize, Deserialize, Copy, Clone)]
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
 pub enum CompressionAlgorithm {
     None,
     #[serde(rename = "zlib")]
@@ -147,14 +147,18 @@ pub enum Metadata {
         boottime_duration: Option<Duration>,
         report_type: MetricReportType,
     },
-    #[serde(rename = "linux-memfault-watch-logs")]
-    LinuxMemfaultWatch {
-        cmdline: Vec<String>,
-        exit_code: i32,
-        #[serde(rename = "duration_ms", with = "milliseconds_to_duration")]
-        duration: Duration,
-        stdio_log_file_name: String,
-        compression: CompressionAlgorithm,
+    #[serde(rename = "linux-custom-trace")]
+    LinuxCustomTrace {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
+        crash: bool,
+        reason: String,
+        program: String,
+        source: LinuxCustomTraceSource,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        log_file_name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        compression: Option<CompressionAlgorithm>,
     },
     #[serde(rename = "custom-data-recording")]
     CustomDataRecording {
@@ -173,6 +177,40 @@ pub enum Metadata {
         stacktrace_file_name: String,
         compression: Option<CompressionAlgorithm>,
     },
+}
+
+pub enum LinuxCustomTraceSource {
+    MemfaultWatch,
+    Memfaultctl,
+    Other(String),
+}
+
+impl<'de> Deserialize<'de> for LinuxCustomTraceSource {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.as_str() {
+            "MEMFAULT_WATCH" => Ok(LinuxCustomTraceSource::MemfaultWatch),
+            "MEMFAULTCTL" => Ok(LinuxCustomTraceSource::Memfaultctl),
+            _ => Ok(LinuxCustomTraceSource::Other(s)),
+        }
+    }
+}
+
+impl serde::Serialize for LinuxCustomTraceSource {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let s = match self {
+            LinuxCustomTraceSource::MemfaultWatch => "MEMFAULT_WATCH",
+            LinuxCustomTraceSource::Memfaultctl => "MEMFAULTCTL",
+            LinuxCustomTraceSource::Other(s) => s,
+        };
+        serializer.serialize_str(s)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -334,6 +372,26 @@ impl Metadata {
             compression,
         }
     }
+
+    pub fn new_custom_trace(
+        program: String,
+        reason: String,
+        crash: Option<bool>,
+        signature: Option<String>,
+        source: Option<LinuxCustomTraceSource>,
+        log_file_name: Option<String>,
+        compression: Option<CompressionAlgorithm>,
+    ) -> Self {
+        Self::LinuxCustomTrace {
+            signature,
+            crash: crash.unwrap_or(false),
+            reason,
+            program,
+            source: source.unwrap_or(LinuxCustomTraceSource::Memfaultctl),
+            log_file_name,
+            compression,
+        }
+    }
 }
 
 impl CollectionTime {
@@ -402,10 +460,9 @@ impl Manifest {
             Metadata::LinuxHeartbeat { .. } => vec![],
             Metadata::LinuxMetricReport { .. } => vec![],
             Metadata::LinuxReboot { .. } => vec![],
-            Metadata::LinuxMemfaultWatch {
-                stdio_log_file_name,
-                ..
-            } => vec![stdio_log_file_name.clone()],
+            Metadata::LinuxCustomTrace { log_file_name, .. } => {
+                log_file_name.iter().cloned().collect()
+            }
             Metadata::CustomDataRecording {
                 recording_file_name,
                 ..

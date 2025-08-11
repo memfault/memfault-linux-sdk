@@ -126,7 +126,7 @@ pub fn main() -> Result<()> {
     };
 
     let config_path = args.config_file.as_ref().map(Path::new);
-    let warnings_handle_fn = |w: &_| warn!("{}", w);
+    let warnings_handle_fn = |w: &_| debug!("{}", w);
     let config = match Config::read_from_system(config_path, warnings_handle_fn) {
         Ok(config) => config,
         Err(e) => {
