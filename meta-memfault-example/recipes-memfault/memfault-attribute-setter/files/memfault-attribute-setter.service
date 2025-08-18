@@ -1,0 +1,10 @@
+[Unit]
+Description=sets Memfault attributes
+After=memfaultd.service
+
+[Service]
+ExecStart=/usr/bin/memfault-attribute-setter
+Restart=on-failure
+
+[Install]
+WantedBy=memfaultd.service
