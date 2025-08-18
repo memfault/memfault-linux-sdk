@@ -1,0 +1,3 @@
+#!/bin/sh
+
+memfaultctl write-attributes last_boot_timestamp="$(uptime -s)"
