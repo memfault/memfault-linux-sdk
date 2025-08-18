@@ -12,6 +12,7 @@ IMAGE_INSTALL_append = " \
     collectd-sampleplugin-python \
     kernel-modules \
     memfault-device-info \
+    memfault-attribute-setter \
     netcat \
     statsd-sampleapp-python \
     statsd-sampleapp-c \

@@ -6,6 +6,7 @@ use std::{
     fs::{read_dir, File},
     io::{BufRead, BufReader},
     str::FromStr,
+    time::{Duration, Instant},
 };
 
 use eyre::{eyre, Result};
@@ -30,28 +31,26 @@ const SECTOR_SIZE: u64 = 512;
 pub struct DiskMetricsCollector<M: Mmc> {
     mmc: Vec<M>,
     prev_bytes_reading: Option<u64>,
+    last_lifetime_reading: Option<Instant>,
 }
 
 impl<M> DiskMetricsCollector<M>
 where
     M: Mmc,
 {
+    // Only read lifetime once an hour
+    const LIFETIME_READING_INTERVAL: Duration = Duration::from_secs(3600);
+
     pub fn new(mmc: Vec<M>) -> Self {
         Self {
             mmc,
             prev_bytes_reading: None,
+            last_lifetime_reading: None,
         }
     }
 
-    fn get_disk_metrics(
-        mmc: &M,
-        disk_stats: Option<&Vec<u64>>,
-        prev_bytes_reading: &mut Option<u64>,
-    ) -> Result<Vec<KeyedMetricReading>> {
-        let disk_name = mmc.disk_name();
-
-        let mut metrics = vec![];
-
+    fn get_lifetime_readings(disk_name: &str, mmc: &M) -> Result<Vec<KeyedMetricReading>> {
+        let mut metrics = Vec::with_capacity(2);
         if let Some(lifetime) = mmc.read_lifetime()? {
             match lifetime.lifetime_a_pct {
                 Some(lifetime_a_pct) => {
@@ -97,6 +96,39 @@ where
                     }
                 }
                 None => debug!("Invalid lifetime b pct"),
+            }
+        }
+
+        Ok(metrics)
+    }
+
+    fn get_disk_metrics(
+        mmc: &M,
+        disk_stats: Option<&Vec<u64>>,
+        prev_bytes_reading: &mut Option<u64>,
+        last_lifetime_reading: &mut Option<Instant>,
+    ) -> Result<Vec<KeyedMetricReading>> {
+        let disk_name = mmc.disk_name();
+
+        let mut metrics = vec![];
+
+        match last_lifetime_reading {
+            Some(last_reading) => {
+                let now = Instant::now();
+                let get_next_reading =
+                    now.checked_duration_since(*last_reading)
+                        .is_some_and(|duration_since| {
+                            duration_since >= Self::LIFETIME_READING_INTERVAL
+                        });
+
+                if get_next_reading {
+                    metrics.extend(Self::get_lifetime_readings(disk_name, mmc)?);
+                    *last_lifetime_reading = Some(now);
+                }
+            }
+            None => {
+                metrics.extend(Self::get_lifetime_readings(disk_name, mmc)?);
+                *last_lifetime_reading = Some(Instant::now());
             }
         }
 
@@ -269,7 +301,12 @@ where
             .iter()
             .filter_map(|m| {
                 let disk_stats_line = disk_stats_map.get(m.disk_name());
-                match Self::get_disk_metrics(m, disk_stats_line, &mut self.prev_bytes_reading) {
+                match Self::get_disk_metrics(
+                    m,
+                    disk_stats_line,
+                    &mut self.prev_bytes_reading,
+                    &mut self.last_lifetime_reading,
+                ) {
                     Ok(metrics) => Some(metrics),
                     Err(e) => {
                         error!(
@@ -394,11 +431,13 @@ mod test {
         let disk_stats = vec![0, 0, 0, 0, 0, 0, 1000, 0, 0, 0, 0];
         let mut prev_bytes_reading = None;
 
+        let hour_ago = Instant::now() - DiskMetricsCollector::<FakeMmc>::LIFETIME_READING_INTERVAL;
         // First call should return MLC and SLC metrics but no bytes written (no previous reading)
         let metrics = DiskMetricsCollector::get_disk_metrics(
             &fake_mmc,
             Some(&disk_stats),
             &mut prev_bytes_reading,
+            &mut Some(hour_ago),
         )
         .unwrap();
 
@@ -412,6 +451,7 @@ mod test {
             &fake_mmc,
             Some(&updated_disk_stats),
             &mut prev_bytes_reading,
+            &mut Some(hour_ago),
         )
         .unwrap();
 
@@ -442,12 +482,14 @@ mod test {
         // Create disk stats (sectors written = 1000)
         let disk_stats = vec![0, 0, 0, 0, 0, 0, 1000, 0, 0, 0, 0];
         let mut prev_bytes_reading = None;
+        let hour_ago = Instant::now() - DiskMetricsCollector::<FakeMmc>::LIFETIME_READING_INTERVAL;
 
         // First call should return MLC and SLC metrics but no bytes written (no previous reading)
         let metrics = DiskMetricsCollector::get_disk_metrics(
             &fake_mmc,
             Some(&disk_stats),
             &mut prev_bytes_reading,
+            &mut Some(hour_ago),
         )
         .unwrap();
 
@@ -461,6 +503,7 @@ mod test {
             &fake_mmc,
             Some(&updated_disk_stats),
             &mut prev_bytes_reading,
+            &mut Some(hour_ago),
         )
         .unwrap();
 
@@ -491,12 +534,14 @@ mod test {
         // Create disk stats (sectors written = 1000)
         let disk_stats = vec![0, 0, 0, 0, 0, 0, 1000, 0, 0, 0, 0];
         let mut prev_bytes_reading = None;
+        let hour_ago = Instant::now() - DiskMetricsCollector::<FakeMmc>::LIFETIME_READING_INTERVAL;
 
         // First call should return MLC and SLC metrics but no bytes written (no previous reading)
         let metrics = DiskMetricsCollector::get_disk_metrics(
             &fake_mmc,
             Some(&disk_stats),
             &mut prev_bytes_reading,
+            &mut Some(hour_ago),
         )
         .unwrap();
 
@@ -505,6 +550,84 @@ mod test {
             "[].value.**.timestamp" => "[timestamp]",
             "[].value.**.value" => rounded_redaction(5)
         });
+    }
+
+    #[test]
+    fn test_lifetime_interval_update() {
+        let fake_mmc = FakeMmc {
+            disk_name: "mmcblk0".to_string(),
+            product_name: "SG123".to_string(),
+            manufacturer_id: "0x00015".to_string(),
+            lifetime: MmcLifeTime {
+                lifetime_a_pct: Some(90),
+                lifetime_b_pct: Some(85),
+            },
+            sector_count: 100,
+            manufacture_date: "11/2023".to_string(),
+            revision: "1.0".to_string(),
+            serial: "0x1234567890".to_string(),
+        };
+
+        let mut prev_bytes_reading = None;
+        let mut last_lifetime_reading = None;
+
+        // First reading should set the last reading time
+        let metrics = DiskMetricsCollector::get_disk_metrics(
+            &fake_mmc,
+            None,
+            &mut prev_bytes_reading,
+            &mut last_lifetime_reading,
+        )
+        .unwrap();
+
+        assert_eq!(metrics.len(), 8);
+        assert!(last_lifetime_reading.is_some());
+    }
+
+    #[test]
+    fn test_lifetime_interval_read() {
+        let fake_mmc = FakeMmc {
+            disk_name: "mmcblk0".to_string(),
+            product_name: "SG123".to_string(),
+            manufacturer_id: "0x00015".to_string(),
+            lifetime: MmcLifeTime {
+                lifetime_a_pct: Some(90),
+                lifetime_b_pct: Some(85),
+            },
+            sector_count: 100,
+            manufacture_date: "11/2023".to_string(),
+            revision: "1.0".to_string(),
+            serial: "0x1234567890".to_string(),
+        };
+
+        let mut prev_bytes_reading = None;
+        let mut last_lifetime_reading =
+            Some(Instant::now() - DiskMetricsCollector::<FakeMmc>::LIFETIME_READING_INTERVAL);
+
+        let metrics = DiskMetricsCollector::get_disk_metrics(
+            &fake_mmc,
+            None,
+            &mut prev_bytes_reading,
+            &mut last_lifetime_reading,
+        )
+        .unwrap();
+
+        // Should read lifetime metrics again since the interval has passed
+        assert_eq!(metrics.len(), 8);
+
+        let mut prev_bytes_reading = None;
+        let mut last_lifetime_reading = Some(Instant::now());
+
+        let metrics = DiskMetricsCollector::get_disk_metrics(
+            &fake_mmc,
+            None,
+            &mut prev_bytes_reading,
+            &mut last_lifetime_reading,
+        )
+        .unwrap();
+
+        // Should not read lifetime metrics again since the interval has not passed
+        assert_eq!(metrics.len(), 6);
     }
 
     #[test]

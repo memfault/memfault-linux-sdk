@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.24.0] - 2025-08-18
+
+This release adds an example recipe for a `systemd` service that depends on
+`memfaultd`. Additionally it changes the query frequency of eMMC lifetime
+metrics.
+
+### Added
+
+- Added an example service that depends on `memfaultd`. This is useful for when
+  you want to run some code after `memfaultd` has finished starting.
+
+### Changed
+
+- Changed the read interval for eMMC lifetime values to only happen once an hour
+  regardless of configuration. The lifetime values will change very
+  infrequently. Reading them at a lower frequency can help lower CPU utilization
+  and reduce eMMC controller wakeups without sacrificing any resolution. This
+  can improve battery life for battery powered devices.
+
 ## [1.23.0] - 2025-08-11
 
 This release adds support for Python based stacktraces, as well as a few minor
@@ -1455,3 +1474,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.22.0-kirkstone
 [1.23.0]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.23.0-kirkstone
+[1.24.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.24.0-kirkstone
