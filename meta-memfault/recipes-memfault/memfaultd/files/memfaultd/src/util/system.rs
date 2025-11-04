@@ -3,6 +3,9 @@
 // See License.txt for details
 use std::io::Read;
 
+#[cfg(target_os = "linux")]
+use std::path::PathBuf;
+
 use eyre::{eyre, Result};
 use lazy_static::lazy_static;
 use libc::{clockid_t, timespec, CLOCK_MONOTONIC};
@@ -11,7 +14,7 @@ use libc::{clockid_t, timespec, CLOCK_MONOTONIC};
 use libc::{sysconf, _SC_CLK_TCK, _SC_PAGE_SIZE};
 
 #[cfg(target_os = "linux")]
-use std::fs::{read_to_string, File};
+use std::fs::{read_link, read_to_string, File};
 
 use uuid::Uuid;
 
@@ -145,6 +148,19 @@ pub fn get_system_clock(clock: Clock) -> Result<std::time::Duration> {
     }
 }
 
+pub trait ProcessNameMapper {
+    fn get_process_name(pid: u32) -> Result<String>;
+}
+
+#[derive(Clone, Copy)]
+pub struct ProcfsProcessNameMapper {}
+
+impl ProcessNameMapper for ProcfsProcessNameMapper {
+    fn get_process_name(pid: u32) -> Result<String> {
+        get_process_name(pid)
+    }
+}
+
 // Try to use basename of first string in /proc/<pid>/cmdline
 // as process name.
 // This is preferred over /proc/<pid>/comm because processes may change their comm
@@ -156,6 +172,15 @@ pub fn get_process_name(pid: u32) -> Result<String> {
     let cmd_line = read_proc_cmdline(&mut cmd_line_file)?;
 
     process_name_from_cmdline(cmd_line)
+}
+
+#[cfg(target_os = "linux")]
+pub fn get_process_path(pid: u32) -> Result<PathBuf> {
+    use std::path::Path;
+
+    let exe_file_name = format!("/proc/{}/exe", pid);
+    let exe_file = Path::new(&exe_file_name);
+    Ok(read_link(exe_file)?)
 }
 
 #[cfg(any(target_os = "linux", test))]

@@ -71,6 +71,7 @@ where
     fn write(&mut self) -> Result<()> {
         self.write_elf_header()?;
         self.write_data_segments()?;
+        self.output_stream.flush()?;
         Ok(())
     }
 

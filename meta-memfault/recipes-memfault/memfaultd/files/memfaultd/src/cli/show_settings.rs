@@ -110,8 +110,6 @@ pub fn show_settings(config_path: Option<&Path>) -> Result<()> {
         "reboot",
         #[cfg(feature = "swupdate")]
         "swupdate",
-        #[cfg(feature = "collectd")]
-        "collectd",
         #[cfg(feature = "coredump")]
         "coredump",
         #[cfg(feature = "logging")]

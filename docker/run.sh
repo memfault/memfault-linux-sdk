@@ -5,6 +5,7 @@
 YOCTO_RELEASE="scarthgap"
 
 command=""
+extramounts=""
 
 MEMFAULT_YOCTO_BUILD_MOUNT_PREFIX=${MEMFAULT_YOCTO_BUILD_MOUNT_PREFIX:-"/tmp/yocto-build-"}
 buildmount="--mount type=volume,source=yocto-build-${YOCTO_RELEASE},target=/home/build/yocto/build"
@@ -47,6 +48,12 @@ else
   memfaultclimount=""
 fi
 
+if [ -f "${PWD}/run_extras.sh" ]; then
+  # ignoring here as we already check that the file exists
+  #shellcheck disable=SC1090,SC1091
+  . "${PWD}/run_extras.sh"
+fi
+
 # vars are overridden from the local environment, falling back to env.list
 env_vars="
 --env MACHINE
@@ -78,6 +85,7 @@ docker run \
   ${sourcesmount} \
   ${memfaultclimount} \
   ${metamount} \
+  ${extramounts} \
   ${env_vars} \
   ${e2e_test_env_vars} \
   --env YOCTO_RELEASE="${YOCTO_RELEASE}" \

@@ -19,7 +19,7 @@ mod write_metrics;
 
 use crate::{
     cli::version::format_version,
-    mar::{DeviceAttribute, ExportFormat, Metadata},
+    mar::{DeviceAttribute, ExportFormat, MarConfig, Metadata},
     metrics::{KeyedMetricReading, SessionName},
     reboot::{write_reboot_reason_and_reboot, RebootReason},
     service_manager::get_service_manager,
@@ -325,7 +325,7 @@ pub fn main() -> Result<()> {
     let warnings_handle_fn = |w: &_| eprintln!("{}", w);
     let mut config = Config::read_from_system(config_path, warnings_handle_fn)?;
     let network_config = NetworkConfig::from(&config);
-    let mar_staging_path = config.mar_staging_path();
+    let mar_staging_path = config.mar_tmp_staging_path();
 
     let service_manager = get_service_manager();
 
@@ -412,6 +412,7 @@ pub fn main() -> Result<()> {
                 .ok_or_else(|| eyre!("{} is not a valid file path", file_name))?
                 .to_string();
 
+            let mar_config = MarConfig::from(&config);
             MarEntryBuilder::new(&mar_staging_path)?
                 .set_metadata(Metadata::new_custom_data_recording(
                     start_time,
@@ -422,7 +423,7 @@ pub fn main() -> Result<()> {
                     None,
                 ))
                 .add_copied_attachment(file_path)?
-                .save(&network_config)
+                .save(&network_config, &mar_config)
                 .map(|_entry| ())
         }
         MemfaultctlCommand::WriteMetrics(WriteMetricsArgs { metrics }) => {

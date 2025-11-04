@@ -11,7 +11,7 @@ use crate::util::can_connect::CanConnect;
 pub struct TestConnectionChecker {}
 
 thread_local! {
-    static CONNECTED: RefCell<bool>  = RefCell::new(true);
+    static CONNECTED: RefCell<bool>  = const { RefCell::new(true) };
 }
 
 impl TestConnectionChecker {

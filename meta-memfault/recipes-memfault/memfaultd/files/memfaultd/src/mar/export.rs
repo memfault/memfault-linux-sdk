@@ -259,7 +259,7 @@ mod tests {
 
     #[rstest]
     fn download_zip(mut fixture: Fixture) {
-        fixture.mar_fixture.create_logentry_with_size(512);
+        fixture.mar_fixture.create_logentry_with_size(512, false);
 
         let r = fixture.do_download();
         assert_eq!(r.status_code(), StatusCode(200));
@@ -272,13 +272,13 @@ mod tests {
 
     #[rstest]
     fn download_twice(mut fixture: Fixture) {
-        fixture.mar_fixture.create_logentry_with_size(512);
+        fixture.mar_fixture.create_logentry_with_size(512, false);
 
         let r = fixture.do_download();
         assert_eq!(r.status_code(), StatusCode(200));
 
         // Another GET should yield the same response - even if we have added files in between
-        fixture.mar_fixture.create_logentry_with_size(1024);
+        fixture.mar_fixture.create_logentry_with_size(1024, false);
         let r2 = fixture.do_download();
 
         assert_eq!(r2.status_code(), StatusCode(200));
@@ -288,7 +288,7 @@ mod tests {
 
     #[rstest]
     fn download_reset_on_cleanup(mut fixture: Fixture) {
-        let log1 = fixture.mar_fixture.create_logentry_with_size(512);
+        let log1 = fixture.mar_fixture.create_logentry_with_size(512, false);
 
         let r = fixture.do_download();
         assert_eq!(r.status_code(), StatusCode(200));
@@ -297,7 +297,7 @@ mod tests {
         remove_dir_all(log1).expect("delete failed");
 
         // Another GET should yield a new response (because the old files are not available anymore)
-        fixture.mar_fixture.create_logentry_with_size(1024);
+        fixture.mar_fixture.create_logentry_with_size(1024, false);
         let r2 = fixture.do_download();
 
         assert_eq!(r2.status_code(), StatusCode(200));
@@ -307,7 +307,7 @@ mod tests {
 
     #[rstest]
     fn files_should_be_deleted_with_etag(mut fixture: Fixture) {
-        fixture.mar_fixture.create_logentry_with_size(512);
+        fixture.mar_fixture.create_logentry_with_size(512, false);
 
         let r = fixture.do_download();
         assert_eq!(r.status_code(), StatusCode(200));
@@ -321,7 +321,7 @@ mod tests {
 
     #[rstest]
     fn files_should_be_deleted_without_etag(mut fixture: Fixture) {
-        fixture.mar_fixture.create_logentry_with_size(512);
+        fixture.mar_fixture.create_logentry_with_size(512, false);
 
         let r = fixture.do_download();
         assert_eq!(r.status_code(), StatusCode(200));
@@ -335,7 +335,7 @@ mod tests {
 
     #[rstest]
     fn files_should_not_delete_if_etag_does_not_match(mut fixture: Fixture) {
-        fixture.mar_fixture.create_logentry_with_size(512);
+        fixture.mar_fixture.create_logentry_with_size(512, false);
 
         let r = fixture.do_download();
         assert_eq!(r.status_code(), StatusCode(200));
@@ -349,7 +349,7 @@ mod tests {
 
     #[rstest]
     fn error_404_for_deletes(mut fixture: Fixture) {
-        fixture.mar_fixture.create_logentry_with_size(512);
+        fixture.mar_fixture.create_logentry_with_size(512, false);
 
         // Not calling download before calling delete
 
@@ -391,7 +391,7 @@ mod tests {
         }
 
         fn count_mar_inodes(&self) -> usize {
-            get_size(&self.mar_fixture.mar_staging)
+            get_size(&self.mar_fixture.tmp_mar_staging)
                 .expect("count mar files")
                 .inodes as usize
         }
@@ -402,7 +402,7 @@ mod tests {
         let mar_fixture = MarCollectorFixture::new();
 
         Fixture {
-            handler: MarExportHandler::new(mar_fixture.mar_staging.clone()),
+            handler: MarExportHandler::new(mar_fixture.tmp_mar_staging.clone()),
             mar_fixture,
         }
     }

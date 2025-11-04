@@ -18,8 +18,11 @@ use eyre::{eyre, Context, Result};
 use log::{debug, error, info, warn};
 use uuid::Uuid;
 
-use crate::util::{system::read_system_boot_id, zip_dir::zip_dir};
 use crate::{config::Config, service_manager::ServiceManagerStatus};
+use crate::{
+    mar::MarConfig,
+    util::{system::read_system_boot_id, zip_dir::zip_dir},
+};
 use crate::{mar::MarEntryBuilder, network::NetworkConfig};
 use crate::{mar::Metadata, service_manager::MemfaultdServiceManager};
 
@@ -77,11 +80,12 @@ impl<'a> RebootReasonTracker<'a> {
         if !self.check_boot_id_is_tracked(&boot_id) {
             let reboot_reason = self.resolve_reboot_reason(&boot_id)?;
 
-            let mar_builder = MarEntryBuilder::new(&self.config.mar_staging_path())?
+            let mar_builder = MarEntryBuilder::new(&self.config.mar_tmp_staging_path())?
                 .set_metadata(Metadata::new_reboot(reboot_reason));
 
             let network_config = NetworkConfig::from(self.config);
-            mar_builder.save(&network_config)?;
+            let mar_config = MarConfig::from(self.config);
+            mar_builder.save(&network_config, &mar_config)?;
         }
 
         Ok(())
@@ -246,7 +250,7 @@ fn read_reboot_reason_and_clear_file(file_name: &PathBuf) -> Option<RebootReason
 
 fn capture_pstore_content(pstore_dir: &Path, config: &Config) -> Result<()> {
     let zip_name = "pstore.zip".to_owned();
-    let mar_builder = MarEntryBuilder::new(&config.mar_staging_path())?.set_metadata(
+    let mar_builder = MarEntryBuilder::new(&config.mar_tmp_staging_path())?.set_metadata(
         Metadata::new_custom_data_recording(
             None,
             Duration::from_secs(0),
@@ -266,7 +270,9 @@ fn capture_pstore_content(pstore_dir: &Path, config: &Config) -> Result<()> {
         zip::CompressionMethod::Deflated,
     )?;
 
-    let mar_entry = mar_builder.add_attachment(zip_path)?.save(&config.into())?;
+    let mar_entry = mar_builder
+        .add_attachment(zip_path)?
+        .save(&config.into(), &config.into())?;
     debug!("Saved pstore to {:?}", mar_entry.path);
     Ok(())
 }
@@ -360,7 +366,7 @@ mod test {
             .once()
             .returning(|| Ok(ServiceManagerStatus::Stopping));
 
-        let mar_staging_path = config.mar_staging_path();
+        let mar_staging_path = config.mar_tmp_staging_path();
         std::fs::create_dir_all(&mar_staging_path).expect("Failed to create mar staging dir");
 
         let tracker = RebootReasonTracker::new_with_sources(
@@ -408,7 +414,7 @@ mod test {
             .once()
             .returning(|| Ok(ServiceManagerStatus::Stopping));
 
-        let mar_staging_path = config.mar_staging_path();
+        let mar_staging_path = config.mar_tmp_staging_path();
 
         // Create mar staging dir
         std::fs::create_dir_all(&mar_staging_path).expect("Failed to create mar staging dir");
@@ -466,7 +472,7 @@ mod test {
             .once()
             .returning(|| Ok(ServiceManagerStatus::Stopping));
 
-        let mar_staging_path = config.mar_staging_path();
+        let mar_staging_path = config.mar_tmp_staging_path();
 
         // Create mar staging dir
         std::fs::create_dir_all(&mar_staging_path).expect("Failed to create mar staging dir");

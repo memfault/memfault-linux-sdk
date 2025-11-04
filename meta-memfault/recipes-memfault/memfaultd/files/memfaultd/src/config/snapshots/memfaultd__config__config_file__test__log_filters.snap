@@ -33,7 +33,8 @@ expression: content
       "type": "threads",
       "max_thread_size_kib": 32
     },
-    "log_lines": 100
+    "log_lines": 100,
+    "filters": null
   },
   "fluent-bit": {
     "extra_fluentd_attributes": [],
@@ -149,5 +150,6 @@ expression: content
     "log_compression": "gzip",
     "rate_limit_count": 5,
     "rate_limit_duration_seconds": 3600
-  }
+  },
+  "persist_storage": null
 }

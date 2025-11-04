@@ -14,10 +14,11 @@ use flate2::read::{GzEncoder, ZlibEncoder};
 use log::{error, warn};
 use tiny_http::{Method, Request, Response};
 
+use crate::config::Config;
 use crate::{
     config::{LinuxCustomTraceConfig, LinuxCustomTraceLogCompression},
     http_server::{HttpHandler, HttpHandlerResult, TraceRequest},
-    mar::{MarEntryBuilder, Metadata, NoMetadata},
+    mar::{MarConfig, MarEntryBuilder, Metadata, NoMetadata},
     metrics::CrashInfo,
     network::NetworkConfig,
     util::{
@@ -32,6 +33,7 @@ use {crate::logs::messages::GetQueuedLogsMsg, ssf::MsgMailbox};
 pub struct SaveTraceHandler {
     mar_staging_area: PathBuf,
     network_config: NetworkConfig,
+    mar_config: MarConfig,
     crash_free_interval_channel: Box<Sender<CrashInfo<Instant>>>,
     trace_config: LinuxCustomTraceConfig,
     rate_limiter_path: PathBuf,
@@ -43,15 +45,19 @@ impl SaveTraceHandler {
     #[cfg(feature = "logging")]
     pub fn new(
         mar_staging_area: PathBuf,
-        network_config: NetworkConfig,
+        config: &Config,
         crash_free_interval_channel: Box<Sender<CrashInfo<Instant>>>,
         get_queued_logs_mbox: Option<MsgMailbox<GetQueuedLogsMsg>>,
         trace_config: LinuxCustomTraceConfig,
         rate_limiter_path: PathBuf,
     ) -> Self {
+        let mar_config = MarConfig::from(config);
+        let network_config = NetworkConfig::from(config);
+
         Self {
             mar_staging_area,
             network_config,
+            mar_config,
             crash_free_interval_channel,
             trace_config,
             rate_limiter_path,
@@ -62,13 +68,17 @@ impl SaveTraceHandler {
     #[cfg(not(feature = "logging"))]
     pub fn new(
         mar_staging_area: PathBuf,
-        network_config: NetworkConfig,
+        config: &Config,
         crash_free_interval_channel: Box<Sender<CrashInfo<Instant>>>,
         trace_config: LinuxCustomTraceConfig,
         rate_limiter_path: PathBuf,
     ) -> Self {
+        let mar_config = MarConfig::from(config);
+        let network_config = NetworkConfig::from(config);
+
         Self {
             mar_staging_area,
+            mar_config,
             network_config,
             crash_free_interval_channel,
             trace_config,
@@ -215,7 +225,7 @@ impl SaveTraceHandler {
             Some(self.log_compression_config().into()),
         ));
 
-        match mar_builder.save(&self.network_config) {
+        match mar_builder.save(&self.network_config, &self.mar_config) {
             Ok(_mar_entry) => HttpHandlerResult::Response(Response::empty(200).boxed()),
             Err(e) => HttpHandlerResult::Error(format!("Failed to save MAR entry: {e}")),
         }
@@ -297,7 +307,6 @@ where
 mod tests {
     use super::*;
     use crate::config::{Config, LinuxCustomTraceConfig};
-    use crate::network::NetworkConfig;
     use std::fs::create_dir_all;
     use std::io::Cursor;
     use std::sync::mpsc::channel;
@@ -311,14 +320,13 @@ mod tests {
         let mar_staging_area = temp_dir.path().join("mar");
         create_dir_all(&mar_staging_area).unwrap();
 
-        let network_config = NetworkConfig::from(&config);
         let (sender, _receiver) = channel();
         let rate_limit_file_path = temp_dir.path().join("rate_limit_test");
         File::create(&rate_limit_file_path).unwrap();
 
         let handler = SaveTraceHandler::new(
             mar_staging_area,
-            network_config,
+            &config,
             Box::new(sender),
             #[cfg(feature = "logging")]
             None,
@@ -545,7 +553,7 @@ mod tests {
         let mar_entry_builder = MarEntryBuilder::new(&temp_dir.path().join("mar")).unwrap();
 
         // Create test log buffer content
-        let log_buffer_content = vec![
+        let log_buffer_content = [
             "Log line 1".to_string(),
             "Log line 2".to_string(),
             "Log line 3".to_string(),

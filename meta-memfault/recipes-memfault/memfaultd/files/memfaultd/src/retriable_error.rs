@@ -15,6 +15,7 @@ pub enum RetriableError {
 pub trait IgnoreNonRetriableError<T> {
     /// Ignore non-retriable errors, turning them into `Ok(None)`.
     /// If the Err holds a RetriableError, it will be returned as-is.
+    #[allow(dead_code)]
     fn ignore_non_retriable_errors_with<R: FnMut(&Report)>(self, x: R) -> Result<(), ErrReport>;
 }
 

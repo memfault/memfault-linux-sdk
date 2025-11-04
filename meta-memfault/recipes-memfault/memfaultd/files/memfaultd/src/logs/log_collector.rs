@@ -335,7 +335,6 @@ pub struct LogCollectorConfig {
 
     level_mapping_config: LevelMappingConfig,
 
-    #[cfg_attr(not(feature = "regex"), allow(dead_code))]
     log_filter_config: LogFilterConfig,
 }
 
