@@ -30,6 +30,7 @@ cfg_if! {
             regs.insert(AArch64::SP, sp);
         }
         pub use elf::header::EM_AARCH64 as ELF_TARGET_MACHINE;
+        #[cfg(test)]
         pub use elf::header::ELFCLASS64 as ELF_TARGET_CLASS;
         impl From<&ElfGRegSet> for UnwindFrameContext {
             fn from(regs: &ElfGRegSet) -> Self {
@@ -90,7 +91,9 @@ cfg_if! {
             regs.insert(X86_64::RSP, sp);
         }
         pub use elf::header::EM_X86_64 as ELF_TARGET_MACHINE;
+        #[cfg(test)]
         pub use elf::header::ELFCLASS64 as ELF_TARGET_CLASS;
+
 
         impl From<&ElfGRegSet> for UnwindFrameContext {
             fn from(regs: &ElfGRegSet) -> Self {
@@ -142,6 +145,7 @@ cfg_if! {
             todo!()
         }
         pub use elf::header::EM_ARM as ELF_TARGET_MACHINE;
+        #[cfg(test)]
         pub use elf::header::ELFCLASS32 as ELF_TARGET_CLASS;
 
         impl From<&ElfGRegSet> for UnwindFrameContext {
@@ -178,6 +182,7 @@ cfg_if! {
             regs.arm_sp as usize
         }
         pub use elf::header::EM_ARM as ELF_TARGET_MACHINE;
+        #[cfg(test)]
         pub use elf::header::ELFCLASS32 as ELF_TARGET_CLASS;
         pub fn get_program_counter(regs: &ElfGRegSet) -> usize {
             regs.arm_pc as usize
@@ -214,6 +219,7 @@ cfg_if! {
             todo!()
         }
         pub use elf::header::EM_386 as ELF_TARGET_MACHINE;
+        #[cfg(test)]
         pub use elf::header::ELFCLASS32 as ELF_TARGET_CLASS;
 
         impl From<&ElfGRegSet> for UnwindFrameContext {

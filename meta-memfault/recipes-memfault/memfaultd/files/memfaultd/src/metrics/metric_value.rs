@@ -3,6 +3,7 @@
 // See License.txt for details
 use eyre::Result;
 use serde::{Deserialize, Serialize, Serializer};
+use std::fmt::Display;
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Histogram {
@@ -49,5 +50,27 @@ impl Serialize for MetricValue {
             MetricValue::Histogram(histo) => histo.serialize(serializer),
             MetricValue::Bool(v) => serializer.serialize_bool(*v),
         }
+    }
+}
+
+impl Display for MetricValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let json_value = match self {
+            MetricValue::Number(n) => serde_json::Value::Number(
+                serde_json::Number::from_f64(*n).unwrap_or(serde_json::Number::from(0)),
+            ),
+            MetricValue::String(s) => serde_json::Value::String(s.clone()),
+            MetricValue::Bool(b) => serde_json::Value::Bool(*b),
+            MetricValue::Histogram(h) => {
+                // For histograms, show basic stats
+                serde_json::json!({
+                    "type": "histogram",
+                    "avg": h.mean,
+                    "min": h.min,
+                    "max": h.max
+                })
+            }
+        };
+        write!(f, "{}", json_value)
     }
 }

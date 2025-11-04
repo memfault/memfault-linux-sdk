@@ -6,6 +6,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.0] - 2025-11-04
+
+This release adds some new clippy configs, as well as the ability to filter
+coredumps by path. Additionally, we've added a configuration that allows you to
+specify where individual data types are stored. We've also added a decent chunk
+of bug fixes, see the fixed section for more info.
+
+We're also cooking up something interesting using eBPF to track per process disk
+writes. It's not quite ready for prime time, so it's added here as an
+experimental feature. Keep an eye out for it in a future release!
+
+### Added
+
+- Added some clippy configs to `Cargo.toml` that are now available in Rust
+  1.80.0.
+- Added the ability to filter coredumps by path. This configuration will not
+  collect coredumps for any program that has crashed in the provided directory,
+  or passed as a direct file.
+- Added a configuration that allows you to specify where individual data types
+  are stored. If you specify both a `tmp_dir` and `persist_dir`, this config
+  will allow you to set individual data types (e.g. coredumps/reboots) to be
+  stored in your persistent directory. This can help you strike a balance
+  between keeping data between reboots, and limiting the number of writes to
+  disk.
+
+### Changed
+
+- Updated MSRV of `memfaultd` to 1.80.0
+- `veth` and `usb` network interfaces will now be ignored in metrics `auto`
+  mode. These interfaces are generally ephemeral and can result in a large
+  number of metrics that are hard to read.
+- eMMC lifetime metrics will now default to fetching from `sysfs` for newer
+  kernel versions. For older kernels where this is not available, we will still
+  fall back to using ioctl.
+- Moved the `memfaultd` PID file to `/run/memfauld` instead of the root `/run`
+  dir. This follows more closely with suggested configuration of `systemd`, and
+  allows for configurations that do not want to run as root.
+- Internal message passing for the metrics subsystem saw some improvements in
+  memory usage and allocation.
+
+### Fixed
+
+- Fixed an issue with certain file systems that are not able to rename a file
+  while a descriptor is open.
+- Fixed a bug where the `bytes_written` metric was not properly tracked for
+  systems with multiple disks. This bug resulted in no `bytes_written` metric
+  readings being collected due to overflow protection.
+- Fixed a rare race condition where a coredump could be uploaded before the
+  `gzip` encoder finished writing. This would result in a bad header for the
+  compressed file, and make it impossible to decompress it.
+
+### Experimental
+
+- Added an experimental configuration for some in progress eBPF based work.
+
 ## [1.24.0] - 2025-08-18
 
 This release adds an example recipe for a `systemd` service that depends on
@@ -1476,3 +1531,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.23.0-kirkstone
 [1.24.0]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.24.0-kirkstone
+[1.25.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.25.0-kirkstone

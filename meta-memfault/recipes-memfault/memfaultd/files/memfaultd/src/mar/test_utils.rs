@@ -27,7 +27,8 @@ use crate::util::zip::ZipEncoder;
 use super::manifest::{CollectionTime, Manifest, Metadata};
 
 pub struct MarCollectorFixture {
-    pub mar_staging: PathBuf,
+    pub tmp_mar_staging: PathBuf,
+    pub persist_mar_staging: PathBuf,
     // Keep a reference to the tempdir so it is automatically
     // deleted *after* the fixture
     _tempdir: TempDir,
@@ -37,26 +38,32 @@ pub struct MarCollectorFixture {
 impl MarCollectorFixture {
     pub fn new() -> Self {
         let tempdir = tempdir().unwrap();
-        let mar_staging = tempdir.path().to_owned();
-        create_dir_all(&mar_staging).unwrap();
+        let tmp_mar_staging = tempdir.path().join("tmp");
+        let persist_mar_staging = tempdir.path().join("persist");
+        create_dir_all(&tmp_mar_staging).unwrap();
+        create_dir_all(&persist_mar_staging).unwrap();
         Self {
-            mar_staging,
+            tmp_mar_staging,
+            persist_mar_staging,
             _tempdir: tempdir,
             config: NetworkConfig::test_fixture(),
         }
     }
 
-    pub fn create_empty_entry(&mut self) -> PathBuf {
+    pub fn create_empty_entry(&mut self, persist: bool) -> PathBuf {
         let uuid = Uuid::new_v4();
-        let path = self.mar_staging.join(uuid.to_string());
+        let base = if persist {
+            &self.persist_mar_staging
+        } else {
+            &self.tmp_mar_staging
+        };
+        let path = base.join(uuid.to_string());
         create_dir(&path).unwrap();
         path
     }
 
-    pub fn create_corrupted_manifest_entry(&mut self) -> PathBuf {
-        let uuid = Uuid::new_v4();
-        let path = self.mar_staging.join(uuid.to_string());
-        create_dir(&path).unwrap();
+    pub fn create_corrupted_manifest_entry(&mut self, persist: bool) -> PathBuf {
+        let path = self.create_empty_entry(persist);
         let manifest_path = path.join("manifest.json");
 
         let mut manifest_file = File::create(manifest_path).unwrap();
@@ -70,8 +77,9 @@ impl MarCollectorFixture {
         &mut self,
         attributes: Vec<DeviceAttribute>,
         timestamp: SystemTime,
+        persist: bool,
     ) -> PathBuf {
-        let path = self.create_empty_entry();
+        let path = self.create_empty_entry(persist);
         let manifest_path = path.join("manifest.json");
 
         let manifest_file = File::create(manifest_path).unwrap();
@@ -89,16 +97,17 @@ impl MarCollectorFixture {
         path
     }
 
-    pub fn create_logentry_with_size(&mut self, size: u64) -> PathBuf {
-        self.create_logentry_with_size_and_age(size, SystemTime::now())
+    pub fn create_logentry_with_size(&mut self, size: u64, persist: bool) -> PathBuf {
+        self.create_logentry_with_size_and_age(size, SystemTime::now(), persist)
     }
 
     pub fn create_logentry_with_size_and_age(
         &mut self,
         size: u64,
         timestamp: SystemTime,
+        persist: bool,
     ) -> PathBuf {
-        let path = self.create_empty_entry();
+        let path = self.create_empty_entry(persist);
         let manifest_path = path.join("manifest.json");
 
         let log_name = "system.log".to_owned();
@@ -125,12 +134,12 @@ impl MarCollectorFixture {
         path
     }
 
-    pub fn create_logentry(&mut self) -> PathBuf {
-        self.create_logentry_with_size_and_age(0, SystemTime::now())
+    pub fn create_logentry(&mut self, persist: bool) -> PathBuf {
+        self.create_logentry_with_size_and_age(0, SystemTime::now(), persist)
     }
 
-    pub fn create_logentry_with_unreadable_attachment(&mut self) -> PathBuf {
-        let path = self.create_empty_entry();
+    pub fn create_logentry_with_unreadable_attachment(&mut self, persist: bool) -> PathBuf {
+        let path = self.create_empty_entry(persist);
         let manifest_path = path.join("manifest.json");
 
         let log_name = "system.log".to_owned();
@@ -158,8 +167,8 @@ impl MarCollectorFixture {
         path
     }
 
-    pub fn create_entry_with_bogus_json(&mut self) -> PathBuf {
-        let path = self.create_empty_entry();
+    pub fn create_entry_with_bogus_json(&mut self, persist: bool) -> PathBuf {
+        let path = self.create_empty_entry(persist);
         let manifest_path = path.join("manifest.json");
         File::create(manifest_path)
             .unwrap()
@@ -168,8 +177,8 @@ impl MarCollectorFixture {
         path
     }
 
-    pub fn create_entry_without_directory_read_permission(&mut self) -> PathBuf {
-        let path = self.create_empty_entry();
+    pub fn create_entry_without_directory_read_permission(&mut self, persist: bool) -> PathBuf {
+        let path = self.create_empty_entry(persist);
         let manifest_path = path.join("manifest.json");
         File::create(manifest_path)
             .unwrap()
@@ -182,8 +191,8 @@ impl MarCollectorFixture {
         path
     }
 
-    pub fn create_entry_without_manifest_read_permission(&mut self) -> PathBuf {
-        let path = self.create_empty_entry();
+    pub fn create_entry_without_manifest_read_permission(&mut self, persist: bool) -> PathBuf {
+        let path = self.create_empty_entry(persist);
         let manifest_path = path.join("manifest.json");
         File::create(&manifest_path)
             .unwrap()
@@ -202,8 +211,9 @@ impl MarCollectorFixture {
         duration: Duration,
         boottime_duration: Option<Duration>,
         report_type: MetricReportType,
+        persist: bool,
     ) -> PathBuf {
-        let path = self.create_empty_entry();
+        let path = self.create_empty_entry(persist);
         let manifest_path = path.join("manifest.json");
 
         let manifest_file = File::create(manifest_path).unwrap();
@@ -217,8 +227,8 @@ impl MarCollectorFixture {
         path
     }
 
-    pub fn create_reboot_entry(&mut self, reason: RebootReason) -> PathBuf {
-        let path = self.create_empty_entry();
+    pub fn create_reboot_entry(&mut self, reason: RebootReason, persist: bool) -> PathBuf {
+        let path = self.create_empty_entry(persist);
         let manifest_path = path.join("manifest.json");
 
         let manifest_file = File::create(manifest_path).unwrap();
@@ -232,8 +242,8 @@ impl MarCollectorFixture {
         path
     }
 
-    pub fn create_custom_data_recording_entry(&mut self, data: Vec<u8>) -> PathBuf {
-        let path = self.create_empty_entry();
+    pub fn create_custom_data_recording_entry(&mut self, data: Vec<u8>, persist: bool) -> PathBuf {
+        let path = self.create_empty_entry(persist);
         let manifest_path = path.join("manifest.json");
         let data_path = path.join("data");
 
@@ -258,8 +268,8 @@ impl MarCollectorFixture {
         path
     }
 
-    pub fn create_device_config_entry(&mut self) -> PathBuf {
-        let path = self.create_empty_entry();
+    pub fn create_device_config_entry(&mut self, persist: bool) -> PathBuf {
+        let path = self.create_empty_entry(persist);
         let manifest_path = path.join("manifest.json");
 
         let manifest_file = File::create(manifest_path).unwrap();

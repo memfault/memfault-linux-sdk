@@ -30,7 +30,7 @@ const SECTOR_SIZE: u64 = 512;
 
 pub struct DiskMetricsCollector<M: Mmc> {
     mmc: Vec<M>,
-    prev_bytes_reading: Option<u64>,
+    prev_sector_readings: HashMap<String, u64>,
     last_lifetime_reading: Option<Instant>,
 }
 
@@ -40,11 +40,12 @@ where
 {
     // Only read lifetime once an hour
     const LIFETIME_READING_INTERVAL: Duration = Duration::from_secs(3600);
+    const SECTORS_WRITTEN_DISKSTATS_OFFSET: usize = 6;
 
     pub fn new(mmc: Vec<M>) -> Self {
         Self {
             mmc,
-            prev_bytes_reading: None,
+            prev_sector_readings: HashMap::new(),
             last_lifetime_reading: None,
         }
     }
@@ -105,7 +106,7 @@ where
     fn get_disk_metrics(
         mmc: &M,
         disk_stats: Option<&Vec<u64>>,
-        prev_bytes_reading: &mut Option<u64>,
+        prev_sector_readings: &mut HashMap<String, u64>,
         last_lifetime_reading: &mut Option<Instant>,
     ) -> Result<Vec<KeyedMetricReading>> {
         let disk_name = mmc.disk_name();
@@ -132,12 +133,15 @@ where
             }
         }
 
-        let bytes_written = disk_stats
-            .and_then(|disk_stats| disk_stats.get(6))
-            .map(|sectors_written| *sectors_written * SECTOR_SIZE);
+        let sectors_written = disk_stats
+            .and_then(|disk_stats| disk_stats.get(Self::SECTORS_WRITTEN_DISKSTATS_OFFSET));
 
-        if let Some(bytes_written) = bytes_written {
-            match Self::calc_bytes_written_reading(bytes_written, prev_bytes_reading, disk_name) {
+        if let Some(sectors_written) = sectors_written {
+            match Self::calc_bytes_written_reading(
+                *sectors_written,
+                prev_sector_readings,
+                disk_name,
+            ) {
                 Ok(Some(reading)) => metrics.push(reading),
                 Ok(None) => {}
                 Err(e) => debug!("Failed to calculate bytes_written: {}", e),
@@ -246,19 +250,24 @@ where
     }
 
     fn calc_bytes_written_reading(
-        cur_bytes_written: u64,
-        prev_bytes_written: &mut Option<u64>,
+        cur_sectors_written: u64,
+        prev_sector_readings: &mut HashMap<String, u64>,
         disk_name: &str,
     ) -> Result<Option<KeyedMetricReading>> {
-        if let Some(prev_bytes_written) = prev_bytes_written.replace(cur_bytes_written) {
-            match cur_bytes_written.checked_sub(prev_bytes_written) {
-                Some(_) => {
+        if let Some(prev_sectors_written) =
+            prev_sector_readings.insert(disk_name.to_string(), cur_sectors_written)
+        {
+            match cur_sectors_written
+                .checked_sub(prev_sectors_written)
+                .and_then(|sectors| sectors.checked_mul(SECTOR_SIZE))
+            {
+                Some(bytes_since_last_reading) => {
                     let bytes_metric_key = MetricStringKey::from_str(&format!(
                         "{}/{}/bytes_written",
                         DISK_METRIC_NAMESPACE, disk_name
                     ))
                     .map_err(|e| eyre!("Invalid metric key: {}", e))?;
-                    let bytes_since_last_reading = cur_bytes_written - prev_bytes_written;
+
                     let bytes_metric = KeyedMetricReading::new_counter(
                         bytes_metric_key,
                         bytes_since_last_reading as f64,
@@ -266,7 +275,10 @@ where
                     Ok(Some(bytes_metric))
                 }
                 None => {
-                    warn!("bytes_written metric overflow, discarding reading");
+                    warn!(
+                        "bytes_written metric overflow for disk {}, discarding reading",
+                        disk_name
+                    );
                     Ok(None)
                 }
             }
@@ -304,7 +316,7 @@ where
                 match Self::get_disk_metrics(
                     m,
                     disk_stats_line,
-                    &mut self.prev_bytes_reading,
+                    &mut self.prev_sector_readings,
                     &mut self.last_lifetime_reading,
                 ) {
                     Ok(metrics) => Some(metrics),
@@ -358,7 +370,7 @@ mod test {
 
     use super::*;
 
-    use crate::mmc::{Mmc, MmcLifeTime, MmcType};
+    use crate::mmc::{Mmc, MmcLifeTime};
 
     #[derive(Clone)]
     struct FakeMmc {
@@ -383,10 +395,6 @@ mod test {
 
         fn read_lifetime(&self) -> Result<Option<MmcLifeTime>> {
             Ok(Some(self.lifetime.clone()))
-        }
-
-        fn disk_type(&self) -> MmcType {
-            MmcType::Mmc
         }
 
         fn manufacturer_id(&self) -> Result<String> {
@@ -429,14 +437,14 @@ mod test {
 
         // Create disk stats (sectors written = 1000)
         let disk_stats = vec![0, 0, 0, 0, 0, 0, 1000, 0, 0, 0, 0];
-        let mut prev_bytes_reading = None;
+        let mut prev_sector_readings = HashMap::new();
 
         let hour_ago = Instant::now() - DiskMetricsCollector::<FakeMmc>::LIFETIME_READING_INTERVAL;
         // First call should return MLC and SLC metrics but no bytes written (no previous reading)
         let metrics = DiskMetricsCollector::get_disk_metrics(
             &fake_mmc,
             Some(&disk_stats),
-            &mut prev_bytes_reading,
+            &mut prev_sector_readings,
             &mut Some(hour_ago),
         )
         .unwrap();
@@ -450,7 +458,7 @@ mod test {
         let metrics = DiskMetricsCollector::get_disk_metrics(
             &fake_mmc,
             Some(&updated_disk_stats),
-            &mut prev_bytes_reading,
+            &mut prev_sector_readings,
             &mut Some(hour_ago),
         )
         .unwrap();
@@ -481,18 +489,19 @@ mod test {
 
         // Create disk stats (sectors written = 1000)
         let disk_stats = vec![0, 0, 0, 0, 0, 0, 1000, 0, 0, 0, 0];
-        let mut prev_bytes_reading = None;
+        let mut prev_sector_readings = HashMap::new();
         let hour_ago = Instant::now() - DiskMetricsCollector::<FakeMmc>::LIFETIME_READING_INTERVAL;
 
         // First call should return MLC and SLC metrics but no bytes written (no previous reading)
         let metrics = DiskMetricsCollector::get_disk_metrics(
             &fake_mmc,
             Some(&disk_stats),
-            &mut prev_bytes_reading,
+            &mut prev_sector_readings,
             &mut Some(hour_ago),
         )
         .unwrap();
 
+        assert_eq!(prev_sector_readings.get("mmcblk0"), Some(&1000));
         assert_eq!(metrics.len(), 6);
 
         // Create updated disk stats (sectors written = 2000)
@@ -502,11 +511,12 @@ mod test {
         let metrics = DiskMetricsCollector::get_disk_metrics(
             &fake_mmc,
             Some(&updated_disk_stats),
-            &mut prev_bytes_reading,
+            &mut prev_sector_readings,
             &mut Some(hour_ago),
         )
         .unwrap();
 
+        assert_eq!(prev_sector_readings.get("mmcblk0"), Some(&2000));
         assert_eq!(metrics.len(), 7);
         assert_json_snapshot!(metrics, {
             "[].value.**.timestamp" => "[timestamp]",
@@ -533,14 +543,14 @@ mod test {
 
         // Create disk stats (sectors written = 1000)
         let disk_stats = vec![0, 0, 0, 0, 0, 0, 1000, 0, 0, 0, 0];
-        let mut prev_bytes_reading = None;
+        let mut prev_sector_readings = HashMap::new();
         let hour_ago = Instant::now() - DiskMetricsCollector::<FakeMmc>::LIFETIME_READING_INTERVAL;
 
         // First call should return MLC and SLC metrics but no bytes written (no previous reading)
         let metrics = DiskMetricsCollector::get_disk_metrics(
             &fake_mmc,
             Some(&disk_stats),
-            &mut prev_bytes_reading,
+            &mut prev_sector_readings,
             &mut Some(hour_ago),
         )
         .unwrap();
@@ -568,14 +578,14 @@ mod test {
             serial: "0x1234567890".to_string(),
         };
 
-        let mut prev_bytes_reading = None;
+        let mut prev_sector_readings = HashMap::new();
         let mut last_lifetime_reading = None;
 
         // First reading should set the last reading time
         let metrics = DiskMetricsCollector::get_disk_metrics(
             &fake_mmc,
             None,
-            &mut prev_bytes_reading,
+            &mut prev_sector_readings,
             &mut last_lifetime_reading,
         )
         .unwrap();
@@ -600,14 +610,14 @@ mod test {
             serial: "0x1234567890".to_string(),
         };
 
-        let mut prev_bytes_reading = None;
+        let mut prev_sector_readings = HashMap::new();
         let mut last_lifetime_reading =
             Some(Instant::now() - DiskMetricsCollector::<FakeMmc>::LIFETIME_READING_INTERVAL);
 
         let metrics = DiskMetricsCollector::get_disk_metrics(
             &fake_mmc,
             None,
-            &mut prev_bytes_reading,
+            &mut prev_sector_readings,
             &mut last_lifetime_reading,
         )
         .unwrap();
@@ -615,13 +625,13 @@ mod test {
         // Should read lifetime metrics again since the interval has passed
         assert_eq!(metrics.len(), 8);
 
-        let mut prev_bytes_reading = None;
+        let mut prev_sector_readings = HashMap::new();
         let mut last_lifetime_reading = Some(Instant::now());
 
         let metrics = DiskMetricsCollector::get_disk_metrics(
             &fake_mmc,
             None,
-            &mut prev_bytes_reading,
+            &mut prev_sector_readings,
             &mut last_lifetime_reading,
         )
         .unwrap();
@@ -630,19 +640,41 @@ mod test {
         assert_eq!(metrics.len(), 6);
     }
 
-    #[test]
-    fn test_calc_bytes_reading_overflow() {
-        let mut prev_bytes_reading = Some(1000);
-        let cur_bytes_written = 500;
-
+    #[rstest]
+    #[case(Some(1000), 500, None)]
+    #[case(Some(200), 500, Some(300 * SECTOR_SIZE))]
+    #[case(Some(1000), 1000, Some(0))]
+    #[case(None, 500, None)]
+    #[case(Some(0), u64::MAX, None)]
+    fn test_calc_bytes_reading_overflow(
+        #[case] prev_sectors: Option<u64>,
+        #[case] cur_bytes_written: u64,
+        #[case] diff: Option<u64>,
+    ) {
+        let mut prev_sector_readings = HashMap::new();
+        if let Some(prev) = prev_sectors {
+            prev_sector_readings.insert("mmcblk0".to_string(), prev);
+        }
         let result = DiskMetricsCollector::<FakeMmc>::calc_bytes_written_reading(
             cur_bytes_written,
-            &mut prev_bytes_reading,
+            &mut prev_sector_readings,
             "mmcblk0",
         )
         .unwrap();
 
-        assert!(result.is_none());
+        match diff {
+            Some(diff) => {
+                assert!(result.is_some());
+                let reading = result.unwrap();
+                let value = match reading.value {
+                    crate::metrics::MetricReading::Counter { value, .. } => value as u64,
+                    _ => panic!("Expected counter reading"),
+                };
+
+                assert_eq!(value, diff);
+            }
+            None => assert!(result.is_none()),
+        }
     }
 
     #[rstest]

@@ -33,7 +33,6 @@ pub trait Mmc {
     fn manufacture_date(&self) -> Result<String>;
     fn revision(&self) -> Result<String>;
     fn serial(&self) -> Result<String>;
-    fn disk_type(&self) -> MmcType;
 }
 
 pub struct MmcImpl {
@@ -42,7 +41,7 @@ pub struct MmcImpl {
     mmc_type: MmcType,
     sysfs_path: PathBuf,
     sysfs_device_path: PathBuf,
-    lifetime_available: bool,
+    lifetime_source: Option<LifetimeSource>,
 }
 
 impl MmcImpl {
@@ -67,11 +66,7 @@ impl MmcImpl {
             .map_err(|e| eyre!("Failed to read MMC type string: {}", e))
             .and_then(|type_string| MmcType::from_str(type_string.trim()))?;
 
-        let jedec_rev = read_extcsd(&device_path)
-            .ok()
-            .map(|ext_csd| get_jedec_revision(&ext_csd));
-
-        let lifetime_available = Self::is_lifetime_available(jedec_rev);
+        let lifetime_source = Self::is_lifetime_available(&sysfs_device_path);
 
         Ok(Self {
             device_path,
@@ -79,11 +74,52 @@ impl MmcImpl {
             mmc_type,
             sysfs_path,
             sysfs_device_path,
-            lifetime_available,
+            lifetime_source,
         })
     }
 
-    fn is_lifetime_available(jedec_rev: Option<u8>) -> bool {
+    /// Check if it's possible to get the lifetime for a given disk.
+    ///
+    /// This function tests two possible sources. For kernels above 4.19 we can look
+    /// in sysfs. For anything else we can use the ioctl method to read the extcsd
+    /// register.
+    ///
+    /// For the sysfs method, if we cannot find the file, we can assume that the
+    /// JEDEC rev of the disk is too old to report lifetimes.
+    fn is_lifetime_available(sysfs_device_path: &Path) -> Option<LifetimeSource> {
+        if Self::kernel_supports_sysfs_lifetime() {
+            Self::is_lifetime_available_sysfs(sysfs_device_path).then_some(LifetimeSource::Sysfs)
+        } else {
+            let jedec_rev = read_extcsd(sysfs_device_path)
+                .ok()
+                .map(|ext_csd| get_jedec_revision(&ext_csd));
+
+            Self::is_lifetime_available_jedec(jedec_rev).then_some(LifetimeSource::ExtCsd)
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn kernel_supports_sysfs_lifetime() -> bool {
+        use procfs::KernelVersion;
+
+        let sysfs_lifetime_kernel_version = KernelVersion::new(4, 19, 0);
+        let current_kernel_version = KernelVersion::current().ok();
+
+        current_kernel_version.is_some_and(|current| current >= sysfs_lifetime_kernel_version)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn kernel_supports_sysfs_lifetime() -> bool {
+        false
+    }
+
+    fn is_lifetime_available_sysfs(sysfs_device_path: &Path) -> bool {
+        let lifetime_path = sysfs_device_path.join("life_time");
+
+        lifetime_path.exists()
+    }
+
+    fn is_lifetime_available_jedec(jedec_rev: Option<u8>) -> bool {
         match jedec_rev {
             Some(rev) => {
                 // JEDEC revision 7 (5.0) is the minimum required for lifetime info
@@ -104,13 +140,25 @@ impl MmcImpl {
 
 impl Mmc for MmcImpl {
     fn read_lifetime(&self) -> Result<Option<MmcLifeTime>> {
-        if self.mmc_type != MmcType::Mmc || !self.lifetime_available {
+        if self.mmc_type != MmcType::Mmc {
             return Ok(None);
         }
 
-        let bytes = read_extcsd(&self.device_path)?;
+        match self.lifetime_source {
+            Some(LifetimeSource::ExtCsd) => {
+                let bytes = read_extcsd(&self.device_path)?;
 
-        MmcLifeTime::try_from(bytes).map(Some)
+                MmcLifeTime::try_from(bytes).map(Some)
+            }
+            Some(LifetimeSource::Sysfs) => {
+                let lifetime_path = self.sysfs_device_path.join("life_time");
+                let lifetime_string = read_to_string(lifetime_path)?;
+                let lifetime = MmcLifeTime::try_from(lifetime_string)?;
+
+                Ok(Some(lifetime))
+            }
+            None => Ok(None),
+        }
     }
 
     fn product_name(&self) -> Result<String> {
@@ -125,10 +173,6 @@ impl Mmc for MmcImpl {
 
     fn disk_name(&self) -> &str {
         &self.disk_name
-    }
-
-    fn disk_type(&self) -> MmcType {
-        self.mmc_type
     }
 
     fn disk_sector_count(&self) -> Result<u64> {
@@ -160,7 +204,12 @@ impl Mmc for MmcImpl {
     }
 }
 
-#[derive(Debug, Clone)]
+enum LifetimeSource {
+    Sysfs,
+    ExtCsd,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MmcLifeTime {
     pub lifetime_a_pct: Option<u8>,
     pub lifetime_b_pct: Option<u8>,
@@ -169,6 +218,13 @@ pub struct MmcLifeTime {
 impl MmcLifeTime {
     const LIFETIME_A_OFFSET: usize = 268;
     const LIFETIME_B_OFFSET: usize = 269;
+
+    pub const fn new(lifetime_a_pct: Option<u8>, lifetime_b_pct: Option<u8>) -> Self {
+        Self {
+            lifetime_a_pct,
+            lifetime_b_pct,
+        }
+    }
 }
 
 impl TryFrom<[u8; EXT_CSD_SIZE]> for MmcLifeTime {
@@ -181,10 +237,27 @@ impl TryFrom<[u8; EXT_CSD_SIZE]> for MmcLifeTime {
         let lifetime_a_pct = raw_lifetime_to_pct(raw_lifetime_a);
         let lifetime_b_pct = raw_lifetime_to_pct(raw_lifetime_b);
 
-        Ok(Self {
-            lifetime_a_pct,
-            lifetime_b_pct,
-        })
+        Ok(Self::new(lifetime_a_pct, lifetime_b_pct))
+    }
+}
+
+impl TryFrom<String> for MmcLifeTime {
+    type Error = Report;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let tokens = value.split_whitespace().collect::<Vec<_>>();
+
+        if tokens.len() != 2 {
+            return Err(eyre!("Invalid number of lifetime values"));
+        }
+
+        let raw_lifetime_a = u8::from_str_radix(tokens[0], 16)?;
+        let raw_lifetime_b = u8::from_str_radix(tokens[1], 16)?;
+
+        let lifetime_a_pct = raw_lifetime_to_pct(raw_lifetime_a);
+        let lifetime_b_pct = raw_lifetime_to_pct(raw_lifetime_b);
+
+        Ok(Self::new(lifetime_a_pct, lifetime_b_pct))
     }
 }
 
@@ -287,6 +360,9 @@ fn get_jedec_revision(ext_csd: &[u8; EXT_CSD_SIZE]) -> u8 {
 mod test {
 
     use rstest::rstest;
+    use tempfile::TempDir;
+
+    use crate::test_utils::create_file_with_contents;
 
     use super::*;
 
@@ -320,6 +396,33 @@ mod test {
         assert_eq!(lifetime.lifetime_b_pct, Some(0));
     }
 
+    #[rstest]
+    #[case(String::from("4 5"), Ok(MmcLifeTime::new(Some(30), Some(40))))]
+    #[case(String::from("4 0"), Ok(MmcLifeTime::new(Some(30), None)))]
+    #[case(String::from("0 4"), Ok(MmcLifeTime::new(None, Some(30))))]
+    #[case(String::from("4"), Err(eyre!("")))]
+    #[case(String::from("4 4 4"), Err(eyre!("")))]
+    #[case(String::from("4  5"), Ok(MmcLifeTime::new(Some(30), Some(40))))]
+    #[case(String::from("4\t5"), Ok(MmcLifeTime::new(Some(30), Some(40))))]
+    #[case(String::from("4 5\n"), Ok(MmcLifeTime::new(Some(30), Some(40))))]
+    #[case(String::from("\t4 5"), Ok(MmcLifeTime::new(Some(30), Some(40))))]
+    #[case(String::from("4 5"), Ok(MmcLifeTime::new(Some(30), Some(40))))]
+    fn test_lifetime_from_sysfs_string(
+        #[case] input_string: String,
+        #[case] expected: Result<MmcLifeTime>,
+    ) {
+        let actual = MmcLifeTime::try_from(input_string);
+
+        match (&actual, &expected) {
+            (Ok(actual), Ok(expected)) => assert_eq!(actual, expected),
+            (Ok(actual), Err(_)) => {
+                panic!("Expected error, but conversion succeeded: {:?}", actual)
+            }
+            (Err(_), Ok(_)) => panic!("Expected success, but conversion failed"),
+            (Err(_), Err(_)) => {}
+        }
+    }
+
     #[test]
     fn test_read_jedec_revision() {
         let jedec_rev = get_jedec_revision(&EXT_CSD_TEST_BUFFER);
@@ -335,7 +438,7 @@ mod test {
             mmc_type: MmcType::Sd,
             sysfs_path: PathBuf::new(),
             sysfs_device_path: PathBuf::new(),
-            lifetime_available: true,
+            lifetime_source: Some(LifetimeSource::ExtCsd),
         };
 
         let lifetime = mmc.read_lifetime().unwrap();
@@ -347,10 +450,22 @@ mod test {
     #[case(None, false)]
     #[case(Some(7), true)]
     #[case(Some(8), true)]
-    fn test_lifetime_available(#[case] jedec_rev: Option<u8>, #[case] expected: bool) {
-        let lifetime_available = MmcImpl::is_lifetime_available(jedec_rev);
+    fn test_lifetime_available_jedec(#[case] jedec_rev: Option<u8>, #[case] expected: bool) {
+        let lifetime_available = MmcImpl::is_lifetime_available_jedec(jedec_rev);
 
         assert_eq!(lifetime_available, expected);
+    }
+
+    #[rstest]
+    #[case(true)]
+    #[case(false)]
+    fn test_lifetime_available_sysfs(#[case] create_lifetime: bool) {
+        let content = create_lifetime.then_some("");
+        let tmp_dir = create_lifetime_dir(content);
+
+        let actual = MmcImpl::is_lifetime_available_sysfs(tmp_dir.path());
+
+        assert_eq!(actual, create_lifetime);
     }
 
     #[rstest]
@@ -362,5 +477,16 @@ mod test {
         let lifetime_pct = raw_lifetime_to_pct(raw_lifetime);
 
         assert_eq!(lifetime_pct, expected_pct);
+    }
+
+    fn create_lifetime_dir(contents: Option<&str>) -> TempDir {
+        let tmp_dir = TempDir::new().unwrap();
+        let tmp_path = tmp_dir.path();
+        let lifetime_path = tmp_path.join("life_time");
+        if let Some(contents) = contents {
+            create_file_with_contents(&lifetime_path, contents.as_bytes()).unwrap();
+        }
+
+        tmp_dir
     }
 }

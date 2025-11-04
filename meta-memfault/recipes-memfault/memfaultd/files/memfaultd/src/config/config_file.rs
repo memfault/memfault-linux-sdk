@@ -2,6 +2,7 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 use eyre::{eyre, Context};
+use log::warn;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::time::Duration;
@@ -11,10 +12,10 @@ use std::{
 };
 use std::{net::SocketAddr, path::PathBuf};
 
-use crate::mar::CompressionAlgorithm;
 use crate::metrics::{system_metrics::SystemMetricConfig, MetricStringKey, SessionName};
 use crate::util::*;
 use crate::util::{path::AbsolutePath, serialization::*};
+use crate::{mar::CompressionAlgorithm, util::disk_size::DiskSize};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct MemfaultdConfig {
@@ -48,6 +49,7 @@ pub struct MemfaultdConfig {
     pub sessions: Option<Vec<SessionConfig>>,
     pub metrics: MetricReportConfig,
     pub custom_trace: Option<LinuxCustomTraceConfig>,
+    pub persist_storage: Option<PersistStorageConfig>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -96,6 +98,15 @@ pub struct LinuxCustomTraceConfig {
     pub rate_limit_duration: Duration,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(tag = "type")]
+pub enum TraceFilter {
+    #[serde(rename = "executable_name")]
+    ExecutableName { name: String },
+    #[serde(rename = "executable_path")]
+    ExecutablePath { path: String },
+}
+
 impl Default for LinuxCustomTraceConfig {
     fn default() -> Self {
         Self {
@@ -126,7 +137,7 @@ impl From<LinuxCustomTraceLogCompression> for CompressionAlgorithm {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CoredumpConfig {
     pub compression: CoredumpCompression,
     #[serde(rename = "coredump_max_size_kib", with = "kib_to_usize")]
@@ -136,6 +147,7 @@ pub struct CoredumpConfig {
     pub rate_limit_duration: Duration,
     pub capture_strategy: CoredumpCaptureStrategy,
     pub log_lines: usize,
+    pub filters: Option<Vec<TraceFilter>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -345,12 +357,40 @@ pub struct LevelMappingRegex {
     pub debug: Option<String>,
 }
 
+#[derive(Clone, Copy, Serialize, Deserialize, Debug)]
+pub struct PersistStorageConfig {
+    #[serde(rename = "min_headroom_kib", with = "kib_to_usize")]
+    pub min_headroom: usize,
+    #[serde(rename = "max_usage_kib", with = "kib_to_usize")]
+    pub max_usage: usize,
+    pub min_inodes: usize,
+    pub reboots: bool,
+    pub coredumps: bool,
+    pub metrics: bool,
+    pub logs: bool,
+}
+
+impl PersistStorageConfig {
+    pub fn max_total_size(&self) -> DiskSize {
+        DiskSize::new_capacity(self.max_usage as u64)
+    }
+
+    pub fn min_headroom(&self) -> DiskSize {
+        DiskSize {
+            bytes: self.min_headroom as u64,
+            inodes: self.min_inodes as u64,
+        }
+    }
+}
+
 use flate2::Compression;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
 
-use crate::config::utils::{software_type_is_valid, software_version_is_valid};
+use crate::config::utils::{
+    filter_path_is_valid, software_type_is_valid, software_version_is_valid,
+};
 
 pub struct JsonConfigs {
     /// Built-in configuration and System configuration
@@ -380,6 +420,15 @@ impl MemfaultdConfig {
             if let Err(e) = software_type_is_valid(software_type) {
                 validation_errors.push(format!("  Invalid value for \"software_type\": {}", e));
             }
+        }
+        if let Some(filters) = &config.coredump.filters {
+            filters.iter().for_each(|filter| {
+                if let TraceFilter::ExecutablePath { path } = filter {
+                    if let Err(e) = filter_path_is_valid(path) {
+                        warn!("Invalid coredump filter path: {}", e);
+                    }
+                }
+            });
         }
 
         match validation_errors.is_empty() {
@@ -594,6 +643,7 @@ mod test {
     #[case("with_linux_custom_trace_gzip")]
     #[case("with_linux_custom_trace_zlib")]
     #[case("with_linux_custom_trace_none")]
+    #[case("with_persist_storage_config")]
     fn can_parse_test_files(#[case] name: &str) {
         let input_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("src/config/test-config")

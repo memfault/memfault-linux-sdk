@@ -8,7 +8,7 @@
 //! disk format.
 
 use std::io::Write;
-use std::{fs::File, io::BufWriter, path::Path, time::Duration};
+use std::{fs::File, io::BufWriter, time::Duration};
 
 use chrono::Utc;
 use eyre::{Error, Result};
@@ -19,7 +19,7 @@ use serde_json::to_writer;
 use super::report::HrtReport;
 use crate::{
     build_info::VERSION,
-    mar::{CompressionAlgorithm, MarEntry, MarEntryBuilder, Metadata},
+    mar::{CompressionAlgorithm, MarConfig, MarEntry, MarEntryBuilder, Metadata},
     metrics::{KeyedMetricReading, MetricReading},
     network::NetworkConfig,
     util::{fs::DEFAULT_GZIP_COMPRESSION_LEVEL, serialization::milliseconds_to_duration},
@@ -178,12 +178,13 @@ pub enum DataType {
 /// This function serializes the given HRT report to JSON and saves it in a CDR MAR entry.
 pub fn write_report_to_disk(
     report: HrtReport,
-    mar_path: &Path,
     network_config: &NetworkConfig,
+    mar_config: &MarConfig,
 ) -> Result<MarEntry> {
     let start_time = report.start_time;
     let hrt = HighResTelemetryV1::try_from(report)?;
 
+    let mar_path = &mar_config.tmp_staging_path();
     let mar_builder =
         MarEntryBuilder::new(mar_path)?.set_metadata(Metadata::new_custom_data_recording(
             Some(start_time),
@@ -200,7 +201,7 @@ pub fn write_report_to_disk(
     to_writer(&mut gz_encoder, &hrt)?;
     gz_encoder.flush()?;
 
-    mar_builder.save(network_config)
+    mar_builder.save(network_config, mar_config)
 }
 
 #[cfg(test)]
@@ -279,7 +280,10 @@ mod test {
         let tmp_dir = tempfile::tempdir().unwrap();
         let mar_path = tmp_dir.path();
 
-        let entry = write_report_to_disk(report, mar_path, &NetworkConfig::test_fixture()).unwrap();
+        let mar_config = MarConfig::test_fixture(mar_path, mar_path);
+
+        let entry =
+            write_report_to_disk(report, &NetworkConfig::test_fixture(), &mar_config).unwrap();
 
         let hrt_filename = match entry.manifest.metadata {
             Metadata::CustomDataRecording {

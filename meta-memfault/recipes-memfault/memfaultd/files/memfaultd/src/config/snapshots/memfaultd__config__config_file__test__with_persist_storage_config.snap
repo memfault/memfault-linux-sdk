@@ -1,6 +1,7 @@
 ---
 source: memfaultd/src/config/config_file.rs
 expression: content
+snapshot_kind: text
 ---
 {
   "persist_dir": "/media/memfault",
@@ -25,7 +26,7 @@ expression: content
     "capture_pstore": false
   },
   "coredump": {
-    "compression": "none",
+    "compression": "gzip",
     "coredump_max_size_kib": 96000,
     "rate_limit_count": 5,
     "rate_limit_duration_seconds": 3600,
@@ -97,5 +98,13 @@ expression: content
     "rate_limit_count": 5,
     "rate_limit_duration_seconds": 3600
   },
-  "persist_storage": null
+  "persist_storage": {
+    "min_headroom_kib": 1024,
+    "max_usage_kib": 1024,
+    "min_inodes": 1024,
+    "reboots": true,
+    "coredumps": true,
+    "metrics": true,
+    "logs": true
+  }
 }

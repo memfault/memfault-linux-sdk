@@ -3,8 +3,8 @@
 // See License.txt for details
 use std::{
     io::Read,
-    path::PathBuf,
     str::{from_utf8, FromStr},
+    sync::Arc,
 };
 
 use eyre::{eyre, Result};
@@ -13,7 +13,9 @@ use ssf::MsgMailbox;
 use tiny_http::{Method, Request, Response};
 
 use crate::{
+    config::Config,
     http_server::{HttpHandler, HttpHandlerResult, SessionRequest},
+    mar::MarConfig,
     metrics::SessionName,
     network::NetworkConfig,
 };
@@ -25,22 +27,24 @@ use super::SessionEventMessage;
 pub struct SessionEventHandler {
     data_collection_enabled: bool,
     session_events_mbox: MsgMailbox<SessionEventMessage>,
-    mar_staging_path: PathBuf,
-    network_config: NetworkConfig,
+    network_config: Arc<NetworkConfig>,
+    mar_config: Arc<MarConfig>,
 }
 
 impl SessionEventHandler {
     pub fn new(
         data_collection_enabled: bool,
         session_events_mbox: MsgMailbox<SessionEventMessage>,
-        mar_staging_path: PathBuf,
-        network_config: NetworkConfig,
+        config: &Config,
     ) -> Self {
+        let network_config = Arc::new(NetworkConfig::from(config));
+        let mar_config = Arc::new(MarConfig::from(config));
+
         Self {
             data_collection_enabled,
             session_events_mbox,
-            mar_staging_path,
             network_config,
+            mar_config,
         }
     }
 
@@ -82,7 +86,7 @@ impl SessionEventHandler {
                 name,
                 readings,
                 network_config: self.network_config.clone(),
-                mar_staging_area: self.mar_staging_path.clone(),
+                mar_config: self.mar_config.clone(),
             })?
     }
 }
@@ -134,8 +138,9 @@ impl HttpHandler for SessionEventHandler {
 mod tests {
     use std::{
         collections::{BTreeMap, HashSet},
+        fs::create_dir_all,
         num::NonZeroU32,
-        path::Path,
+        path::{Path, PathBuf},
         str::FromStr,
     };
 
@@ -146,7 +151,7 @@ mod tests {
     use tiny_http::{Method, TestRequest};
 
     use crate::{
-        config::SessionConfig,
+        config::{SessionConfig, MAR_STAGING_SUBDIRECTORY},
         http_server::{HttpHandler, HttpHandlerResult},
         mar::manifest::{Manifest, Metadata},
         metrics::{
@@ -154,6 +159,7 @@ mod tests {
             MetricStringKey, MetricValue, SessionName,
         },
         test_utils::in_histograms,
+        util::path::AbsolutePath,
     };
 
     use super::*;
@@ -225,7 +231,7 @@ mod tests {
         ));
         fixture.process_all();
 
-        verify_dumped_metric_report(fixture.tempdir.path(), "end_with_metrics")
+        verify_dumped_metric_report(&fixture.mar_staging_path(), "end_with_metrics")
     }
 
     #[rstest]
@@ -295,7 +301,7 @@ mod tests {
         ));
         fixture.process_all();
 
-        verify_dumped_metric_report(fixture.tempdir.path(), "start_then_stop");
+        verify_dumped_metric_report(&fixture.mar_staging_path(), "start_then_stop");
 
         // Should error as session should have been removed from MetricReportManager
         // after it was ended
@@ -352,6 +358,10 @@ mod tests {
                 .send_and_wait_for_reply(PingMessage {})
                 .expect("unable to ping thread")
         }
+
+        fn mar_staging_path(&self) -> PathBuf {
+            self.tempdir.path().join(MAR_STAGING_SUBDIRECTORY)
+        }
     }
 
     /// Creates a SessionEventHandler whose metric store is configured with
@@ -375,12 +385,10 @@ mod tests {
         ));
 
         let tempdir = TempDir::new().unwrap();
-        let handler = SessionEventHandler::new(
-            true,
-            jig.mbox().into(),
-            tempdir.path().to_owned(),
-            NetworkConfig::test_fixture(),
-        );
+        let mut config = Config::test_fixture();
+        create_dir_all(tempdir.path().join(MAR_STAGING_SUBDIRECTORY)).unwrap();
+        config.config_file.persist_dir = AbsolutePath::try_from(tempdir.path().to_owned()).unwrap();
+        let handler = SessionEventHandler::new(true, jig.mbox().into(), &config);
         Fixture {
             handler,
             jig,

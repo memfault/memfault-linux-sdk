@@ -251,6 +251,35 @@ impl MetricReport {
         }
     }
 
+    /// Log the metrics snapshot in a structured way for debugging.
+    fn log_metrics_snapshot(&self, snapshot: &MetricReportSnapshot) {
+        log::trace!(
+            "🔍 MEMFAULTD_DEBUG: Serializing {} metrics for report type '{}':",
+            snapshot.metrics.len(),
+            self.report_type.as_str()
+        );
+
+        // Convert metrics to JSON-serializable format, sorted lexicographically
+        let json_metrics: std::collections::BTreeMap<String, String> = snapshot
+            .metrics
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect();
+
+        if let Ok(json_str) = serde_json::to_string_pretty(&json_metrics) {
+            log::trace!("{}", json_str);
+        } else {
+            log::trace!("❌ Failed to serialize metrics to JSON");
+        }
+        log::trace!("📊 Duration: {:.2}s", snapshot.duration.as_secs_f64());
+        if let Some(boottime_duration) = snapshot.boottime_duration {
+            log::trace!(
+                "⏱️  Boottime duration: {:.2}s",
+                boottime_duration.as_secs_f64()
+            );
+        }
+    }
+
     /// Create one metric report MAR entry with all the metrics in the store.
     ///
     /// All data will be timestamped with current time measured by CollectionTime::now(), effectively
@@ -263,6 +292,11 @@ impl MetricReport {
 
         if snapshot.metrics.is_empty() {
             return Ok(None);
+        }
+
+        // Log the metrics snapshot for debugging, only when log level is trace or lower
+        if log::log_enabled!(log::Level::Trace) {
+            self.log_metrics_snapshot(&snapshot);
         }
 
         Ok(Some(MarEntryBuilder::new(mar_staging_area)?.set_metadata(

@@ -1,14 +1,15 @@
 [Unit]
 Description=memfaultd daemon
-After=local-fs.target network.target dbus.service 
-Before=swupdate.service collectd.service 
+After=local-fs.target network.target dbus.service
+Before=swupdate.service collectd.service
 
 [Service]
 Type=forking
-PIDFile=/run/memfaultd.pid
+RuntimeDirectory=memfaultd
+PIDFile=/run/memfaultd/memfaultd.pid
 ExecStart=/usr/bin/memfaultd --daemonize
 # Wait for the PID file to be populated before returning
-ExecStartPost=/bin/sh -c "while [ $(cat /run/memfaultd.pid 2>/dev/null | wc -c) -eq 0 ]; do sleep 0.1; done"
+ExecStartPost=/bin/sh -c "while [ $(cat /run/memfaultd/memfaultd.pid 2>/dev/null | wc -c) -eq 0 ]; do sleep 0.1; done"
 Restart=on-failure
 
 [Install]

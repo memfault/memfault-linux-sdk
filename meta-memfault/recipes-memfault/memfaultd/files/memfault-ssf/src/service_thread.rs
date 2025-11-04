@@ -142,7 +142,7 @@ pub struct BoundedTaskServiceThread<S: TaskService> {
 }
 
 impl<S: TaskService + Send + 'static> BoundedTaskServiceThread<S> {
-    pub fn spawn_with<F, T>(service: S, channel_size: usize) -> Self {
+    pub fn spawn_with(service: S, channel_size: usize) -> Self {
         let (mailbox, receiver) = BoundedTaskMailbox::create(channel_size);
         let (handle_tx, handle_rx) = channel();
         let join_handle = ServiceJoinHandle::new(handle_rx);
@@ -210,6 +210,11 @@ async fn async_run<S>(
     S: TaskService,
 {
     let mut stats_aggregator = StatsAggregator::new();
+
+    if let Err(e) = service.init().await {
+        error!("Failed to initialize task: {}", e);
+        return;
+    }
 
     loop {
         tokio::select! {

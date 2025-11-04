@@ -8,7 +8,7 @@ use std::path::Path;
 use eyre::{eyre, Report, Result, WrapErr};
 use nix::unistd::Pid;
 
-const PID_FILE: &str = "/var/run/memfaultd.pid";
+const PID_FILE: &str = "/var/run/memfaultd/memfaultd.pid";
 
 pub fn write_pid_file() -> Result<()> {
     let file = OpenOptions::new()

@@ -19,13 +19,19 @@ use rand::{thread_rng, Rng};
 
 use ssf::{MsgMailbox, Scheduler, ServiceManager};
 
-use crate::metrics::{
-    BatteryMonitor, BatteryReadingHandler, ConnectivityMonitor, DumpHrtMessage,
-    DumpMetricReportMessage, KeyedMetricReading, MetricReportType, ReportSyncEventHandler,
-    ReportsToDump, SessionEventHandler, SystemMetricsCollector,
+use crate::{config::Resolution, mar::MarConfig, metrics::MetricsEventHandler};
+use crate::{
+    mar::MarStagingCleanType,
+    metrics::{
+        BatteryMonitor, BatteryReadingHandler, ConnectivityMonitor, DumpHrtMessage,
+        DumpMetricReportMessage, KeyedMetricReading, MetricReportType, ReportSyncEventHandler,
+        ReportsToDump, SessionEventHandler, SystemMetricsCollector,
+    },
 };
-use crate::util::task::{interruptible_sleep, PreviousIterationKind};
-use crate::{config::Resolution, metrics::MetricsEventHandler};
+use crate::{
+    mar::MarStagingConfig,
+    util::task::{interruptible_sleep, PreviousIterationKind},
+};
 
 use crate::{
     config::Config,
@@ -52,6 +58,9 @@ use crate::{reboot::RebootReasonTracker, util::disk_size::DiskSize};
 
 use crate::collectd::CollectdHandler;
 use crate::trace::SaveTraceHandler;
+
+#[cfg(all(feature = "ebpf", not(target_os = "macos")))]
+use crate::ebpf::DiskIo;
 
 #[cfg(feature = "logging")]
 use crate::{
@@ -113,10 +122,17 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     let service_manager = get_service_manager();
 
     // Make sure the MAR staging area exists
-    create_dir_all(config.mar_staging_path()).wrap_err_with(|| {
+    create_dir_all(config.mar_tmp_staging_path()).wrap_err_with(|| {
         eyre!(
-            "Unable to create MAR staging area {}",
-            &config.mar_staging_path().display(),
+            "Unable to create MAR temp staging area {}",
+            &config.mar_tmp_staging_path().display(),
+        )
+    })?;
+
+    create_dir_all(config.mar_persist_staging_path()).wrap_err_with(|| {
+        eyre!(
+            "Unable to create MAR persist staging area {}",
+            &config.mar_persist_staging_path().display(),
         )
     })?;
 
@@ -138,10 +154,21 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     };
     let metrics_mbox = system.spawn_service_thread(metric_report_manager);
 
-    let mar_cleaner = Arc::new(MarStagingCleaner::new(
-        &config.mar_staging_path(),
+    let mar_tmp_staging_config = MarStagingConfig::new(
+        config.mar_tmp_staging_path(),
         config.tmp_dir_max_size(),
         config.tmp_dir_min_headroom(),
+    );
+    let mar_persist_staging_config = config.mar_persist_storage_config().map(|persist_config| {
+        MarStagingConfig::new(
+            config.mar_persist_staging_path(),
+            persist_config.max_total_size(),
+            persist_config.min_headroom(),
+        )
+    });
+    let mar_cleaner = Arc::new(MarStagingCleaner::new(
+        mar_tmp_staging_config,
+        mar_persist_staging_config,
         config.mar_entry_max_age(),
         config.mar_entry_max_count(),
         metrics_mbox.clone().into(),
@@ -152,10 +179,19 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     // List of tasks to run before shutting down
     let mut shutdown_tasks: Vec<Box<dyn FnOnce() -> Result<()>>> = vec![];
 
+    #[cfg(all(feature = "ebpf", not(target_os = "macos")))]
+    {
+        use crate::util::system::ProcfsProcessNameMapper;
+
+        let disk_io: DiskIo<ProcfsProcessNameMapper> = DiskIo::load(metrics_mbox.clone().into())?;
+        system.spawn_bounded_task_service_thread(disk_io, 1024);
+    }
+
     // List of http handlers
     #[allow(unused_mut, /* reason = "Can be unused when some features are disabled." */)]
-    let mut http_handlers: Vec<Box<dyn HttpHandler>> =
-        vec![Box::new(MarExportHandler::new(config.mar_staging_path()))];
+    let mut http_handlers: Vec<Box<dyn HttpHandler>> = vec![Box::new(MarExportHandler::new(
+        config.mar_tmp_staging_path(),
+    ))];
 
     let battery_monitor = Arc::new(Mutex::new(BatteryMonitor::<Instant>::new(
         metrics_mbox.clone().into(),
@@ -175,8 +211,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     let session_event_handler = SessionEventHandler::new(
         config.config_file.enable_data_collection,
         metrics_mbox.clone().into(),
-        config.mar_staging_path(),
-        (&config).into(),
+        &config,
     );
     http_handlers.push(Box::new(session_event_handler));
 
@@ -199,14 +234,14 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
 
     // Schedule dump jobs for both heartbeat, daily heartbeat, and HRT
     {
-        let net_config = NetworkConfig::from(&config);
-        let mar_staging_path = config.mar_staging_path();
+        let net_config = Arc::new(NetworkConfig::from(&config));
+        let mar_config = Arc::new(MarConfig::from(&config));
         let heartbeat_interval = config.config_file.heartbeat_interval;
 
         let heartbeat_message = DumpMetricReportMessage::new(
             ReportsToDump::Report(MetricReportType::Heartbeat),
-            mar_staging_path.clone(),
             net_config.clone(),
+            mar_config.clone(),
         );
         scheduler.schedule_message_subscription(
             heartbeat_message,
@@ -214,14 +249,14 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
             &heartbeat_interval,
         );
 
-        let hrt_message = DumpHrtMessage::new(mar_staging_path.clone(), net_config.clone());
+        let hrt_message = DumpHrtMessage::new(net_config.clone(), mar_config.clone());
         scheduler.schedule_message_subscription(hrt_message, &metrics_mbox, &heartbeat_interval);
 
         if config.config_file.metrics.enable_daily_heartbeats {
             let daily_message = DumpMetricReportMessage::new(
                 ReportsToDump::Report(MetricReportType::DailyHeartbeat),
-                mar_staging_path,
                 net_config,
+                mar_config,
             );
             scheduler.schedule_message_subscription(
                 daily_message,
@@ -308,8 +343,8 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     }
     // Schedule a task to dump the metrics when a sync is forced
     {
-        let net_config = NetworkConfig::from(&config);
-        let mar_staging_path = config.mar_staging_path();
+        let net_config = Arc::new(NetworkConfig::from(&config));
+        let mar_config = Arc::new(MarConfig::from(&config));
         let dump_metrics_mbox: MsgMailbox<DumpMetricReportMessage> = metrics_mbox.clone().into();
         sync_tasks.push(Box::new(move |forced, skip_serialization| match forced {
             true => {
@@ -321,8 +356,8 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                     dump_metrics_mbox
                         .send_and_wait_for_reply(DumpMetricReportMessage::new(
                             ReportsToDump::Report(MetricReportType::Heartbeat),
-                            mar_staging_path.clone(),
                             net_config.clone(),
+                            mar_config.clone(),
                         ))
                         .map_err(|e| eyre!("Couldn't send message to dump_metrics_mbox: {}", e))?
                         .map_err(|e| eyre!("Error dumping metrics: {}", e))
@@ -333,8 +368,8 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     }
 
     {
-        let net_config = NetworkConfig::from(&config);
-        let mar_staging_path = config.mar_staging_path();
+        let net_config = Arc::new(NetworkConfig::from(&config));
+        let mar_config = Arc::new(MarConfig::from(&config));
         let dump_metrics_mbox: MsgMailbox<DumpMetricReportMessage> = metrics_mbox.clone().into();
         sync_tasks.push(Box::new(move |forced, skip_serialization| match forced {
             true => {
@@ -346,8 +381,8 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                     dump_metrics_mbox
                         .send_and_wait_for_reply(DumpMetricReportMessage::new(
                             ReportsToDump::Report(MetricReportType::DailyHeartbeat),
-                            mar_staging_path.clone(),
                             net_config.clone(),
+                            mar_config.clone(),
                         ))
                         .map_err(|e| eyre!("Couldn't send message to dump_metrics_mbox: {}", e))?
                         .map_err(|e| eyre!("Error dumping metrics: {}", e))
@@ -358,8 +393,8 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     }
 
     {
-        let net_config = NetworkConfig::from(&config);
-        let mar_staging_path = config.mar_staging_path();
+        let net_config = Arc::new(NetworkConfig::from(&config));
+        let mar_config = Arc::new(MarConfig::from(&config));
         let dump_metrics_mbox: MsgMailbox<DumpHrtMessage> = metrics_mbox.clone().into();
         sync_tasks.push(Box::new(move |forced, skip_serialization| match forced {
             true => {
@@ -368,8 +403,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                     Ok(())
                 } else {
                     trace!("Dumping HRT metrics");
-                    let hrt_message =
-                        DumpHrtMessage::new(mar_staging_path.clone(), net_config.clone());
+                    let hrt_message = DumpHrtMessage::new(net_config.clone(), mar_config.clone());
                     dump_metrics_mbox
                         .send_and_wait_for_reply(hrt_message)
                         .map_err(|e| eyre!("Couldn't send message to dump_metrics_mbox: {}", e))?
@@ -382,30 +416,30 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
 
     // Schedule a task to dump the metrics when we are shutting down
     {
-        let net_config = NetworkConfig::from(&config);
-        let mar_staging_path = config.mar_staging_path();
+        let net_config = Arc::new(NetworkConfig::from(&config));
+        let mar_config = Arc::new(MarConfig::from(&config));
 
         let dump_metrics_mbox: MsgMailbox<DumpMetricReportMessage> = metrics_mbox.clone().into();
         shutdown_tasks.push(Box::new(move || {
             dump_metrics_mbox
                 .send_and_forget(DumpMetricReportMessage::new(
                     ReportsToDump::All,
-                    mar_staging_path.clone(),
                     net_config.clone(),
+                    mar_config.clone(),
                 ))
                 .map_err(|e| eyre!("Couldn't send message to dump_metrics_mbox: {}", e))
         }));
     }
     // Schedule a task to dump HRT when shutting down
     {
-        let net_config = NetworkConfig::from(&config);
-        let mar_staging_path = config.mar_staging_path();
+        let net_config = Arc::new(NetworkConfig::from(&config));
+        let mar_config = Arc::new(MarConfig::from(&config));
         let dump_metrics_mbox: MsgMailbox<DumpHrtMessage> = metrics_mbox.clone().into();
         shutdown_tasks.push(Box::new(move || {
             dump_metrics_mbox
                 .send_and_wait_for_reply(DumpHrtMessage::new(
-                    mar_staging_path.clone(),
                     net_config.clone(),
+                    mar_config.clone(),
                 ))
                 .map_err(|e| eyre!("Couldn't send message to dump_metrics_mbox: {}", e))?
                 .map_err(|e| eyre!("Error dumping HRT: {}", e))
@@ -437,7 +471,9 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
             let mar_cleaner = mar_cleaner.clone();
 
             let network_config = NetworkConfig::from(&config);
-            let mar_staging_path = config.mar_staging_path();
+            let mar_config = MarConfig::from(&config);
+            let logs_clean_type = config.mar_logs_clean_type();
+            let mar_staging_path = config.mar_tmp_staging_path();
             let on_log_completion = move |CompletedLog {
                                               path,
                                               cid,
@@ -446,6 +482,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                                           }|
                   -> Result<()> {
                 // Prepare the MAR entry
+
                 let file_name = path
                     .file_name()
                     .ok_or(eyre!("Logfile should be a file."))?
@@ -458,14 +495,14 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                 estimated_entry_size.bytes += MAR_ENTRY_OVERHEAD_SIZE_ESTIMATE;
                 estimated_entry_size.inodes += 2;
 
-                mar_cleaner.clean(estimated_entry_size)?;
+                mar_cleaner.clean(estimated_entry_size, logs_clean_type)?;
 
                 let mar_builder = MarEntryBuilder::new(&mar_staging_path)?
                     .set_metadata(Metadata::new_log(file_name, cid, next_cid, compression))
                     .add_attachment(path)?;
 
                 // Move the log in the mar_staging area and add a manifest
-                let mar_entry = mar_builder.save(&network_config)?;
+                let mar_entry = mar_builder.save(&network_config, &mar_config)?;
                 debug!(
                     "Logfile (cid: {}) saved as MAR entry: {}",
                     cid,
@@ -582,8 +619,8 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
 
         #[cfg(feature = "logging")]
         let save_trace_handler = SaveTraceHandler::new(
-            config.mar_staging_path(),
-            NetworkConfig::from(&config),
+            config.mar_tmp_staging_path(),
+            &config,
             crashfree_tracker.channel_handler(),
             trace_log_collector_mbox,
             trace_config,
@@ -592,8 +629,8 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
 
         #[cfg(not(feature = "logging"))]
         let save_trace_handler = SaveTraceHandler::new(
-            config.mar_staging_path(),
-            NetworkConfig::from(&config),
+            config.mar_tmp_staging_path(),
+            &config,
             crashfree_tracker.channel_handler(),
             trace_config,
             rate_limiter_path,
@@ -750,7 +787,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                 }
             }
 
-            mar_cleaner.clean(DiskSize::ZERO)?;
+            mar_cleaner.clean(DiskSize::ZERO, MarStagingCleanType::All)?;
 
             if enable_data_collection && !forced_sync_only || forced {
                 trace!("Collect MAR entries...");
@@ -761,8 +798,12 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                     .get()
                     .data_upload_start_date;
 
+                let persist_mar_staging = config
+                    .mar_persist_storage_config()
+                    .map(|_| config.mar_persist_staging_path());
                 let result = collect_and_upload(
-                    &config.mar_staging_path(),
+                    &config.mar_tmp_staging_path(),
+                    persist_mar_staging,
                     &client,
                     config.config_file.mar.mar_file_max_size,
                     config.sampling(),

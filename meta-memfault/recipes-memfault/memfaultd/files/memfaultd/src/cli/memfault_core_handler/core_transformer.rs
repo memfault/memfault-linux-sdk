@@ -93,7 +93,7 @@ where
     /// Reads all PT_LOAD and PT_NOTE program headers and their associated segments from the core.
     /// The memory for each PT_LOAD segment will be fetched from `/proc/<pid>/mem` and the
     /// resulting elf file will be written to `output_stream`.
-    pub fn run_transformer(&mut self) -> Result<()> {
+    pub fn run_transformer(mut self) -> Result<()> {
         let program_headers = self.core_reader.read_program_headers()?;
 
         self.build_elf_coredump(&program_headers)
@@ -446,7 +446,7 @@ mod test {
             core_handler_logs_rx,
             app_logs_rx,
         };
-        let mut transformer = CoreTransformer::new(
+        let transformer = CoreTransformer::new(
             core_reader,
             mock_core_writer,
             proc_mem_stream,

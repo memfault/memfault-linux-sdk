@@ -96,11 +96,13 @@ where
 
     fn interface_is_monitored(&self, interface: &str) -> bool {
         match &self.config {
-            // Ignore loopback, tunnel, and dummy interfaces in Auto mode
+            // Ignore loopback, tunnel, veth, usb, and dummy interfaces in Auto mode
             NetworkInterfaceMetricsConfig::Auto => {
                 !(interface.starts_with("lo")
                     || interface.starts_with("tun")
-                    || interface.starts_with("dummy"))
+                    || interface.starts_with("dummy")
+                    || interface.starts_with("veth")
+                    || interface.starts_with("usb"))
             }
             NetworkInterfaceMetricsConfig::Interfaces(configured_interfaces) => {
                 configured_interfaces.contains(interface)
@@ -639,6 +641,8 @@ mod test {
     #[case("tun0", false)]
     #[case("dummy1", false)]
     #[case("lo1", false)]
+    #[case("vethcdd37e7", false)]
+    #[case("usb1047", false)]
     fn test_interface_is_monitored_auto(
         #[case] interface: &str,
         #[case] should_be_monitored: bool,

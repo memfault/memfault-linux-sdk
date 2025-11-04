@@ -112,9 +112,6 @@ mod tests {
 
     struct MockTask {}
     impl ScheduledTask for MockTask {
-        fn prepare_next(&self) -> Box<dyn ScheduledTask> {
-            Box::new(MockTask {})
-        }
         fn execute(&self) -> Result<(), MailboxError> {
             Ok(())
         }

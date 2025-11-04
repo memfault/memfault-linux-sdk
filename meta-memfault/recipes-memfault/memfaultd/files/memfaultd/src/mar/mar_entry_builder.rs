@@ -4,8 +4,8 @@
 //! MAR Entry Builder
 //!
 use crate::network::NetworkConfig;
-use crate::util::disk_size::DiskSize;
-use crate::util::fs::move_file;
+use crate::util::{disk_size::DiskSize, fs::move_dir};
+use crate::{mar::config::MarConfig, util::fs::move_file};
 use crate::{
     mar::{CollectionTime, Manifest, MarEntry, Metadata},
     util::fs::copy_file,
@@ -100,7 +100,7 @@ impl MarEntryBuilder<NoMetadata> {
 impl MarEntryBuilder<Metadata> {
     /// Consume this builder, writes the manifest and moves the attachment to the
     /// MAR storage area and returns a MAR entry.
-    pub fn save(self, network_config: &NetworkConfig) -> Result<MarEntry> {
+    pub fn save(self, network_config: &NetworkConfig, mar_config: &MarConfig) -> Result<MarEntry> {
         // Move attachments
         for filepath in self.attachments {
             // We already check that attachments are file in the constructor so we ignore
@@ -124,9 +124,13 @@ impl MarEntryBuilder<Metadata> {
 
         // Write the manifest to a temp file
         let manifest_path = self.entry_dir.path.join("manifest.tmp");
-        let manifest_file = File::create(&manifest_path)
-            .wrap_err_with(|| format!("Error opening manifest {}", manifest_path.display()))?;
-        serde_json::to_writer(manifest_file, &manifest)?;
+        {
+            // Scope manifest file to drop it before move. Some file systems or
+            // network mounts may fail using this operation.
+            let manifest_file = File::create(&manifest_path)
+                .wrap_err_with(|| format!("Error opening manifest {}", manifest_path.display()))?;
+            serde_json::to_writer(manifest_file, &manifest)?;
+        }
 
         // Rename the manifest to signal that this folder is complete
         let manifest_json_path = manifest_path.with_extension("json");
@@ -138,8 +142,17 @@ impl MarEntryBuilder<Metadata> {
             )
         })?;
 
+        let final_staging_dir = mar_config.final_staging_path(&manifest.metadata);
+        let tmp_staging_dir = mar_config.tmp_staging_path();
+
+        let final_entry_path = final_staging_dir.join(self.uuid.to_string());
+        if final_staging_dir != tmp_staging_dir {
+            move_dir(&self.entry_dir.path, &final_entry_path)?;
+        }
+        self.entry_dir.mark_saved();
+
         Ok(MarEntry {
-            path: self.entry_dir.mark_saved(),
+            path: final_entry_path,
             uuid: self.uuid,
             manifest,
         })
@@ -213,12 +226,15 @@ impl Drop for MarEntryDir {
 #[cfg(test)]
 mod tests {
     use super::MAR_ENTRY_OVERHEAD_SIZE_ESTIMATE;
-    use crate::mar::MarEntryBuilder;
-    use crate::mar::Metadata;
     use crate::network::NetworkConfig;
     use crate::test_utils::create_file_with_size;
+    use crate::{config::Config, mar::MarEntryBuilder};
+    use crate::{
+        config::PersistStorageConfig,
+        mar::{MarConfig, Metadata},
+    };
     use rstest::{fixture, rstest};
-    use std::path::PathBuf;
+    use std::{fs::create_dir_all, path::PathBuf};
     use tempfile::{tempdir, TempDir};
 
     #[rstest]
@@ -239,7 +255,10 @@ mod tests {
             let _ = entry_dir_option.insert(builder.entry_dir_path().to_owned());
             builder
                 .set_metadata(Metadata::test_fixture())
-                .save(&NetworkConfig::test_fixture())
+                .save(
+                    &NetworkConfig::test_fixture(),
+                    &MarConfig::from(&Config::test_fixture()),
+                )
                 .unwrap();
         }
         let entry_dir = entry_dir_option.unwrap();
@@ -257,7 +276,10 @@ mod tests {
             .add_attachment(orig_attachment_path.clone())
             .unwrap()
             .set_metadata(Metadata::test_fixture())
-            .save(&NetworkConfig::test_fixture())
+            .save(
+                &NetworkConfig::test_fixture(),
+                &MarConfig::from(&Config::test_fixture()),
+            )
             .unwrap();
 
         // Attachment is still where it was written:
@@ -277,7 +299,10 @@ mod tests {
             .add_attachment(orig_attachment_path.clone())
             .unwrap()
             .set_metadata(Metadata::test_fixture())
-            .save(&NetworkConfig::test_fixture())
+            .save(
+                &NetworkConfig::test_fixture(),
+                &MarConfig::from(&Config::test_fixture()),
+            )
             .unwrap();
 
         // Attachment has been moved into the entry dir:
@@ -303,6 +328,46 @@ mod tests {
             1024 + MAR_ENTRY_OVERHEAD_SIZE_ESTIMATE
         );
         assert_eq!(builder.estimated_entry_size().inodes, 2);
+    }
+
+    #[rstest]
+    fn entry_moved_to_persist_dir_on_save(fixture: Fixture) {
+        let tmp_staging_dir = fixture.mar_staging.join("tmp");
+        let persist_staging_dir = fixture.mar_staging.join("persist");
+        create_dir_all(&tmp_staging_dir).unwrap();
+        create_dir_all(&persist_staging_dir).unwrap();
+
+        let persist_config = PersistStorageConfig {
+            logs: true,
+            metrics: true,
+            coredumps: true,
+            reboots: true,
+            min_headroom: 1024,
+            max_usage: 1024 * 1024 * 1024,
+            min_inodes: 1024,
+        };
+        let mar_config = MarConfig::test_fixture_with_config(
+            &tmp_staging_dir,
+            &persist_staging_dir,
+            persist_config,
+        );
+
+        let builder = MarEntryBuilder::new(&tmp_staging_dir).unwrap();
+        let entry_dir = builder.entry_dir_path().to_owned();
+
+        let tempdir = tempdir().unwrap();
+        let orig_attachment_path = tempdir.path().join("attachment");
+        create_file_with_size(&orig_attachment_path, 1024).unwrap();
+
+        let persist_entry_dir = persist_staging_dir.join(builder.uuid.to_string());
+        let final_path = builder
+            .set_metadata(Metadata::test_fixture_metrics())
+            .save(&NetworkConfig::test_fixture(), &mar_config)
+            .unwrap();
+
+        assert!(!entry_dir.exists());
+        assert!(final_path.path.starts_with(persist_entry_dir));
+        assert!(final_path.path.exists());
     }
 
     struct Fixture {

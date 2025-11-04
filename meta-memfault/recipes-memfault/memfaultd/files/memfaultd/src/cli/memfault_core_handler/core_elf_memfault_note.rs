@@ -6,7 +6,7 @@
 //! Currently we write two notes:
 //!
 //! 1. A note containing metadata about the core dump. This note is written by the
-//!   `CoreHandler` whenever it receives a core dump. It contains information about the device,
+//!    `CoreHandler` whenever it receives a core dump. It contains information about the device,
 //!    that will be used to associate the core dump with a device in the Memfault cloud.
 //! 2. A note containing debug data about the core dump. Currently this note only contains
 //!    logs written during the coredump capture process. These logs are used by Memfault to debug
