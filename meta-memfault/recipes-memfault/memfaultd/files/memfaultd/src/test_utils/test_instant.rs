@@ -11,7 +11,7 @@ pub struct TestInstant {
 }
 
 thread_local! {
-    static TIME: RefCell<Duration>  = RefCell::new(Duration::from_secs(0));
+    static TIME: RefCell<Duration>  = const { RefCell::new(Duration::from_secs(0)) };
 }
 
 impl TestInstant {

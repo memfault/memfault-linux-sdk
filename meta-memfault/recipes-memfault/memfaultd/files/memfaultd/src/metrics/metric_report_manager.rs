@@ -15,7 +15,7 @@ use std::{
 
 use crate::{
     config::SessionConfig,
-    mar::{MarEntryBuilder, Metadata},
+    mar::{MarConfig, MarEntryBuilder, Metadata},
     metrics::{
         core_metrics::{CoreMetricKeys, METRIC_OPERATIONAL_CRASHES},
         hrt::HrtReport,
@@ -204,27 +204,30 @@ impl MetricReportManager {
     /// be removed from the MetricReportManager's internal sessions HashMap.
     pub fn dump_report_to_mar_entry(
         &mut self,
-        mar_staging_area: &Path,
         network_config: &NetworkConfig,
         report_type: &MetricReportType,
+        mar_config: &MarConfig,
     ) -> Result<()> {
+        let mar_staging_area = mar_config.tmp_staging_path();
         let mar_builder = match report_type {
             MetricReportType::Heartbeat => {
-                self.heartbeat.prepare_metric_report(mar_staging_area)?
+                self.heartbeat.prepare_metric_report(&mar_staging_area)?
             }
             MetricReportType::DailyHeartbeat => match &mut self.daily_heartbeat {
-                Some(daily_heartbeat) => daily_heartbeat.prepare_metric_report(mar_staging_area)?,
+                Some(daily_heartbeat) => {
+                    daily_heartbeat.prepare_metric_report(&mar_staging_area)?
+                }
                 None => return Ok(()),
             },
             MetricReportType::Session(session_name) => match self.sessions.remove(session_name) {
-                Some(mut report) => report.prepare_metric_report(mar_staging_area)?,
+                Some(mut report) => report.prepare_metric_report(&mar_staging_area)?,
                 None => return Err(eyre!("No metric report found for {}", session_name)),
             },
         };
 
         if let Some(mar_builder) = mar_builder {
             let mar_entry = mar_builder
-                .save(network_config)
+                .save(network_config, mar_config)
                 .map_err(|e| eyre!("Error building MAR entry: {}", e))?;
             debug!(
                 "Generated MAR entry from metrics: {}",
@@ -273,6 +276,7 @@ impl MetricReportManager {
         metric_report_manager: &Arc<Mutex<Self>>,
         mar_staging_area: &Path,
         network_config: &NetworkConfig,
+        mar_config: &MarConfig,
     ) -> Result<()> {
         let mar_builders = metric_report_manager
             .lock()
@@ -280,7 +284,7 @@ impl MetricReportManager {
             .prepare_all_metric_reports(mar_staging_area);
 
         for mar_builder in mar_builders {
-            match mar_builder.save(network_config) {
+            match mar_builder.save(network_config, mar_config) {
                 Ok(mar_entry) => debug!(
                     "Generated MAR entry from metrics: {}",
                     mar_entry.path.display()
@@ -318,21 +322,21 @@ impl Handler<KeyedMetricReading> for MetricReportManager {
 
 impl Handler<DumpMetricReportMessage> for MetricReportManager {
     fn deliver(&mut self, m: DumpMetricReportMessage) -> Result<()> {
-        let mar_staging_area = m.mar_staging_area();
         let network_config = m.network_config();
+        let mar_config = m.mar_config();
 
         match m.reports_to_dump() {
             ReportsToDump::Report(report_type) => {
                 if let Err(e) =
-                    self.dump_report_to_mar_entry(mar_staging_area, network_config, report_type)
+                    self.dump_report_to_mar_entry(network_config, report_type, mar_config)
                 {
                     warn!("Failed to dump {:?} metric report: {}", report_type, e)
                 }
             }
             ReportsToDump::All => {
-                let mar_builders = self.prepare_all_metric_reports(m.mar_staging_area());
+                let mar_builders = self.prepare_all_metric_reports(&mar_config.tmp_staging_path());
                 for mar_builder in mar_builders {
-                    match mar_builder.save(network_config) {
+                    match mar_builder.save(network_config, mar_config) {
                         Ok(mar_entry) => debug!(
                             "Generated MAR entry from metrics: {}",
                             mar_entry.path.display()
@@ -360,15 +364,15 @@ impl Handler<SessionEventMessage> for MetricReportManager {
             SessionEventMessage::StopSession {
                 name,
                 readings,
-                mar_staging_area,
                 network_config,
+                mar_config,
             } => {
                 let report = MetricReportType::Session(name);
                 for metric_reading in readings {
                     self.add_metric_to_report(&report, metric_reading)?
                 }
 
-                self.dump_report_to_mar_entry(&mar_staging_area, &network_config, &report)?;
+                self.dump_report_to_mar_entry(&network_config, &report, &mar_config)?;
             }
         };
         Ok(())
@@ -380,7 +384,7 @@ impl Handler<DumpHrtMessage> for MetricReportManager {
         if let Some(hrt) = &mut self.hrt {
             // Replace the HRT report with a new one and write it to disk
             let hrt_report = replace(hrt, HrtReport::new(self.hrt_max_samples_per_min));
-            write_report_to_disk(hrt_report, m.mar_staging_area(), m.network_config())?;
+            write_report_to_disk(hrt_report, m.network_config(), m.mar_config())?;
         }
         Ok(())
     }

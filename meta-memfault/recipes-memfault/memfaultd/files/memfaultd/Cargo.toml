@@ -3,7 +3,7 @@ name = "memfaultd"
 version = "0.0.0"
 edition = "2021"
 autobins = false
-rust-version = "1.72"
+rust-version = "1.80"
 description = "Memfault daemon for embedded Linux systems. Observability, logging, crash reporting, and updating all in one service. Learn more at https://docs.memfault.com/"
 homepage = "https://github.com/memfault/memfaultd"
 documentation = "https://docs.memfault.com/"
@@ -79,9 +79,11 @@ tokio = { version = "1.43.1", features = ["net"] }
 futures = "0.3.31"
 syslog_loose = { version = "0.21.0", optional = true }
 rand = "0.8.5"
+bytes = "1.10.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-procfs = { version = "0.15.1", optional = true }
+procfs = "0.15.1"
+aya = { version = "0.13", features = [ "async_tokio" ], optional = true }
 
 [dev-dependencies]
 approx = "0.5.1"
@@ -111,7 +113,6 @@ default = ["coredump", "logging", "systemd", "rust-tls", "syslog"]
 coredump = [
     "memfaultc-sys/coredump",
     "dep:prctl",
-    "dep:procfs",
     "dep:psm",
     "dep:kernlog",
     "dep:ciborium",
@@ -126,5 +127,9 @@ rust-tls = ["reqwest/rustls-tls"]
 openssl-tls = ["reqwest/native-tls"]
 openssl-vendored-tls = ["reqwest/native-tls-vendored"]
 syslog = ["dep:syslog_loose"]
-experimental = ["mfw"]
+ebpf = ["dep:aya", "tokio/fs"]
+experimental = ["mfw", "ebpf"]
 mfw = []
+
+[lints]
+workspace = true

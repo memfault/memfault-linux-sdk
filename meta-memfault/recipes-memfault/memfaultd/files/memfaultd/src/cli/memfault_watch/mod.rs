@@ -20,7 +20,7 @@ use log::{debug, error, info, trace, warn, LevelFilter};
 use crate::{
     cli::{init_logger, MemfaultdClient},
     config::Config,
-    mar::{MarEntryBuilder, Metadata},
+    mar::{MarConfig, MarEntryBuilder, Metadata},
     network::NetworkConfig,
 };
 
@@ -184,13 +184,14 @@ fn run_from_args(args: MemfaultWatchArgs) -> Result<i32> {
         // TODO: Use new MemfaultdClient::save_trace().
 
         let network_config = NetworkConfig::from(&config);
-        let mar_staging_path = config.mar_staging_path();
+        let mar_config = MarConfig::from(&config);
+        let mar_staging_path = config.mar_tmp_staging_path();
         info!("Sending MAR file from {stdio_log_file_path:?} to {mar_staging_path:?}");
         let mar_builder = MarEntryBuilder::new(&mar_staging_path)?;
         let mar_entry = mar_builder
             .set_metadata(metadata)
             .add_attachment(stdio_log_file_path)?
-            .save(&network_config)?;
+            .save(&network_config, &mar_config)?;
 
         info!("MFW MAR entry generated: {}", mar_entry.path.display());
 

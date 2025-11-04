@@ -23,9 +23,8 @@ use std::{
 };
 
 pub struct MarStagingCleaner {
-    mar_staging_path: PathBuf,
-    max_total_size: DiskSize,
-    min_headroom: DiskSize,
+    tmp_staging_config: MarStagingConfig,
+    persist_staging_config: Option<MarStagingConfig>,
     max_age: Duration,
     max_count: usize,
     metrics_mbox: MetricsMBox,
@@ -33,17 +32,15 @@ pub struct MarStagingCleaner {
 
 impl MarStagingCleaner {
     pub fn new(
-        mar_staging_path: &Path,
-        max_total_size: DiskSize,
-        min_headroom: DiskSize,
+        tmp_staging_config: MarStagingConfig,
+        persist_staging_config: Option<MarStagingConfig>,
         max_age: Duration,
         max_count: usize,
         metrics_mbox: MetricsMBox,
     ) -> Self {
         Self {
-            mar_staging_path: mar_staging_path.to_owned(),
-            max_total_size,
-            min_headroom,
+            tmp_staging_config,
+            persist_staging_config,
             max_age,
             max_count,
             metrics_mbox,
@@ -53,23 +50,88 @@ impl MarStagingCleaner {
     /// Cleans up MAR entries in the staging folder.
     /// Returns the amount of space left until the max_total_size will be reached or until
     /// min_headroom will be exceeded (the smallest of the two values).
-    pub fn clean(&self, required_space: DiskSize) -> Result<DiskSize> {
+    pub fn clean(
+        &self,
+        required_space: DiskSize,
+        clean_type: MarStagingCleanType,
+    ) -> Result<DiskSize> {
         trace!("Cleaning MAR staging area...");
-        clean_mar_staging(
-            &self.mar_staging_path,
-            self.max_total_size.saturating_sub(required_space),
-            get_disk_space(&self.mar_staging_path).unwrap_or(DiskSize::ZERO),
-            self.min_headroom + required_space,
-            SystemTime::now(),
-            self.max_age,
-            self.max_count,
-            &self.metrics_mbox,
+
+        let tmp_cleaned = if matches!(
+            clean_type,
+            MarStagingCleanType::Tmp | MarStagingCleanType::All
+        ) {
+            clean_mar_staging(
+                &self.tmp_staging_config.path,
+                self.tmp_staging_config
+                    .max_total_size
+                    .saturating_sub(required_space),
+                get_disk_space(&self.tmp_staging_config.path).unwrap_or(DiskSize::ZERO),
+                self.tmp_staging_config.min_headroom + required_space,
+                SystemTime::now(),
+                self.max_age,
+                self.max_count,
+                &self.metrics_mbox,
+            )
+            .map_err(|e| {
+                warn!("Unable to clean MAR entries: {}", e);
+                e
+            })?
+        } else {
+            DiskSize::ZERO
+        };
+
+        let persist_cleaned = matches!(
+            clean_type,
+            MarStagingCleanType::Persist | MarStagingCleanType::All
         )
-        .map_err(|e| {
-            warn!("Unable to clean MAR entries: {}", e);
-            e
+        .then(|| {
+            self.persist_staging_config.as_ref().map(|persist_config| {
+                clean_mar_staging(
+                    &persist_config.path,
+                    persist_config.max_total_size.saturating_sub(required_space),
+                    get_disk_space(&persist_config.path).unwrap_or(DiskSize::ZERO),
+                    persist_config.min_headroom + required_space,
+                    SystemTime::now(),
+                    self.max_age,
+                    self.max_count,
+                    &self.metrics_mbox,
+                )
+                .map_err(|e| {
+                    warn!("Unable to clean MAR entries: {}", e);
+                    e
+                })
+            })
         })
+        .flatten()
+        .transpose()?
+        .unwrap_or(DiskSize::ZERO);
+
+        Ok(tmp_cleaned + persist_cleaned)
     }
+}
+
+pub struct MarStagingConfig {
+    path: PathBuf,
+    max_total_size: DiskSize,
+    min_headroom: DiskSize,
+}
+
+impl MarStagingConfig {
+    pub fn new(path: PathBuf, max_total_size: DiskSize, min_headroom: DiskSize) -> Self {
+        Self {
+            path,
+            max_total_size,
+            min_headroom,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MarStagingCleanType {
+    Tmp,
+    Persist,
+    All,
 }
 
 #[derive(Debug)]
@@ -318,13 +380,16 @@ mod test {
     fn test_collect_entries(mut mar_fixture: MarCollectorFixture) {
         let now = SystemTime::now();
 
-        let path_a = mar_fixture.create_logentry_with_size_and_age(100, now);
+        let path_a = mar_fixture.create_logentry_with_size_and_age(100, now, false);
         let path_b =
-            mar_fixture.create_logentry_with_size_and_age(100, now + Duration::from_secs(5));
-        let path_c =
-            mar_fixture.create_logentry_with_size_and_age(100, now + Duration::from_secs(10));
+            mar_fixture.create_logentry_with_size_and_age(100, now + Duration::from_secs(5), false);
+        let path_c = mar_fixture.create_logentry_with_size_and_age(
+            100,
+            now + Duration::from_secs(10),
+            false,
+        );
         let (entries, _total_space_used) =
-            collect_mar_entries(&mar_fixture.mar_staging, SystemTime::now()).unwrap();
+            collect_mar_entries(&mar_fixture.tmp_mar_staging, SystemTime::now()).unwrap();
         assert!(entries.len() == 3);
         assert!([path_a, path_b, path_c].iter().all(|path| entries
             .iter()
@@ -769,11 +834,46 @@ mod test {
             inodes: 2,
         };
         let max_total_size = DiskSize::new_capacity(3000);
-        let path = mar_fixture.create_empty_entry();
+        let path = mar_fixture.create_empty_entry(false);
 
         // Cleaner should delete empty directory to free up inodes
         let _size_avail = clean_mar_staging(
-            &mar_fixture.mar_staging,
+            &mar_fixture.tmp_mar_staging,
+            max_total_size,
+            available_space,
+            min_headroom,
+            SystemTime::now(),
+            Duration::from_secs(604800),
+            0,
+            &metrics_service.mbox,
+        )
+        .unwrap();
+
+        // Should have been cleaned up
+        assert!(!path.exists());
+    }
+
+    #[rstest]
+    fn empty_persist_directory_cleaned(
+        mut mar_fixture: MarCollectorFixture,
+        metrics_service: ServiceMock<Vec<KeyedMetricReading>>,
+    ) {
+        let min_headroom = DiskSize {
+            bytes: 1024,
+            inodes: 10,
+        };
+
+        // Less inodes available than permitted by quota
+        let available_space = DiskSize {
+            bytes: 10000,
+            inodes: 2,
+        };
+        let max_total_size = DiskSize::new_capacity(3000);
+        let path = mar_fixture.create_empty_entry(true);
+
+        // Cleaner should delete empty directory to free up inodes
+        let _size_avail = clean_mar_staging(
+            &mar_fixture.persist_mar_staging,
             max_total_size,
             available_space,
             min_headroom,
@@ -804,11 +904,11 @@ mod test {
             inodes: 2,
         };
         let max_total_size = DiskSize::new_capacity(3000);
-        let path = mar_fixture.create_corrupted_manifest_entry();
+        let path = mar_fixture.create_corrupted_manifest_entry(false);
 
         // Cleaner should delete directory with corrupted manifest to free up inodes
         let _size_avail = clean_mar_staging(
-            &mar_fixture.mar_staging,
+            &mar_fixture.tmp_mar_staging,
             max_total_size,
             available_space,
             min_headroom,
@@ -832,7 +932,7 @@ mod test {
         metrics_service: ServiceMock<Vec<KeyedMetricReading>>,
     ) {
         let size_avail = clean_mar_staging(
-            &mar_fixture.mar_staging,
+            &mar_fixture.tmp_mar_staging,
             max_total_size,
             available_space,
             min_headroom,
@@ -849,6 +949,46 @@ mod test {
     }
 
     #[rstest]
+    fn cleans_tmp_and_persist_when_clean_all(
+        mut mar_fixture: MarCollectorFixture,
+        metrics_service: ServiceMock<Vec<KeyedMetricReading>>,
+    ) {
+        // Create one MAR entry in tmp and one in persist
+        let now = SystemTime::now();
+        let tmp_path = mar_fixture.create_logentry_with_size_and_age(1000, now, false);
+        let persist_path = mar_fixture.create_logentry_with_size_and_age(1000, now, true);
+
+        // Configure tiny quotas so entries are considered over quota and will be deleted
+        let tmp_cfg = MarStagingConfig::new(
+            mar_fixture.tmp_mar_staging.clone(),
+            DiskSize::new_capacity(1),
+            DiskSize::ZERO,
+        );
+        let persist_cfg = MarStagingConfig::new(
+            mar_fixture.persist_mar_staging.clone(),
+            DiskSize::new_capacity(1),
+            DiskSize::ZERO,
+        );
+
+        let cleaner = MarStagingCleaner::new(
+            tmp_cfg,
+            Some(persist_cfg),
+            Duration::from_secs(604800), // large max age to not interfere
+            0,
+            metrics_service.mbox,
+        );
+
+        // Run cleaner for both tmp and persist
+        let _ = cleaner
+            .clean(DiskSize::ZERO, MarStagingCleanType::All)
+            .unwrap();
+
+        // Both entries should have been removed
+        assert!(!tmp_path.exists());
+        assert!(!persist_path.exists());
+    }
+
+    #[rstest]
     fn keeps_recent_unfinished_mar_entry(
         mut mar_fixture: MarCollectorFixture,
         max_total_size: DiskSize,
@@ -856,9 +996,9 @@ mod test {
         min_headroom: DiskSize,
         mut metrics_service: ServiceMock<Vec<KeyedMetricReading>>,
     ) {
-        let path = mar_fixture.create_empty_entry();
+        let path = mar_fixture.create_empty_entry(false);
         let size_avail = clean_mar_staging(
-            &mar_fixture.mar_staging,
+            &mar_fixture.tmp_mar_staging,
             max_total_size,
             available_space,
             min_headroom,
@@ -888,11 +1028,11 @@ mod test {
         min_headroom: DiskSize,
         mut metrics_service: ServiceMock<Vec<KeyedMetricReading>>,
     ) {
-        let path = mar_fixture.create_empty_entry();
+        let path = mar_fixture.create_empty_entry(false);
 
         create_file_with_size(&path.join("log.txt"), max_total_size.bytes + 1).unwrap();
         let size_avail = clean_mar_staging(
-            &mar_fixture.mar_staging,
+            &mar_fixture.tmp_mar_staging,
             max_total_size,
             available_space.saturating_sub(DiskSize {
                 bytes: 0,
@@ -926,9 +1066,9 @@ mod test {
         mut metrics_service: ServiceMock<Vec<KeyedMetricReading>>,
     ) {
         let now = SystemTime::now();
-        let path = mar_fixture.create_logentry_with_size_and_age(1, now);
+        let path = mar_fixture.create_logentry_with_size_and_age(1, now, false);
         let size_avail = clean_mar_staging(
-            &mar_fixture.mar_staging,
+            &mar_fixture.tmp_mar_staging,
             max_total_size,
             available_space,
             min_headroom,
@@ -957,9 +1097,9 @@ mod test {
     ) {
         let now = SystemTime::now();
         // NOTE: the entire directory will be larger than max_total_size due to the manifest.json.
-        let path = mar_fixture.create_logentry_with_size_and_age(max_total_size.bytes, now);
+        let path = mar_fixture.create_logentry_with_size_and_age(max_total_size.bytes, now, false);
         let size_avail = clean_mar_staging(
-            &mar_fixture.mar_staging,
+            &mar_fixture.tmp_mar_staging,
             max_total_size,
             available_space.saturating_sub(DiskSize {
                 bytes: 0,
@@ -1000,9 +1140,9 @@ mod test {
             inodes: 100,
         };
         // NOTE: the entire directory will be larger than 1 byte due to the manifest.json.
-        let path = mar_fixture.create_logentry_with_size_and_age(1, now);
+        let path = mar_fixture.create_logentry_with_size_and_age(1, now, false);
         let size_avail = clean_mar_staging(
-            &mar_fixture.mar_staging,
+            &mar_fixture.tmp_mar_staging,
             max_total_size,
             available_space,
             min_headroom,
@@ -1036,13 +1176,19 @@ mod test {
             bytes: max_total_size.bytes * 2,
             inodes: 100,
         };
-        let oldest =
-            mar_fixture.create_logentry_with_size_and_age(8000, now - Duration::from_secs(120));
-        let middle =
-            mar_fixture.create_logentry_with_size_and_age(8000, now - Duration::from_secs(30));
-        let most_recent = mar_fixture.create_logentry_with_size_and_age(8000, now);
+        let oldest = mar_fixture.create_logentry_with_size_and_age(
+            8000,
+            now - Duration::from_secs(120),
+            false,
+        );
+        let middle = mar_fixture.create_logentry_with_size_and_age(
+            8000,
+            now - Duration::from_secs(30),
+            false,
+        );
+        let most_recent = mar_fixture.create_logentry_with_size_and_age(8000, now, false);
         let _size_avail = clean_mar_staging(
-            &mar_fixture.mar_staging,
+            &mar_fixture.tmp_mar_staging,
             max_total_size,
             available_space,
             min_headroom,
@@ -1078,17 +1224,26 @@ mod test {
             bytes: min_headroom.bytes - 20000,
             inodes: 100,
         };
-        let oldest =
-            mar_fixture.create_logentry_with_size_and_age(10000, now - Duration::from_secs(120));
-        let second_oldest =
-            mar_fixture.create_logentry_with_size_and_age(10000, now - Duration::from_secs(30));
-        let second_newest =
-            mar_fixture.create_logentry_with_size_and_age(10000, now - Duration::from_secs(10));
-        let most_recent = mar_fixture.create_logentry_with_size_and_age(10000, now);
+        let oldest = mar_fixture.create_logentry_with_size_and_age(
+            10000,
+            now - Duration::from_secs(120),
+            false,
+        );
+        let second_oldest = mar_fixture.create_logentry_with_size_and_age(
+            10000,
+            now - Duration::from_secs(30),
+            false,
+        );
+        let second_newest = mar_fixture.create_logentry_with_size_and_age(
+            10000,
+            now - Duration::from_secs(10),
+            false,
+        );
+        let most_recent = mar_fixture.create_logentry_with_size_and_age(10000, now, false);
 
         // Need to delete 2 entries to free up required headroom
         let _size_avail = clean_mar_staging(
-            &mar_fixture.mar_staging,
+            &mar_fixture.tmp_mar_staging,
             max_total_size,
             available_space,
             min_headroom,
@@ -1125,15 +1280,24 @@ mod test {
             bytes: max_total_size.bytes * 2,
             inodes: 100,
         };
-        let oldest =
-            mar_fixture.create_logentry_with_size_and_age(10000, now - Duration::from_secs(120));
-        let second_oldest =
-            mar_fixture.create_logentry_with_size_and_age(10000, now - Duration::from_secs(30));
-        let second_newest =
-            mar_fixture.create_logentry_with_size_and_age(10000, now - Duration::from_secs(10));
-        let most_recent = mar_fixture.create_logentry_with_size_and_age(10000, now);
+        let oldest = mar_fixture.create_logentry_with_size_and_age(
+            10000,
+            now - Duration::from_secs(120),
+            false,
+        );
+        let second_oldest = mar_fixture.create_logentry_with_size_and_age(
+            10000,
+            now - Duration::from_secs(30),
+            false,
+        );
+        let second_newest = mar_fixture.create_logentry_with_size_and_age(
+            10000,
+            now - Duration::from_secs(10),
+            false,
+        );
+        let most_recent = mar_fixture.create_logentry_with_size_and_age(10000, now, false);
         let _size_avail = clean_mar_staging(
-            &mar_fixture.mar_staging,
+            &mar_fixture.tmp_mar_staging,
             max_total_size,
             available_space,
             min_headroom,
@@ -1171,9 +1335,9 @@ mod test {
             inodes: 5,
         };
         // NOTE: the entire directory will be larger than 1 byte due to the manifest.json.
-        let path = mar_fixture.create_logentry_with_size_and_age(1, now);
+        let path = mar_fixture.create_logentry_with_size_and_age(1, now, false);
         let size_avail = clean_mar_staging(
-            &mar_fixture.mar_staging,
+            &mar_fixture.tmp_mar_staging,
             max_total_size,
             available_space,
             min_headroom,
@@ -1202,12 +1366,13 @@ mod test {
     ) {
         let now = SystemTime::now();
         let thirty_seconds_ago = now - Duration::from_secs(30);
-        let path_unexpired = mar_fixture.create_logentry_with_size_and_age(1, thirty_seconds_ago);
+        let path_unexpired =
+            mar_fixture.create_logentry_with_size_and_age(1, thirty_seconds_ago, false);
         let ten_min_ago = now - Duration::from_secs(600);
-        let path_expired = mar_fixture.create_logentry_with_size_and_age(1, ten_min_ago);
+        let path_expired = mar_fixture.create_logentry_with_size_and_age(1, ten_min_ago, false);
 
         let size_avail = clean_mar_staging(
-            &mar_fixture.mar_staging,
+            &mar_fixture.tmp_mar_staging,
             max_total_size,
             available_space,
             min_headroom,
@@ -1237,9 +1402,9 @@ mod test {
     ) {
         let now = SystemTime::now();
         let thirty_seconds_ago = now - Duration::from_secs(30);
-        let path = mar_fixture.create_logentry_with_size_and_age(1, thirty_seconds_ago);
+        let path = mar_fixture.create_logentry_with_size_and_age(1, thirty_seconds_ago, false);
         let size_avail = clean_mar_staging(
-            &mar_fixture.mar_staging,
+            &mar_fixture.tmp_mar_staging,
             max_total_size,
             available_space,
             min_headroom,
@@ -1268,9 +1433,9 @@ mod test {
     ) {
         let now = SystemTime::now();
         let over_one_week_ago = now - Duration::from_secs(604801);
-        let path = mar_fixture.create_logentry_with_size_and_age(1, over_one_week_ago);
+        let path = mar_fixture.create_logentry_with_size_and_age(1, over_one_week_ago, false);
         let size_avail = clean_mar_staging(
-            &mar_fixture.mar_staging,
+            &mar_fixture.tmp_mar_staging,
             max_total_size,
             available_space,
             min_headroom,
@@ -1306,13 +1471,13 @@ mod test {
         let (keep_old_entry, keep_new_entry) = keep_entries;
         let now = SystemTime::now();
         let yesterday = now - Duration::from_secs(86400);
-        let old_dir = mar_fixture.create_logentry_with_size_and_age(1, yesterday);
-        let now_dir = mar_fixture.create_logentry_with_size_and_age(1, now);
+        let old_dir = mar_fixture.create_logentry_with_size_and_age(1, yesterday, false);
+        let now_dir = mar_fixture.create_logentry_with_size_and_age(1, now, false);
 
         let max_total_size = DiskSize::new_capacity(2048);
 
         let size_avail = clean_mar_staging(
-            &mar_fixture.mar_staging,
+            &mar_fixture.tmp_mar_staging,
             max_total_size,
             available_space,
             min_headroom,

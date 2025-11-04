@@ -14,3 +14,7 @@ opt-level = "z"
 
 [profile.dev]
 panic="abort"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+redundant_clone = "deny"

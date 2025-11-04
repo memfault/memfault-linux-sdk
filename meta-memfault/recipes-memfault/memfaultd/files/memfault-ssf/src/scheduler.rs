@@ -74,7 +74,6 @@ impl Default for Scheduler {
 
 trait ScheduledTask: Send {
     fn execute(&self) -> Result<(), MailboxError>;
-    fn prepare_next(&self) -> Box<dyn ScheduledTask>;
 }
 
 struct DeliverMessageJobImpl<S, M>
@@ -107,12 +106,5 @@ where
     fn execute(&self) -> Result<(), MailboxError> {
         self.mailbox.send_and_wait_for_reply(self.message.clone())?;
         Ok(())
-    }
-
-    fn prepare_next(&self) -> Box<dyn ScheduledTask> {
-        Box::new(Self {
-            message: self.message.clone(),
-            mailbox: self.mailbox.clone(),
-        })
     }
 }

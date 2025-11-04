@@ -122,7 +122,7 @@ mod tests {
     #[rstest]
     fn collecting_from_empty_folder(_setup_logger: (), mar_fixture: MarCollectorFixture) {
         assert_eq!(
-            MarEntry::iterate_from_container(&mar_fixture.mar_staging)
+            MarEntry::iterate_from_container(&mar_fixture.tmp_mar_staging)
                 .unwrap()
                 .count(),
             0
@@ -134,11 +134,11 @@ mod tests {
         _setup_logger: (),
         mut mar_fixture: MarCollectorFixture,
     ) {
-        mar_fixture.create_empty_entry();
-        mar_fixture.create_logentry();
+        mar_fixture.create_empty_entry(false);
+        mar_fixture.create_logentry(false);
 
         assert_eq!(
-            MarEntry::iterate_from_container(&mar_fixture.mar_staging)
+            MarEntry::iterate_from_container(&mar_fixture.tmp_mar_staging)
                 .unwrap()
                 .filter(|e| e.is_ok())
                 .count(),

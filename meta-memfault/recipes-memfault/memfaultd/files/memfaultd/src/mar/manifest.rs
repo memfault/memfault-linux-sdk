@@ -480,6 +480,23 @@ impl Metadata {
     pub fn test_fixture() -> Self {
         Metadata::new_device_config(0)
     }
+
+    pub fn test_fixture_metrics() -> Self {
+        Metadata::LinuxMetricReport {
+            metrics: HashMap::new(),
+            duration: Duration::from_secs(0),
+            boottime_duration: None,
+            report_type: MetricReportType::Heartbeat,
+        }
+    }
+
+    pub fn test_fixture_reboot() -> Self {
+        use crate::reboot::RebootReasonCode;
+
+        Metadata::LinuxReboot {
+            reason: RebootReason::Code(RebootReasonCode::Unknown),
+        }
+    }
 }
 
 #[cfg(test)]

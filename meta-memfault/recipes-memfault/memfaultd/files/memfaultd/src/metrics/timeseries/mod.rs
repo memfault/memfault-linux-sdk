@@ -390,7 +390,7 @@ mod tests {
     use rstest::rstest;
 
     use crate::metrics::{HistogramValue, MetricReading, MetricTimestamp, MetricValue};
-    use std::{f64::INFINITY, f64::NAN, f64::NEG_INFINITY, str::FromStr};
+    use std::str::FromStr;
 
     use super::TimeSeries;
     use super::{Counter, Gauge, Histogram, RssiAverage, TimeWeightedAverage};
@@ -488,9 +488,9 @@ mod tests {
     }
 
     #[rstest]
-    #[case(INFINITY)]
-    #[case(NEG_INFINITY)]
-    #[case(NAN)]
+    #[case(f64::INFINITY)]
+    #[case(f64::NEG_INFINITY)]
+    #[case(f64::NAN)]
     fn test_edge_values_new(#[case] edge_value: f64) {
         let timestamp = MetricTimestamp::from_str("2021-01-01T00:00:00Z").unwrap();
         let a = MetricReading::Histogram {
@@ -501,9 +501,9 @@ mod tests {
     }
 
     #[rstest]
-    #[case(INFINITY)]
-    #[case(NEG_INFINITY)]
-    #[case(NAN)]
+    #[case(f64::INFINITY)]
+    #[case(f64::NEG_INFINITY)]
+    #[case(f64::NAN)]
     fn test_edge_values_aggregate(#[case] edge_value: f64) {
         let timestamp = MetricTimestamp::from_str("2021-01-01T00:00:00Z").unwrap();
         let a = MetricReading::Histogram {

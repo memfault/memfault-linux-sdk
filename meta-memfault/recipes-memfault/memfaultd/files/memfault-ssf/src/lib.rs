@@ -14,24 +14,24 @@
 //! - `Service`: a trait implemented by services
 //! - `Message`: a trait implemented by messages
 //! - `Handler<M: Message>`: a trait implemented by services that can handle
-//! messages of type `M`.
+//!   messages of type `M`.
 //!
 //! We provide some important structs to deploy the services:
 //! - `ServiceThread`: will start and run a service inside a dedicated thread.
-//! It returns a `Mailbox`.
+//!   It returns a `Mailbox`.
 //! - `Mailbox<S: Service>`: a lightweight (cheap to `clone()`) handle to send
-//! messages to a thread.
+//!   messages to a thread.
 //! - `Scheduler`: a utility thread which keeps a schedule of messages that need
-//! to be sent at fixed intervals.
+//!   to be sent at fixed intervals.
 //!
 //! As well as important testing utilities that are a big part of the value
 //! provided by this framework:
 //! - `ServiceJig`: a way to run a service inside a test without using threads.
-//! The test can precisely decide when messages should be delivered and inspect
-//! the state of the service at any time.
+//!   The test can precisely decide when messages should be delivered and inspect
+//!   the state of the service at any time.
 //! - `ServiceMock`: a service mock. Use this when you just need a place where
-//! to send messages. Your test can then verify that the right messages were
-//! sent to the mock.
+//!   to send messages. Your test can then verify that the right messages were
+//!   sent to the mock.
 //!
 
 use std::any::Any;
@@ -72,6 +72,9 @@ pub trait Service {
 /// The implementation here does not need to be `Send` as we only run the
 /// task on a single thread executor.
 pub trait TaskService: Service {
+    fn init(&mut self) -> LocalBoxFuture<'_, Result<(), String>> {
+        Box::pin(async { Ok(()) })
+    }
     fn run_task(&mut self) -> LocalBoxFuture<'_, Result<(), String>>;
 }
 

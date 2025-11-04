@@ -11,7 +11,10 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use crate::metrics::system_metrics::SystemMetricConfig;
+use crate::{
+    mar::{MarConfig, MarStagingCleanType},
+    metrics::system_metrics::SystemMetricConfig,
+};
 use crate::{
     network::{NetworkClient, NetworkConfig},
     util::{DiskBacked, UnwrapOrDie, UpdateStatus},
@@ -45,6 +48,7 @@ use eyre::{Context, Result};
 mod config_file;
 pub use config_file::{
     LevelMappingConfig, LevelMappingRegex, LinuxCustomTraceConfig, LinuxCustomTraceLogCompression,
+    PersistStorageConfig, TraceFilter,
 };
 
 mod device_config;
@@ -64,7 +68,7 @@ pub struct Config {
 }
 
 const LOGS_SUBDIRECTORY: &str = "logs";
-const MAR_STAGING_SUBDIRECTORY: &str = "mar";
+pub const MAR_STAGING_SUBDIRECTORY: &str = "mar";
 const DEVICE_CONFIG_FILE: &str = "device_config.json";
 const COREDUMP_RATE_LIMITER_FILENAME: &str = "coredump_rate_limit";
 const TRACE_RATE_LIMITER_FILENAME: &str = "trace_rate_limit";
@@ -118,10 +122,11 @@ impl Config {
 
         // After saving, create the device-config confirmation MAR entry
         if let Some(revision) = confirm_version {
-            let mar_staging = self.mar_staging_path();
+            let mar_staging = self.mar_tmp_staging_path();
+            let mar_config = MarConfig::from(self);
             MarEntryBuilder::new(&mar_staging)?
                 .set_metadata(Metadata::new_device_config(revision))
-                .save(&NetworkConfig::from(self))?;
+                .save(&NetworkConfig::from(self), &mar_config)?;
         }
         Ok(update_status)
     }
@@ -132,6 +137,10 @@ impl Config {
             None => self.config_file.persist_dir.clone(),
         }
         .into()
+    }
+
+    pub fn persist_dir(&self) -> PathBuf {
+        self.config_file.persist_dir.clone().into()
     }
 
     pub fn tmp_dir_max_size(&self) -> DiskSize {
@@ -157,8 +166,22 @@ impl Config {
         self.tmp_dir().join(LOGS_SUBDIRECTORY)
     }
 
-    pub fn mar_staging_path(&self) -> PathBuf {
+    pub fn mar_tmp_staging_path(&self) -> PathBuf {
         self.tmp_dir().join(MAR_STAGING_SUBDIRECTORY)
+    }
+
+    pub fn mar_logs_clean_type(&self) -> MarStagingCleanType {
+        self.mar_persist_storage_config()
+            .and_then(|persist_config| persist_config.logs.then_some(MarStagingCleanType::Persist))
+            .unwrap_or(MarStagingCleanType::Tmp)
+    }
+
+    pub fn mar_persist_staging_path(&self) -> PathBuf {
+        self.config_file.persist_dir.join(MAR_STAGING_SUBDIRECTORY)
+    }
+
+    pub fn mar_persist_storage_config(&self) -> Option<&PersistStorageConfig> {
+        self.config_file.persist_storage.as_ref()
     }
 
     fn device_config_path_from_config(config_file: &MemfaultdConfig) -> PathBuf {
@@ -730,7 +753,7 @@ mod tests {
             let tmp_dir = tempfile::tempdir().unwrap();
             let mut config = Config::test_fixture();
             config.config_file.persist_dir = tmp_dir.path().to_path_buf().try_into().unwrap();
-            create_dir_all(config.mar_staging_path()).unwrap();
+            create_dir_all(config.mar_tmp_staging_path()).unwrap();
             Self {
                 config,
                 _tmp_dir: tmp_dir,
@@ -739,10 +762,35 @@ mod tests {
         }
 
         fn count_mar_entries(self) -> usize {
-            MarEntry::iterate_from_container(&self.config.mar_staging_path())
+            MarEntry::iterate_from_container(&self.config.mar_tmp_staging_path())
                 .unwrap()
                 .count()
         }
+    }
+
+    #[rstest]
+    #[case(Some(true))]
+    #[case(Some(false))]
+    #[case(None)]
+    fn mar_logs_clean_type(#[case] is_persisted: Option<bool>) {
+        let mut config = Config::test_fixture();
+
+        let persist_storage = is_persisted.map(|logs| PersistStorageConfig {
+            min_headroom: 1,
+            max_usage: 2,
+            min_inodes: 3,
+            reboots: false,
+            coredumps: false,
+            metrics: false,
+            logs,
+        });
+        config.config_file.persist_storage = persist_storage;
+
+        let clean_type = is_persisted
+            .and_then(|coredumps| coredumps.then_some(MarStagingCleanType::Persist))
+            .unwrap_or(MarStagingCleanType::Tmp);
+
+        assert_eq!(config.mar_logs_clean_type(), clean_type);
     }
 
     const DEVICE_CONFIG_SAMPLE: DeviceConfigResponse = DeviceConfigResponse {

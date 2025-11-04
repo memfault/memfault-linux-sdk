@@ -1,0 +1,11 @@
+{
+    "persist_storage": {
+        "min_headroom_kib": 1024,
+        "max_usage_kib": 1024,
+        "min_inodes": 1024,
+        "reboots": true,
+        "coredumps": true,
+        "metrics": true,
+        "logs": true
+    }
+}

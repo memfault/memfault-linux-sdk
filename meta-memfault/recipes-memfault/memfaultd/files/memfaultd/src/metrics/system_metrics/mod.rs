@@ -14,7 +14,7 @@ use log::{debug, error};
 use crate::{
     metrics::KeyedMetricReading,
     mmc::MmcImpl,
-    util::system::{bytes_per_page, clock_ticks_per_second},
+    util::system::{bytes_per_page, clock_ticks_per_second, ProcfsProcessNameMapper},
 };
 
 mod config;
@@ -66,7 +66,6 @@ use oui::OuiMetricsCollector;
 
 use self::{
     memory::{MemInfoParser, MemInfoParserImpl},
-    processes::ProcfsProcessNameMapper,
     vm::VmMetricsCollector,
 };
 use super::MetricsMBox;

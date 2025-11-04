@@ -69,6 +69,21 @@ impl ServiceManager {
         service_mailbox
     }
 
+    pub fn spawn_bounded_task_service_thread<S: TaskService + Send + 'static>(
+        &mut self,
+        service: S,
+        channel_size: usize,
+    ) -> BoundedTaskMailbox<S> {
+        let service_thread = BoundedTaskServiceThread::spawn_with(service, channel_size);
+
+        let service_mailbox = service_thread.mailbox.clone();
+
+        let shutdown_handle = ShutdownHandle::from(service_thread);
+        self.shutdown_handles.push(shutdown_handle);
+
+        service_mailbox
+    }
+
     pub fn stop(&mut self) -> Vec<StatsAggregator> {
         self.shutdown_handles
             .iter()

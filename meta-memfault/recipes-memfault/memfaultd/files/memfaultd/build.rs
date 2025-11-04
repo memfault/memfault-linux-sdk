@@ -61,7 +61,89 @@ fn generate_build_info_rs() {
     write(dest_path, build_info_rs_src).expect("Failed to write build_info.rs");
 }
 
+#[cfg(all(feature = "ebpf", not(target_os = "macos")))]
+mod ebpf {
+    use std::{env, fs::write};
+    use std::{path::Path, process::Command};
+
+    struct EbpfProgram {
+        src_dir: &'static str,
+        out_key: &'static str,
+        out_name: &'static str,
+    }
+
+    impl EbpfProgram {
+        const fn new(src_dir: &'static str, out_key: &'static str, out_name: &'static str) -> Self {
+            EbpfProgram {
+                src_dir,
+                out_key,
+                out_name,
+            }
+        }
+    }
+
+    const PROGRAMS: [EbpfProgram; 1] = [EbpfProgram::new("ebpf/disk_io.c", "DISK_IO", "disk_io.o")];
+    pub fn build_ebpf() {
+        let cargo_dir = env::var_os("CARGO_MANIFEST_DIR")
+            .expect("CARGO_MANIFEST_DIR is not set")
+            .into_string()
+            .expect("Failed to convert to string");
+        let out_dir = env::var_os("OUT_DIR")
+            .expect("OUT_DIR is not set")
+            .into_string()
+            .expect("Failed to convert to string");
+
+        let mut ebpf_programs_rs_src = String::new();
+        ebpf_programs_rs_src.push_str("use aya::include_bytes_aligned;\n");
+        for program in &PROGRAMS {
+            println!("cargo:rerun-if-changed={}", program.src_dir);
+            let program_dir = format!("{}/{}", out_dir, program.out_name);
+            // PENG-779: Proper clang toolchain discovery for yocto
+            let clang_exit_status = Command::new("clang")
+                .args([
+                    "-target",
+                    "bpf",
+                    "-O2",
+                    "-c",
+                    "-g",
+                    &format!("{}/{}", &cargo_dir, program.src_dir),
+                    "-o",
+                    &program_dir,
+                ])
+                .status()
+                .expect("Failed to execute clang");
+
+            if !clang_exit_status.success() {
+                panic!(
+                    "Failed to build ebpf program {}: {}",
+                    program.src_dir, clang_exit_status
+                );
+            }
+
+            let output_def = format!(
+                "pub const {}: &[u8] = include_bytes_aligned!(\"{}\");\n",
+                program.out_key, program_dir
+            );
+            ebpf_programs_rs_src.push_str(&output_def);
+        }
+        let out_dir = env::var_os("OUT_DIR")
+            .expect("OUT_DIR is not set")
+            .into_string()
+            .expect("Failed to convert to string");
+        let dest_path = Path::new(&out_dir).join("ebpf_programs.rs");
+        println!("Output ebpf: {:?}", dest_path);
+        write(dest_path, ebpf_programs_rs_src).expect("Failed to write ebpf_program.rs");
+    }
+}
+
+#[cfg(all(feature = "ebpf", target_os = "macos"))]
+mod ebpf {
+    pub fn build_ebpf() {}
+}
+
 fn main() {
     generate_build_info_rs();
+    #[cfg(feature = "ebpf")]
+    ebpf::build_ebpf();
     println!("cargo:rerun-if-changed=build.rs");
 }

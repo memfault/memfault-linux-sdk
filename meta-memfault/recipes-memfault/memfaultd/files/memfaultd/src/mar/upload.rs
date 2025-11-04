@@ -52,25 +52,44 @@ use super::Manifest;
 ///
 /// This function will not do anything with invalid MAR entries (we assume they are "under construction").
 pub fn collect_and_upload(
-    mar_staging: &Path,
+    tmp_mar_staging: &Path,
+    persist_mar_staging: Option<PathBuf>,
     client: &impl NetworkClient,
     max_zip_size: usize,
     sampling: Sampling,
     data_retention_start: Option<DateTime<Utc>>,
 ) -> Result<usize> {
-    let mut entries = MarEntry::iterate_from_container(mar_staging)?
+    let mut tmp_entries = MarEntry::iterate_from_container(tmp_mar_staging)?
         // Apply fleet sampling to the MAR entries
         .filter(|entry_result| match entry_result {
             Ok(entry) => should_upload(&entry.manifest, &sampling, data_retention_start),
             _ => true,
         });
 
-    upload_mar_entries(&mut entries, client, max_zip_size, |included_entries| {
-        trace!("Uploaded {:?} - deleting...", included_entries);
-        included_entries.iter().for_each(|f| {
-            let _ = remove_dir_all(f);
-        })
-    })
+    match persist_mar_staging {
+        Some(persist_path) => {
+            let persist_entries = MarEntry::iterate_from_container(&persist_path)?
+                // Apply fleet sampling to the MAR entries
+                .filter(|entry_result| match entry_result {
+                    Ok(entry) => should_upload(&entry.manifest, &sampling, data_retention_start),
+                    _ => true,
+                });
+
+            let mut entries = persist_entries.chain(tmp_entries);
+            upload_mar_entries(&mut entries, client, max_zip_size, |included_entries| {
+                trace!("Uploaded {:?} - deleting...", included_entries);
+                included_entries.iter().for_each(|f| {
+                    let _ = remove_dir_all(f);
+                })
+            })
+        }
+        None => upload_mar_entries(&mut tmp_entries, client, max_zip_size, |included_entries| {
+            trace!("Uploaded {:?} - deleting...", included_entries);
+            included_entries.iter().for_each(|f| {
+                let _ = remove_dir_all(f);
+            })
+        }),
+    }
 }
 
 /// Given the current sampling configuration determine if the given MAR entry should be uploaded.
@@ -246,7 +265,7 @@ mod tests {
     #[rstest]
     fn collecting_from_empty_folder(_setup_logger: (), mar_fixture: MarCollectorFixture) {
         assert_eq!(
-            MarEntry::iterate_from_container(&mar_fixture.mar_staging)
+            MarEntry::iterate_from_container(&mar_fixture.tmp_mar_staging)
                 .unwrap()
                 .count(),
             0
@@ -258,11 +277,11 @@ mod tests {
         _setup_logger: (),
         mut mar_fixture: MarCollectorFixture,
     ) {
-        mar_fixture.create_empty_entry();
-        mar_fixture.create_logentry();
+        mar_fixture.create_empty_entry(false);
+        mar_fixture.create_logentry(false);
 
         assert_eq!(
-            MarEntry::iterate_from_container(&mar_fixture.mar_staging)
+            MarEntry::iterate_from_container(&mar_fixture.tmp_mar_staging)
                 .unwrap()
                 .filter(|e| e.is_ok())
                 .count(),
@@ -274,9 +293,9 @@ mod tests {
     #[rstest]
     fn zipping_two_entries(_setup_logger: (), mut mar_fixture: MarCollectorFixture) {
         // Add one valid entry so we can verify that this one is readable.
-        mar_fixture.create_logentry();
-        mar_fixture.create_logentry();
-        let mut entries = MarEntry::iterate_from_container(&mar_fixture.mar_staging)
+        mar_fixture.create_logentry(false);
+        mar_fixture.create_logentry(false);
+        let mut entries = MarEntry::iterate_from_container(&mar_fixture.tmp_mar_staging)
             .expect("We should still be able to collect.");
 
         let mars = gather_mar_entries_to_zip(&mut entries, usize::MAX);
@@ -293,13 +312,13 @@ mod tests {
     fn zipping_with_skipped_entries(
         _setup_logger: (),
         mut mar_fixture: MarCollectorFixture,
-        #[case] create_bogus_entry: fn(&mut MarCollectorFixture) -> PathBuf,
+        #[case] create_bogus_entry: fn(&mut MarCollectorFixture, bool) -> PathBuf,
     ) {
-        create_bogus_entry(&mut mar_fixture);
+        create_bogus_entry(&mut mar_fixture, false);
         // Add one valid entry so we can verify that this one is readable.
-        mar_fixture.create_logentry();
+        mar_fixture.create_logentry(false);
 
-        let mut entries = MarEntry::iterate_from_container(&mar_fixture.mar_staging)
+        let mut entries = MarEntry::iterate_from_container(&mar_fixture.tmp_mar_staging)
             .expect("We should still be able to collect.");
 
         let mars = gather_mar_entries_to_zip(&mut entries, usize::MAX);
@@ -312,9 +331,9 @@ mod tests {
     #[rstest]
     fn zipping_an_unreadable_attachment(_setup_logger: (), mut mar_fixture: MarCollectorFixture) {
         // Add one valid entry so we can verify that this one is readable.
-        mar_fixture.create_logentry_with_unreadable_attachment();
+        mar_fixture.create_logentry_with_unreadable_attachment(false);
 
-        let mut entries = MarEntry::iterate_from_container(&mar_fixture.mar_staging)
+        let mut entries = MarEntry::iterate_from_container(&mar_fixture.tmp_mar_staging)
             .expect("We should still be able to collect.");
 
         let mars = gather_mar_entries_to_zip(&mut entries, usize::MAX);
@@ -326,12 +345,12 @@ mod tests {
     #[rstest]
     fn new_mar_when_size_limit_is_reached(_setup_logger: (), mut mar_fixture: MarCollectorFixture) {
         let max_zip_size = 1024;
-        mar_fixture.create_logentry_with_size(max_zip_size / 2);
-        mar_fixture.create_logentry_with_size(max_zip_size);
+        mar_fixture.create_logentry_with_size(max_zip_size / 2, false);
+        mar_fixture.create_logentry_with_size(max_zip_size, false);
         // Note: the next entry exceeds the size limit, but it is still added to a MAR of its own:
-        mar_fixture.create_logentry_with_size(max_zip_size * 2);
+        mar_fixture.create_logentry_with_size(max_zip_size * 2, false);
 
-        let mut entries = MarEntry::iterate_from_container(&mar_fixture.mar_staging)
+        let mut entries = MarEntry::iterate_from_container(&mar_fixture.tmp_mar_staging)
             .expect("We should still be able to collect.");
 
         let mars = gather_mar_entries_to_zip(&mut entries, max_zip_size as usize);
@@ -352,7 +371,8 @@ mod tests {
     ) {
         // We do not set an expectation on client => it will panic if client.upload_mar is called
         collect_and_upload(
-            &mar_fixture.mar_staging,
+            &mar_fixture.tmp_mar_staging,
+            None,
             &client,
             usize::MAX,
             Sampling {
@@ -377,7 +397,7 @@ mod tests {
         client: MockNetworkClient,
         mut mar_fixture: MarCollectorFixture,
     ) {
-        mar_fixture.create_logentry();
+        mar_fixture.create_logentry(false);
 
         let expected_files =
             should_upload.then(|| vec!["<entry>/manifest.json", "<entry>/system.log"]);
@@ -401,7 +421,7 @@ mod tests {
         client: MockNetworkClient,
         mut mar_fixture: MarCollectorFixture,
     ) {
-        mar_fixture.create_device_attributes_entry(vec![], SystemTime::now());
+        mar_fixture.create_device_attributes_entry(vec![], SystemTime::now(), false);
 
         let sampling_config = Sampling {
             debugging_resolution: Resolution::Off,
@@ -425,7 +445,7 @@ mod tests {
         client: MockNetworkClient,
         mut mar_fixture: MarCollectorFixture,
     ) {
-        mar_fixture.create_reboot_entry(RebootReason::Code(RebootReasonCode::Unknown));
+        mar_fixture.create_reboot_entry(RebootReason::Code(RebootReasonCode::Unknown), false);
 
         let sampling_config = Sampling {
             debugging_resolution: resolution,
@@ -450,7 +470,7 @@ mod tests {
         mut mar_fixture: MarCollectorFixture,
     ) {
         let data = vec![1, 3, 3, 7];
-        mar_fixture.create_custom_data_recording_entry(data);
+        mar_fixture.create_custom_data_recording_entry(data, false);
 
         let sampling_config = Sampling {
             debugging_resolution: resolution,
@@ -510,7 +530,13 @@ mod tests {
         .into_iter()
         .collect();
 
-        mar_fixture.create_metric_report_entry(metrics, duration, boottime_duration, report_type);
+        mar_fixture.create_metric_report_entry(
+            metrics,
+            duration,
+            boottime_duration,
+            report_type,
+            false,
+        );
 
         let sampling_config = Sampling {
             debugging_resolution: Resolution::Off,
@@ -533,7 +559,11 @@ mod tests {
         let mut mar_fixture = MarCollectorFixture::new();
         let now = SystemTime::now();
         let yesterday = now - Duration::from_secs(24 * 60 * 60);
-        mar_fixture.create_logentry_with_size_and_age(1024, yesterday - duration_since_yesterday);
+        mar_fixture.create_logentry_with_size_and_age(
+            1024,
+            yesterday - duration_since_yesterday,
+            false,
+        );
 
         let data_retention_start = DateTime::from(yesterday);
         let sampling_config = Sampling {
@@ -560,8 +590,12 @@ mod tests {
     ) {
         let now = SystemTime::now();
         let yesterday = now - Duration::from_secs(24 * 60 * 60);
-        mar_fixture.create_reboot_entry(RebootReason::Code(RebootReasonCode::Unknown));
-        mar_fixture.create_logentry_with_size_and_age(1024, yesterday - Duration::from_secs(1));
+        mar_fixture.create_reboot_entry(RebootReason::Code(RebootReasonCode::Unknown), false);
+        mar_fixture.create_logentry_with_size_and_age(
+            1024,
+            yesterday - Duration::from_secs(1),
+            false,
+        );
 
         let data_retention_start = DateTime::from(yesterday);
         let sampling_config = Sampling {
@@ -587,7 +621,7 @@ mod tests {
     ) {
         let now = SystemTime::now();
         let yesterday = now - Duration::from_secs(24 * 60 * 60);
-        mar_fixture.create_device_config_entry();
+        mar_fixture.create_device_config_entry(false);
 
         let data_retention_start = DateTime::from(yesterday);
         let sampling_config = Sampling {
@@ -603,6 +637,56 @@ mod tests {
             Some(expected_files),
             Some(data_retention_start),
         );
+    }
+
+    #[rstest]
+    fn uploading_from_both_tmp_and_persist_dirs(
+        _setup_logger: (),
+        mut client: MockNetworkClient,
+        mut mar_fixture: MarCollectorFixture,
+    ) {
+        // Create one entry in persist and one entry in tmp
+        mar_fixture.create_logentry(true);
+        mar_fixture.create_logentry(false);
+
+        // Expect a single upload containing both entries (each entry has manifest.json + system.log)
+        client
+            .expect_upload_mar_file::<BufReader<ZipEncoder>>()
+            .withf(move |buf_reader| {
+                let zip_encoder = buf_reader.get_ref();
+                let file_names = zip_encoder.file_names();
+                // Two entries x (manifest + log) => 4 files
+                assert_eq!(file_names.len(), 4);
+                let manifest_count = file_names
+                    .iter()
+                    .filter(|name| name.ends_with("manifest.json"))
+                    .count();
+                let log_count = file_names
+                    .iter()
+                    .filter(|name| name.ends_with("system.log"))
+                    .count();
+                assert_eq!(manifest_count, 2);
+                assert_eq!(log_count, 2);
+                true
+            })
+            .once()
+            .returning(|_| Ok(()));
+
+        let sampling_config = Sampling {
+            debugging_resolution: Resolution::Off,
+            logging_resolution: Resolution::Normal,
+            monitoring_resolution: Resolution::Off,
+        };
+
+        collect_and_upload(
+            &mar_fixture.tmp_mar_staging,
+            Some(mar_fixture.persist_mar_staging),
+            &client,
+            usize::MAX,
+            sampling_config,
+            None,
+        )
+        .unwrap();
     }
 
     fn upload_and_verify(
@@ -623,7 +707,8 @@ mod tests {
                 .returning(|_| Ok(()));
         }
         collect_and_upload(
-            &mar_fixture.mar_staging,
+            &mar_fixture.tmp_mar_staging,
+            None,
             &client,
             usize::MAX,
             sampling_config,

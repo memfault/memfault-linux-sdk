@@ -28,14 +28,15 @@ use self::procfs::{proc_mem_stream, ProcMapsImpl};
 use self::{core_elf_memfault_note::CoredumpMetadata, core_transformer::CoreTransformerOptions};
 use self::{core_reader::CoreReaderImpl, core_transformer::CoreTransformerLogFetcher};
 use self::{core_writer::CoreWriterImpl, log_wrapper::CAPTURE_LOG_MAX_LEVEL};
-use crate::config::{Config, CoredumpCaptureStrategy, CoredumpCompression};
+use crate::config::{Config, CoredumpCaptureStrategy, CoredumpCompression, TraceFilter};
 use crate::mar::manifest::{CompressionAlgorithm, Metadata};
 use crate::mar::mar_entry_builder::MarEntryBuilder;
+use crate::mar::MarConfig;
 use crate::network::NetworkConfig;
 use crate::util::disk_size::get_disk_space;
 use crate::util::io::{ForwardOnlySeeker, StreamPositionTracker};
 use crate::util::persistent_rate_limiter::PersistentRateLimiter;
-use crate::util::system::{get_process_name, read_proc_cmdline};
+use crate::util::system::{get_process_name, get_process_path, read_proc_cmdline};
 use crate::{cli, util::fs::DEFAULT_GZIP_COMPRESSION_LEVEL};
 use argh::FromArgs;
 use chrono::Utc;
@@ -141,6 +142,7 @@ pub fn main() -> Result<()> {
     }
 
     let process_name = get_process_name(args.pid as u32)?;
+    let process_path = get_process_path(args.pid as u32)?;
     let (app_logs_tx, app_logs_rx) = sync_channel(1);
     let log_fetcher = CoreTransformerLogFetcher::new(core_handler_logs_rx, app_logs_rx);
 
@@ -178,6 +180,7 @@ pub fn main() -> Result<()> {
             args.tid,
             args.signal,
             process_name,
+            &process_path,
         )
         .wrap_err(format!("Error processing coredump for PID {}", args.pid))
     })
@@ -190,6 +193,7 @@ pub fn process_corefile(
     tid: i32,
     signal: i32,
     process_name: String,
+    process_path: &Path,
 ) -> Result<()> {
     let rate_limiter = if !config.config_file.enable_dev_mode {
         config.coredump_rate_limiter_file_path();
@@ -219,7 +223,7 @@ pub fn process_corefile(
         return Ok(());
     }
 
-    let mar_staging_path = config.mar_staging_path();
+    let mar_staging_path = config.mar_tmp_staging_path();
     let mar_builder = MarEntryBuilder::new(&mar_staging_path)?;
     let compression = config.config_file.coredump.compression;
     let capture_strategy = config.config_file.coredump.capture_strategy;
@@ -234,6 +238,25 @@ pub fn process_corefile(
     let cmd_line_file_name = format!("/proc/{}/cmdline", pid);
     let mut cmd_line_file = File::open(cmd_line_file_name)?;
     let cmd_line = read_proc_cmdline(&mut cmd_line_file)?;
+
+    let is_filtered = config
+        .config_file
+        .coredump
+        .filters
+        .as_ref()
+        .map_or(false, |filters| {
+            filters.iter().any(|filter| match filter {
+                TraceFilter::ExecutableName { name } => process_name == *name,
+                TraceFilter::ExecutablePath { path } => process_path.starts_with(path),
+            })
+        });
+    if is_filtered {
+        info!(
+            "Skipping coredump for filtered executable '{}'",
+            process_path.display()
+        );
+        return Ok(());
+    }
 
     let input_stream = ForwardOnlySeeker::new(BufReader::new(std::io::stdin()));
     let proc_maps = ProcMapsImpl::new(pid);
@@ -258,7 +281,7 @@ pub fn process_corefile(
                 output_stream,
                 proc_mem_stream(pid)?,
             );
-            let mut core_transformer = core_transformer::CoreTransformer::new(
+            let core_transformer = core_transformer::CoreTransformer::new(
                 core_reader,
                 core_writer,
                 proc_mem,
@@ -272,10 +295,11 @@ pub fn process_corefile(
                 Ok(()) => {
                     info!("Successfully captured coredump");
                     let network_config = NetworkConfig::from(config);
+                    let mar_config = MarConfig::from(config);
                     let mar_entry = mar_builder
                         .set_metadata(Metadata::new_coredump(output_file_name, compression.into()))
                         .add_attachment(output_file_path)?
-                        .save(&network_config)?;
+                        .save(&network_config, &mar_config)?;
 
                     debug!("Coredump MAR entry generated: {}", mar_entry.path.display());
 
@@ -325,13 +349,14 @@ pub fn process_corefile(
                 Ok(()) => {
                     info!("Successfully captured stacktrace");
                     let network_config = NetworkConfig::from(config);
+                    let mar_config = MarConfig::from(config);
                     let mar_entry = mar_builder
                         .set_metadata(Metadata::new_stacktrace(
                             output_file_name.to_string(),
                             Some(CompressionAlgorithm::Gzip),
                         ))
                         .add_attachment(output_file_path)?
-                        .save(&network_config)?;
+                        .save(&network_config, &mar_config)?;
 
                     debug!(
                         "Stacktrace MAR entry generated: {}",

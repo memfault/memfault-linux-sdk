@@ -6,7 +6,7 @@
 //! Collects process-level metrics using the
 //! /proc/<pid>/stat files for processes whose
 //! process name matches an item in the user-specified
-//! list of processes to monitor.   
+//! list of processes to monitor.
 //!
 //! Example /proc/<pid>/stat contents:
 //!
@@ -34,10 +34,9 @@ use nom::{
     IResult,
 };
 
-use crate::util::{math::counter_delta_with_overflow, time_measure::TimeMeasure};
-use crate::{
-    metrics::{system_metrics::SystemMetricFamilyCollector, KeyedMetricReading},
-    util::system::get_process_name,
+use crate::metrics::{system_metrics::SystemMetricFamilyCollector, KeyedMetricReading};
+use crate::util::{
+    math::counter_delta_with_overflow, system::ProcessNameMapper, time_measure::TimeMeasure,
 };
 
 const PROC_DIR: &str = "/proc/";
@@ -61,19 +60,6 @@ struct ProcessReading<T: TimeMeasure> {
     pagefaults_major: f64,
     pagefaults_minor: f64,
     reading_time: T,
-}
-
-pub trait ProcessNameMapper {
-    fn get_process_name(pid: u32) -> Result<String>;
-}
-
-#[derive(Clone, Copy)]
-pub struct ProcfsProcessNameMapper {}
-
-impl ProcessNameMapper for ProcfsProcessNameMapper {
-    fn get_process_name(pid: u32) -> Result<String> {
-        get_process_name(pid)
-    }
 }
 
 pub struct ProcessMetricsCollector<T: TimeMeasure, P: ProcessNameMapper> {
@@ -114,7 +100,7 @@ where
     }
 
     /// Parses the PID at the start of the /proc/<pid>/stat
-    ///  
+    ///
     /// Example input:
     /// 55270 (memfaultd) S 1 55270 55270 0 -1 4194368 825 0 0 0 100 50 0 0 20 0 19 0 18548522 1411293184 4397 18446744073709551615 1 1 0 0 0 0 0 4096 17987 0 0 0 17 7 0 0 0 0 0 0 0 0 0 0 0 0 0",
     /// Example output:
@@ -123,8 +109,8 @@ where
         terminated(u64, space1)(proc_pid_stat_line)
     }
 
-    /// Parses the process name which follows the PID, delimited by ( and ), in /proc/<pid>/stat    
-    ///  
+    /// Parses the process name which follows the PID, delimited by ( and ), in /proc/<pid>/stat
+    ///
     /// Note this snippet from the documentation on /proc/<pid>/stat:
     ///
     /// (2) comm  %s
@@ -148,7 +134,7 @@ where
     }
 
     /// Parses the process state which follows the PID, delimited by ( and )
-    ///  
+    ///
     /// Example input:
     ///  S 1 55270 55270 0 -1 4194368 825 0 0 0 100 50 0 0 20 0 19 0 18548522 1411293184 4397 18446744073709551615 1 1 0 0 0 0 0 4096 17987 0 0 0 17 7 0 0 0 0 0 0 0 0 0 0 0 0 0",
     /// Example output:
@@ -158,7 +144,7 @@ where
     }
 
     /// Parses the process state which follows the PID, delimited by ( and )
-    ///  
+    ///
     /// The following values from the resulting Vector are currently used:
     /// - minfault: The number of minor faults the process has made
     ///             which have not required loading a memory page from

@@ -23,3 +23,6 @@ default = []
 coredump = []
 systemd = []
 swupdate = []
+
+[lints]
+workspace = true

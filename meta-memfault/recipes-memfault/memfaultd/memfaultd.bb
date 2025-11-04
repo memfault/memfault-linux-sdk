@@ -31,6 +31,7 @@ DEPENDS = "zlib"
 PACKAGECONFIG ??= "coredump swupdate logging"
 PACKAGECONFIG[coredump] = ""
 PACKAGECONFIG[collectd] = ""
+PACKAGECONFIG[ebpf] = ""
 PACKAGECONFIG[swupdate] = ""
 PACKAGECONFIG[logging] = ""
 PACKAGECONFIG[openssl-tls] = ""
@@ -107,6 +108,20 @@ DEPENDS:append = " \
 CARGO_FEATURES:append = " \
     ${@bb.utils.contains('PACKAGECONFIG', 'syslog', \
         'syslog', \
+        '', \
+    d)} \
+"
+
+# eBPF
+CARGO_FEATURES:append = " \
+    ${@bb.utils.contains('PACKAGECONFIG', 'ebpf', \
+        'ebpf', \
+        '', \
+    d)} \
+"
+DEPENDS:append = " \
+    ${@bb.utils.contains('PACKAGECONFIG', 'ebpf', \
+        'libbpf', \
         '', \
     d)} \
 "

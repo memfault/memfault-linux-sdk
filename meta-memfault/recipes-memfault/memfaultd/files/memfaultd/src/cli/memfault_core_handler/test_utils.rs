@@ -27,7 +27,7 @@ pub fn build_test_header(class: u8, endianness: u8, machine: u16) -> Header {
         e_phoff: elf::header::SIZEOF_EHDR.try_into().unwrap(),
         e_phentsize: elf::program_header::SIZEOF_PHDR.try_into().unwrap(),
         e_ehsize: elf::header::SIZEOF_EHDR.try_into().unwrap(),
-        e_version: elf::header::EV_CURRENT.try_into().unwrap(),
+        e_version: elf::header::EV_CURRENT.into(),
         e_phnum: 0,
         e_machine: machine,
         e_ident,

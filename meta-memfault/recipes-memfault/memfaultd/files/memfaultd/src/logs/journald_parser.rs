@@ -73,7 +73,7 @@ pub struct JournalRawImpl {
 
 impl JournalRawImpl {
     /// Timeout journal polling after 1 minute.
-    const JOURNAL_CURSOR_FILE: &str = "JOURNALD_CURSOR";
+    const JOURNAL_CURSOR_FILE: &'static str = "JOURNALD_CURSOR";
 
     pub fn new(tmp_path: PathBuf) -> Self {
         let mut journal = std::ptr::null_mut();
