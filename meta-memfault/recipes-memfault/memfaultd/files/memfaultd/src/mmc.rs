@@ -251,8 +251,11 @@ impl TryFrom<String> for MmcLifeTime {
             return Err(eyre!("Invalid number of lifetime values"));
         }
 
-        let raw_lifetime_a = u8::from_str_radix(tokens[0], 16)?;
-        let raw_lifetime_b = u8::from_str_radix(tokens[1], 16)?;
+        let stripped_lifetime_a = tokens[0].strip_prefix("0x").unwrap_or(tokens[0]);
+        let stripped_lifetime_b = tokens[1].strip_prefix("0x").unwrap_or(tokens[1]);
+
+        let raw_lifetime_a = u8::from_str_radix(stripped_lifetime_a, 16)?;
+        let raw_lifetime_b = u8::from_str_radix(stripped_lifetime_b, 16)?;
 
         let lifetime_a_pct = raw_lifetime_to_pct(raw_lifetime_a);
         let lifetime_b_pct = raw_lifetime_to_pct(raw_lifetime_b);
@@ -407,6 +410,7 @@ mod test {
     #[case(String::from("4 5\n"), Ok(MmcLifeTime::new(Some(30), Some(40))))]
     #[case(String::from("\t4 5"), Ok(MmcLifeTime::new(Some(30), Some(40))))]
     #[case(String::from("4 5"), Ok(MmcLifeTime::new(Some(30), Some(40))))]
+    #[case(String::from("0x4 0x5"), Ok(MmcLifeTime::new(Some(30), Some(40))))]
     fn test_lifetime_from_sysfs_string(
         #[case] input_string: String,
         #[case] expected: Result<MmcLifeTime>,
