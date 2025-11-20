@@ -31,7 +31,7 @@ const SECTOR_SIZE: u64 = 512;
 pub struct DiskMetricsCollector<M: Mmc> {
     mmc: Vec<M>,
     prev_sector_readings: HashMap<String, u64>,
-    last_lifetime_reading: Option<Instant>,
+    last_lifetime_readings: HashMap<String, Instant>,
 }
 
 impl<M> DiskMetricsCollector<M>
@@ -46,7 +46,7 @@ where
         Self {
             mmc,
             prev_sector_readings: HashMap::new(),
-            last_lifetime_reading: None,
+            last_lifetime_readings: HashMap::new(),
         }
     }
 
@@ -107,13 +107,13 @@ where
         mmc: &M,
         disk_stats: Option<&Vec<u64>>,
         prev_sector_readings: &mut HashMap<String, u64>,
-        last_lifetime_reading: &mut Option<Instant>,
+        last_lifetime_reading: &mut HashMap<String, Instant>,
     ) -> Result<Vec<KeyedMetricReading>> {
         let disk_name = mmc.disk_name();
 
         let mut metrics = vec![];
 
-        match last_lifetime_reading {
+        match last_lifetime_reading.get_mut(disk_name) {
             Some(last_reading) => {
                 let now = Instant::now();
                 let get_next_reading =
@@ -124,12 +124,12 @@ where
 
                 if get_next_reading {
                     metrics.extend(Self::get_lifetime_readings(disk_name, mmc)?);
-                    *last_lifetime_reading = Some(now);
+                    *last_reading = now;
                 }
             }
             None => {
                 metrics.extend(Self::get_lifetime_readings(disk_name, mmc)?);
-                *last_lifetime_reading = Some(Instant::now());
+                last_lifetime_reading.insert(disk_name.to_string(), Instant::now());
             }
         }
 
@@ -317,7 +317,7 @@ where
                     m,
                     disk_stats_line,
                     &mut self.prev_sector_readings,
-                    &mut self.last_lifetime_reading,
+                    &mut self.last_lifetime_readings,
                 ) {
                     Ok(metrics) => Some(metrics),
                     Err(e) => {
@@ -438,14 +438,16 @@ mod test {
         // Create disk stats (sectors written = 1000)
         let disk_stats = vec![0, 0, 0, 0, 0, 0, 1000, 0, 0, 0, 0];
         let mut prev_sector_readings = HashMap::new();
-
+        let mut last_lifetime_readings = HashMap::new();
         let hour_ago = Instant::now() - DiskMetricsCollector::<FakeMmc>::LIFETIME_READING_INTERVAL;
+        last_lifetime_readings.insert("mmcblk0".to_string(), hour_ago);
+
         // First call should return MLC and SLC metrics but no bytes written (no previous reading)
         let metrics = DiskMetricsCollector::get_disk_metrics(
             &fake_mmc,
             Some(&disk_stats),
             &mut prev_sector_readings,
-            &mut Some(hour_ago),
+            &mut last_lifetime_readings,
         )
         .unwrap();
 
@@ -455,11 +457,12 @@ mod test {
         let updated_disk_stats = vec![0, 0, 0, 0, 0, 0, 2000, 0, 0, 0, 0];
 
         // Second call should include bytes written metric
+        last_lifetime_readings.insert("mmcblk0".to_string(), hour_ago);
         let metrics = DiskMetricsCollector::get_disk_metrics(
             &fake_mmc,
             Some(&updated_disk_stats),
             &mut prev_sector_readings,
-            &mut Some(hour_ago),
+            &mut last_lifetime_readings,
         )
         .unwrap();
 
@@ -491,13 +494,15 @@ mod test {
         let disk_stats = vec![0, 0, 0, 0, 0, 0, 1000, 0, 0, 0, 0];
         let mut prev_sector_readings = HashMap::new();
         let hour_ago = Instant::now() - DiskMetricsCollector::<FakeMmc>::LIFETIME_READING_INTERVAL;
+        let mut last_lifetime_readings = HashMap::new();
+        last_lifetime_readings.insert("mmcblk0".to_string(), hour_ago);
 
         // First call should return MLC and SLC metrics but no bytes written (no previous reading)
         let metrics = DiskMetricsCollector::get_disk_metrics(
             &fake_mmc,
             Some(&disk_stats),
             &mut prev_sector_readings,
-            &mut Some(hour_ago),
+            &mut last_lifetime_readings,
         )
         .unwrap();
 
@@ -508,11 +513,12 @@ mod test {
         let updated_disk_stats = vec![0, 0, 0, 0, 0, 0, 2000, 0, 0, 0, 0];
 
         // Second call should include bytes written metric
+        last_lifetime_readings.insert("mmcblk0".to_string(), hour_ago);
         let metrics = DiskMetricsCollector::get_disk_metrics(
             &fake_mmc,
             Some(&updated_disk_stats),
             &mut prev_sector_readings,
-            &mut Some(hour_ago),
+            &mut last_lifetime_readings,
         )
         .unwrap();
 
@@ -522,6 +528,84 @@ mod test {
             "[].value.**.timestamp" => "[timestamp]",
             "[].value.**.value" => rounded_redaction(5)
         });
+    }
+
+    #[test]
+    fn get_disk_metrics_multiple_disks() {
+        // Create fake MMCs
+        let fake_mmc1 = FakeMmc {
+            disk_name: "mmcblk0".to_string(),
+            product_name: "SG123".to_string(),
+            manufacturer_id: "0x00015".to_string(),
+            lifetime: MmcLifeTime {
+                lifetime_a_pct: Some(90),
+                lifetime_b_pct: Some(85),
+            },
+            sector_count: 100,
+            manufacture_date: "11/2023".to_string(),
+            revision: "1.0".to_string(),
+            serial: "0x1234567890".to_string(),
+        };
+
+        let fake_mmc2 = FakeMmc {
+            disk_name: "mmcblk1".to_string(),
+            product_name: "SG456".to_string(),
+            manufacturer_id: "0x00016".to_string(),
+            lifetime: MmcLifeTime {
+                lifetime_a_pct: Some(95),
+                lifetime_b_pct: Some(90),
+            },
+            sector_count: 200,
+            manufacture_date: "12/2023".to_string(),
+            revision: "1.1".to_string(),
+            serial: "0x0987654321".to_string(),
+        };
+
+        let disk_stats = vec![0, 0, 0, 0, 0, 0, 1000, 0, 0, 0, 0];
+        let mut prev_sector_readings = HashMap::new();
+        let mut last_lifetime_readings = HashMap::new();
+
+        let hour_ago = Instant::now() - DiskMetricsCollector::<FakeMmc>::LIFETIME_READING_INTERVAL;
+        let metrics1 = DiskMetricsCollector::get_disk_metrics(
+            &fake_mmc1,
+            Some(&disk_stats),
+            &mut prev_sector_readings,
+            &mut last_lifetime_readings,
+        )
+        .unwrap();
+        assert_eq!(metrics1.len(), 8);
+
+        let metrics2 = DiskMetricsCollector::get_disk_metrics(
+            &fake_mmc2,
+            Some(&disk_stats),
+            &mut prev_sector_readings,
+            &mut last_lifetime_readings,
+        )
+        .unwrap();
+
+        assert_eq!(metrics2.len(), 8);
+
+        let new_disk_stats = vec![0, 0, 0, 0, 0, 0, 2000, 0, 0, 0, 0];
+        last_lifetime_readings.insert("mmcblk0".to_string(), hour_ago);
+        last_lifetime_readings.insert("mmcblk1".to_string(), hour_ago);
+
+        let metrics1 = DiskMetricsCollector::get_disk_metrics(
+            &fake_mmc1,
+            Some(&new_disk_stats),
+            &mut prev_sector_readings,
+            &mut last_lifetime_readings,
+        )
+        .unwrap();
+        assert_eq!(metrics1.len(), 9);
+
+        let metrics2 = DiskMetricsCollector::get_disk_metrics(
+            &fake_mmc2,
+            Some(&new_disk_stats),
+            &mut prev_sector_readings,
+            &mut last_lifetime_readings,
+        )
+        .unwrap();
+        assert_eq!(metrics2.len(), 9);
     }
 
     #[test]
@@ -544,14 +628,16 @@ mod test {
         // Create disk stats (sectors written = 1000)
         let disk_stats = vec![0, 0, 0, 0, 0, 0, 1000, 0, 0, 0, 0];
         let mut prev_sector_readings = HashMap::new();
+        let mut last_lifetime_readings = HashMap::new();
         let hour_ago = Instant::now() - DiskMetricsCollector::<FakeMmc>::LIFETIME_READING_INTERVAL;
+        last_lifetime_readings.insert("mmcblk0".to_string(), hour_ago);
 
         // First call should return MLC and SLC metrics but no bytes written (no previous reading)
         let metrics = DiskMetricsCollector::get_disk_metrics(
             &fake_mmc,
             Some(&disk_stats),
             &mut prev_sector_readings,
-            &mut Some(hour_ago),
+            &mut last_lifetime_readings,
         )
         .unwrap();
 
@@ -579,19 +665,19 @@ mod test {
         };
 
         let mut prev_sector_readings = HashMap::new();
-        let mut last_lifetime_reading = None;
+        let mut last_lifetime_readings = HashMap::new();
 
         // First reading should set the last reading time
         let metrics = DiskMetricsCollector::get_disk_metrics(
             &fake_mmc,
             None,
             &mut prev_sector_readings,
-            &mut last_lifetime_reading,
+            &mut last_lifetime_readings,
         )
         .unwrap();
 
         assert_eq!(metrics.len(), 8);
-        assert!(last_lifetime_reading.is_some());
+        assert!(last_lifetime_readings.contains_key("mmcblk0"));
     }
 
     #[test]
@@ -611,14 +697,17 @@ mod test {
         };
 
         let mut prev_sector_readings = HashMap::new();
-        let mut last_lifetime_reading =
-            Some(Instant::now() - DiskMetricsCollector::<FakeMmc>::LIFETIME_READING_INTERVAL);
+        let mut last_lifetime_readings = HashMap::new();
+        last_lifetime_readings.insert(
+            "mmcblk0".to_string(),
+            Instant::now() - DiskMetricsCollector::<FakeMmc>::LIFETIME_READING_INTERVAL,
+        );
 
         let metrics = DiskMetricsCollector::get_disk_metrics(
             &fake_mmc,
             None,
             &mut prev_sector_readings,
-            &mut last_lifetime_reading,
+            &mut last_lifetime_readings,
         )
         .unwrap();
 
@@ -626,13 +715,14 @@ mod test {
         assert_eq!(metrics.len(), 8);
 
         let mut prev_sector_readings = HashMap::new();
-        let mut last_lifetime_reading = Some(Instant::now());
+        let mut last_lifetime_readings = HashMap::new();
+        last_lifetime_readings.insert("mmcblk0".to_string(), Instant::now());
 
         let metrics = DiskMetricsCollector::get_disk_metrics(
             &fake_mmc,
             None,
             &mut prev_sector_readings,
-            &mut last_lifetime_reading,
+            &mut last_lifetime_readings,
         )
         .unwrap();
 
