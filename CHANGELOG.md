@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.2] - 2025-11-20
+
+This is a patch release fixing some issues related to collecting eMMC lifetime
+metrics.
+
+### Fixed
+
+- Fixed a bug causing the eMMC ioctl responsible for fetching lifetimes to fail.
+- Fixed a bug in systems with multiple disks would never read lifetimes for the
+  second disk.
+
 ## [1.25.1] - 2025-11-12
 
 This is a patch release fixing a bug introduced in 1.25.0 affecting disk
@@ -1545,3 +1556,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.25.0-kirkstone
 [1.25.1]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.25.1-kirkstone
+[1.25.2]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.25.2-kirkstone

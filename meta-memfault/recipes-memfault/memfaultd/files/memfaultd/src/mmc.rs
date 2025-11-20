@@ -6,7 +6,7 @@ use std::{path::Path, str::FromStr};
 
 use eyre::{eyre, Report, Result};
 use fs_extra::file::read_to_string;
-use log::warn;
+use log::{info, warn};
 use nix::fcntl::{open, OFlag};
 use nix::ioctl_readwrite;
 use nix::sys::stat::Mode;
@@ -66,7 +66,7 @@ impl MmcImpl {
             .map_err(|e| eyre!("Failed to read MMC type string: {}", e))
             .and_then(|type_string| MmcType::from_str(type_string.trim()))?;
 
-        let lifetime_source = Self::is_lifetime_available(&sysfs_device_path);
+        let lifetime_source = Self::is_lifetime_available(&sysfs_device_path, &device_path);
 
         Ok(Self {
             device_path,
@@ -86,11 +86,15 @@ impl MmcImpl {
     ///
     /// For the sysfs method, if we cannot find the file, we can assume that the
     /// JEDEC rev of the disk is too old to report lifetimes.
-    fn is_lifetime_available(sysfs_device_path: &Path) -> Option<LifetimeSource> {
+    fn is_lifetime_available(
+        sysfs_device_path: &Path,
+        device_path: &Path,
+    ) -> Option<LifetimeSource> {
         if Self::kernel_supports_sysfs_lifetime() {
             Self::is_lifetime_available_sysfs(sysfs_device_path).then_some(LifetimeSource::Sysfs)
         } else {
-            let jedec_rev = read_extcsd(sysfs_device_path)
+            info!("sysfs lifetime not available, falling back to ioctl read");
+            let jedec_rev = read_extcsd(device_path)
                 .ok()
                 .map(|ext_csd| get_jedec_revision(&ext_csd));
 
@@ -103,9 +107,23 @@ impl MmcImpl {
         use procfs::KernelVersion;
 
         let sysfs_lifetime_kernel_version = KernelVersion::new(4, 19, 0);
-        let current_kernel_version = KernelVersion::current().ok();
+        let current_kernel_version = KernelVersion::current();
 
-        current_kernel_version.is_some_and(|current| current >= sysfs_lifetime_kernel_version)
+        if let Err(e) = &current_kernel_version {
+            warn!("Unable to read kernel version: {e}");
+        }
+
+        current_kernel_version.is_ok_and(|current| {
+            let supported = current >= sysfs_lifetime_kernel_version;
+            if !supported {
+                info!(
+                    "sysfs lifetime reads not supported by kernel version: {:?}",
+                    current
+                );
+            }
+
+            supported
+        })
     }
 
     #[cfg(not(target_os = "linux"))]
