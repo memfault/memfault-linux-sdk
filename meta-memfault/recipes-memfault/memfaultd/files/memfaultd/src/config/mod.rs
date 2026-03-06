@@ -52,8 +52,12 @@ pub use config_file::{
 };
 
 mod device_config;
+pub use device_config::{DeviceConfigLogging, DeviceConfigLoggingFilters};
 mod device_info;
+mod messages;
 mod utils;
+
+pub use messages::DeviceConfigUpdateMessage;
 
 const FALLBACK_SOFTWARE_VERSION: &str = "0.0.0-memfault-unknown";
 const FALLBACK_SOFTWARE_TYPE: &str = "memfault-unknown";
@@ -264,11 +268,19 @@ impl Config {
         self.config_file.battery_monitor.is_some()
     }
 
-    pub fn battery_monitor_battery_info_command(&self) -> &str {
-        match self.config_file.battery_monitor.as_ref() {
-            Some(battery_config) => battery_config.battery_info_command.as_ref(),
-            None => "",
-        }
+    pub fn battery_monitor_battery_info_command(&self) -> Option<&str> {
+        self.config_file
+            .battery_monitor
+            .as_ref()
+            .and_then(|monitor| monitor.battery_info_command.as_ref())
+            .map(|command| command.as_str())
+    }
+
+    pub fn battery_monitor_auto_mode(&self) -> bool {
+        self.config_file
+            .battery_monitor
+            .as_ref()
+            .is_some_and(|monitor| monitor.auto)
     }
 
     pub fn battery_monitor_interval(&self) -> Duration {
@@ -805,6 +817,7 @@ mod tests {
                         monitoring_resolution: DeviceConfigResponseResolution::High,
                     },
                     data_upload_start_date: None,
+                    memfaultd: None,
                 },
             },
         },

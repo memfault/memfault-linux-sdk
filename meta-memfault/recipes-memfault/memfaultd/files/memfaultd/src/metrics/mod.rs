@@ -4,9 +4,13 @@
 use chrono::{DateTime, Utc};
 
 mod battery;
+pub use battery::find_sysfs_battery_entry;
+pub use battery::start_battery_reading_thread;
 pub use battery::BatteryMonitor;
 pub use battery::BatteryMonitorReading;
 pub use battery::BatteryReadingHandler;
+pub use battery::BatteryReadingMessage;
+pub use battery::SysfsBatteryParser;
 
 mod connectivity;
 pub use connectivity::ConnectivityMonitor;
@@ -20,6 +24,7 @@ pub use metric_string_key::MetricStringKey;
 mod metric_report;
 pub use metric_report::MetricReport;
 pub use metric_report::MetricReportType;
+pub use metric_report::MetricsSet;
 
 mod metric_report_manager;
 pub use metric_report_manager::MetricReportManager;

@@ -219,26 +219,30 @@ enum ProcessStatus {
     Exited(ExitStatus),
 }
 
-use sealed_test::prelude::*;
+#[cfg(test)]
+mod test {
+    use super::*;
+    use sealed_test::prelude::*;
 
-#[sealed_test]
-fn test_success_propagates() {
-    let args: MemfaultWatchArgs = MemfaultWatchArgs {
-        config_file: None,
-        verbose: false,
-        command: vec!["ls".into()],
-    };
+    #[sealed_test]
+    fn test_success_propagates() {
+        let args: MemfaultWatchArgs = MemfaultWatchArgs {
+            config_file: None,
+            verbose: false,
+            command: vec!["ls".into()],
+        };
 
-    assert_eq!(run_from_args(args).unwrap(), 0);
-}
+        assert_eq!(run_from_args(args).unwrap(), 0);
+    }
 
-#[sealed_test]
-fn test_error_propagates() {
-    let args: MemfaultWatchArgs = MemfaultWatchArgs {
-        config_file: None,
-        verbose: false,
-        command: vec!["bash".into(), "-c".into(), "exit 7".into()],
-    };
+    #[sealed_test]
+    fn test_error_propagates() {
+        let args: MemfaultWatchArgs = MemfaultWatchArgs {
+            config_file: None,
+            verbose: false,
+            command: vec!["bash".into(), "-c".into(), "exit 7".into()],
+        };
 
-    assert_eq!(run_from_args(args).unwrap(), 7);
+        assert_eq!(run_from_args(args).unwrap(), 7);
+    }
 }

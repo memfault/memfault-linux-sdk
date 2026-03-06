@@ -1,0 +1,24 @@
+---
+source: memfaultd/src/network/requests.rs
+expression: response
+snapshot_kind: text
+---
+{
+  "data": {
+    "config": {
+      "memfault": {
+        "sampling": {
+          "debugging.resolution": "high",
+          "logging.resolution": "normal",
+          "monitoring.resolution": "low"
+        },
+        "data_upload_start_date": "2025-01-15T10:30:00+00:00",
+        "memfaultd": {
+          "sdk-settings": null
+        }
+      }
+    },
+    "revision": 42,
+    "completed": 50
+  }
+}

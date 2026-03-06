@@ -6,6 +6,56 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.26.0] - 2026-03-06
+
+This release adds several improvements to battery monitoring, including
+automatic sysfs-based battery metrics and a new State of Health metric. Log
+filters can now be pushed from the server via device config and will be merged
+with on-device filter settings. There are also a handful of bug fixes, including
+improvements to stacktrace unwinding for architectures with a builtin return
+address register.
+
+### Added
+
+- Added parsing of the sysfs battery node if present, and no battery monitor is
+  defined. This allows for out of the box battery metrics for devices that have
+  the node configured.
+- Added a new metric, `battery_soh_pct`, which tracks the battery's State of
+  Health (SOH) as a percentage. This metric is available when the battery
+  monitor is set in `auto` mode, which is also the default when no
+  `battery_monitor` config section is set.
+- Added a custom `getrandom` implementation that can be enabled for older
+  kernels that do not have the system call.
+- Added a metric config that allows specifying keys that will track min/max in
+  addition to the average.
+- Added support for log filter configuration from the server-side device config.
+  These filters are appended to any on-device log filter settings, allowing log
+  verbosity to be adjusted remotely without changing the device configuration.
+
+### Changed
+
+- Changed nix dependency to point to a mirror with a single patch for arch
+  support. This represents a single patch against our previous version. We'll
+  move back to the upstream release when the needed patches are merged and
+  released.
+- Trimmed some unused depedencies/features to cut down on binary size.
+
+### Fixed
+
+- Fixed a bug in logging where holding a file handle through a move caused a
+  panic in some file systems.
+- Fixed an aggressive log statement that would print an error when falling back
+  to `/etc/machine-id`. This error would print even if a device ID was provided.
+- Fixed some flakey tests that would fail at the start of each new year.
+- Fixed a bug in stacktrace coredumps where unwinding would exit early in cases where
+  no FDE is present in the first frame. For architectures that have a builtin
+  `RA` register (e.g., `LR`), that will be used to continue unwinding in these cases.
+
+### Removed
+
+- Removed `prctl` dependency in favor of the same functionality in `nix`.
+- Removed some dead logging code.
+
 ## [1.25.2] - 2025-11-20
 
 This is a patch release fixing some issues related to collecting eMMC lifetime
@@ -1558,3 +1608,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.25.1-kirkstone
 [1.25.2]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.25.2-kirkstone
+[1.26.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.26.0-kirkstone

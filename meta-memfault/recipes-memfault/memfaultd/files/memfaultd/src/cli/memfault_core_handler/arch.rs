@@ -233,6 +233,9 @@ cfg_if! {
         // a compile time error, as we want to be able to compile memfaultd for all
         // architectures, but we don't need register access for all of them. Currently
         // these registers are only used to filter out stack memory from coredumps.
+        pub const ELF_TARGET_MACHINE: u16 = 0;
+
+        #[derive(Debug, PartialEq, Eq)]
         pub struct ElfGRegSet;
         pub fn get_stack_pointer(_regs: &ElfGRegSet) -> usize {
             0
@@ -240,7 +243,7 @@ cfg_if! {
         pub fn get_program_counter(_regs: &ElfGRegSet) -> usize {
             0
         }
-        pub fn set_stack_pointer(_regs: &mut HashMap<Register, usize>, sp: usize)  {
+        pub fn set_stack_pointer(_regs: &mut HashMap<Register, usize>, _sp: usize)  {
             todo!()
         }
         pub fn get_return_register(_regs: &HashMap<Register, usize>) -> Option<usize> {
@@ -250,7 +253,7 @@ cfg_if! {
             todo!()
         }
         impl From<&ElfGRegSet> for UnwindFrameContext {
-            fn from(regs: &ElfGRegSet) -> Self {
+            fn from(_regs: &ElfGRegSet) -> Self {
                 UnwindFrameContext::default()
             }
         }

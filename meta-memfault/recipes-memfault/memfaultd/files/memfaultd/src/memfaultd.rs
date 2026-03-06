@@ -1,13 +1,8 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use std::process::Command;
-use std::sync::mpsc::Sender;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Mutex,
-};
 use std::thread::{sleep, spawn};
 use std::time::Duration;
 use std::{cmp::max, fs::create_dir_all, time::Instant};
@@ -17,9 +12,13 @@ use eyre::{eyre, Context};
 use log::{debug, error, info, trace, warn};
 use rand::{thread_rng, Rng};
 
-use ssf::{MsgMailbox, Scheduler, ServiceManager};
+use ssf::{BroadcastMsgMailbox, MsgMailbox, Scheduler, ServiceManager};
 
-use crate::{config::Resolution, mar::MarConfig, metrics::MetricsEventHandler};
+use crate::{
+    config::DeviceConfigUpdateMessage,
+    mar::MarConfig,
+    metrics::{start_battery_reading_thread, MetricsEventHandler},
+};
 use crate::{
     mar::MarStagingCleanType,
     metrics::{
@@ -38,7 +37,7 @@ use crate::{
     mar::upload::collect_and_upload,
     metrics::{
         core_metrics::{METRIC_MF_SYNC_FAILURE, METRIC_MF_SYNC_SUCCESS},
-        CrashFreeIntervalTracker, MetricReportManager, StatsDServer,
+        CrashFreeIntervalTracker, MetricReportManager, MetricsSet, StatsDServer,
     },
 };
 use crate::{http_server::HttpHandler, util::UpdateStatus};
@@ -121,6 +120,10 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
 
     let service_manager = get_service_manager();
 
+    // Currently only the log collector cares about device config updates, and it might be disabled
+    #[allow(unused_mut)]
+    let mut device_config_mailboxes = vec![];
+
     // Make sure the MAR staging area exists
     create_dir_all(config.mar_tmp_staging_path()).wrap_err_with(|| {
         eyre!(
@@ -139,17 +142,21 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     let mut system = ServiceManager::default();
 
     // Metric store
+    let extra_histo_min_max =
+        MetricsSet::from_metric_keys(&config.config_file.metrics.min_max_metrics);
     let metric_report_manager = match config.session_configs() {
         Some(session_configs) => MetricReportManager::new_with_session_configs(
             config.hrt_enabled(),
             config.hrt_max_samples_per_min(),
             session_configs,
             config.config_file.metrics.enable_daily_heartbeats,
+            extra_histo_min_max,
         ),
         None => MetricReportManager::new(
             config.hrt_enabled(),
             config.hrt_max_samples_per_min(),
             config.config_file.metrics.enable_daily_heartbeats,
+            extra_histo_min_max,
         ),
     };
     let metrics_mbox = system.spawn_service_thread(metric_report_manager);
@@ -193,12 +200,11 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         config.mar_tmp_staging_path(),
     ))];
 
-    let battery_monitor = Arc::new(Mutex::new(BatteryMonitor::<Instant>::new(
-        metrics_mbox.clone().into(),
-    )));
+    let battery_monitor = BatteryMonitor::<Instant>::new(metrics_mbox.clone().into());
+    let battery_monitor_mbox = system.spawn_service_thread(battery_monitor);
     let battery_reading_handler = BatteryReadingHandler::new(
         config.config_file.enable_data_collection,
-        battery_monitor.clone(),
+        battery_monitor_mbox.clone().into(),
     );
     http_handlers.push(Box::new(battery_reading_handler));
 
@@ -298,25 +304,9 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     // periodically if enabled by configuration
     if config.battery_monitor_periodic_update_enabled() && config.config_file.enable_data_collection
     {
-        let battery_monitor_interval = config.battery_monitor_interval();
-        let battery_info_command_str = config.battery_monitor_battery_info_command().to_string();
-        spawn(move || {
-            let mut next_battery_interval = Instant::now() + battery_monitor_interval;
-            loop {
-                while Instant::now() < next_battery_interval {
-                    sleep(next_battery_interval - Instant::now());
-                }
-                next_battery_interval += battery_monitor_interval;
-                let battery_info_command = Command::new(&battery_info_command_str);
-                if let Err(e) = battery_monitor
-                    .lock()
-                    .expect("Mutex poisoned")
-                    .update_via_command(battery_info_command)
-                {
-                    warn!("Error updating battery monitor metrics: {}", e);
-                }
-            }
-        });
+        if let Err(e) = start_battery_reading_thread(&config, battery_monitor_mbox.into()) {
+            warn!("Failed to start periodic battery reading thread: {e}");
+        }
     }
     // Connected time monitor is only enabled if config is defined
     if let Some(connectivity_monitor_config) = config.connectivity_monitor_config() {
@@ -447,10 +437,6 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     }
 
     // Only set to a non-None value when we build with the logging feature
-    #[allow(unused_mut, /* reason = "Is unused when logging is disabled." */)]
-    let mut logging_resolution_sender: Option<Sender<Resolution>> = None;
-
-    // Only set to a non-None value when we build with the logging feature
     #[cfg(feature = "logging")]
     #[allow(unused_mut)]
     let mut trace_log_collector_mbox: Option<MsgMailbox<GetQueuedLogsMsg>> = None;
@@ -465,6 +451,8 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
 
         let fluent_bit_config = FluentBitConfig::from(&config);
         if config.config_file.enable_data_collection {
+            use crate::config::DeviceConfigUpdateMessage;
+
             let log_source = config.config_file.logs.source;
             let extra_attr = config.log_extra_attributes();
 
@@ -519,25 +507,29 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                 })
             };
 
-            let logging_resolution = config
-                .cached_device_config
-                .read()
-                .expect("RwLock Poisoned")
-                .get()
-                .sampling
-                .logging_resolution;
-
-            let (log_collector, sender) = LogCollector::open(
+            let device_config = Arc::new(
+                config
+                    .cached_device_config
+                    .read()
+                    .expect("RWLock Poisoned")
+                    .get()
+                    .clone(),
+            );
+            let log_collector = LogCollector::open(
                 log_config,
-                logging_resolution,
                 on_log_completion,
                 headroom_limiter,
                 metrics_mbox.clone().into(),
+                device_config,
             )?;
 
             let max_buffered_lines = config.log_max_buffered_lines();
             let log_collector_mbox =
                 system.spawn_bounded_service_thread(log_collector, max_buffered_lines);
+
+            let log_msg_mailbox: MsgMailbox<DeviceConfigUpdateMessage> =
+                log_collector_mbox.clone().into();
+            device_config_mailboxes.push(log_msg_mailbox);
             // Begin log recovery in spawned thread
             if let Err(e) = log_collector_mbox.send_and_forget(RecoverLogsMsg) {
                 warn!("Failed to start log recovery: {}", e);
@@ -580,9 +572,6 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                 #[cfg(not(feature = "systemd"))]
                 LogSource::Journald => warn!("logs.source configuration set to \"journald\", but memfaultd was not compiled with the systemd feature. Logs will not be collected."),
             }
-            // Store the Sender in a variable that can be accessed
-            // outside this logging code block
-            logging_resolution_sender = Some(sender);
 
             trace_log_collector_mbox = Some(log_collector_mbox.clone().into());
 
@@ -701,6 +690,8 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     let is_first_iteration = Arc::new(AtomicBool::new(true));
     let first_iteration_completed = Arc::new(AtomicBool::new(false));
 
+    let device_config_broadcast = BroadcastMsgMailbox::from(device_config_mailboxes);
+
     loop_with_exponential_error_backoff(
         || {
             // Since this sleep is only performed on the first sync,
@@ -757,21 +748,18 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                     Ok(UpdateStatus::Updated) => {
                         info!("Device config updated");
                         last_device_config_refresh = Some(Instant::now());
-                        if let Some(sender) = &logging_resolution_sender {
-                            if let Err(e) = sender.send(
-                                config
-                                    .cached_device_config
-                                    .read()
-                                    .expect("RwLock Poisoned")
-                                    .get()
-                                    .sampling
-                                    .logging_resolution,
-                            ) {
-                                warn!(
-                                    "Error sending updated device config to log collector: {}",
-                                    e
-                                );
-                            }
+                        let config = Arc::new(
+                            config
+                                .cached_device_config
+                                .read()
+                                .expect("RWLock poisoned")
+                                .get()
+                                .clone(),
+                        );
+                        if let Err(e) = device_config_broadcast
+                            .send_and_forget(DeviceConfigUpdateMessage { config })
+                        {
+                            warn!("Failed to broadcast device config update: {}", e);
                         }
                     }
                     Ok(UpdateStatus::Unchanged) => {
@@ -865,4 +853,15 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     } else {
         Ok(MemfaultLoopResult::Terminate)
     }
+}
+
+#[cfg(feature = "custom-rand")]
+use getrandom::Error;
+
+#[cfg(feature = "custom-rand")]
+#[no_mangle]
+unsafe extern "Rust" fn __getrandom_v03_custom(dest: *mut u8, len: usize) -> Result<(), Error> {
+    use crate::random::custom_getrandom;
+
+    custom_getrandom(dest, len)
 }

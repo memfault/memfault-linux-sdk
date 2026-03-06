@@ -7,6 +7,7 @@
 //! the implementation for systemd.
 //!
 
+#[cfg(not(feature = "systemd"))]
 mod default;
 #[cfg(feature = "systemd")]
 mod systemd;
@@ -31,6 +32,7 @@ pub enum ServiceManagerStatus {
     Running,
     Stopping,
     Stopped,
+    #[cfg(not(feature = "systemd"))]
     Unknown,
 }
 

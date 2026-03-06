@@ -1,7 +1,7 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use std::path::PathBuf;
+use std::{os::fd::AsRawFd, path::PathBuf};
 use std::{path::Path, str::FromStr};
 
 use eyre::{eyre, Report, Result};
@@ -358,7 +358,7 @@ fn read_extcsd(device_path: &Path) -> Result<[u8; EXT_CSD_SIZE]> {
         data_ptr: buf.as_mut_ptr() as u64,
     };
 
-    match unsafe { mmc_ioc_cmd_read(fd, &mut cmd) } {
+    match unsafe { mmc_ioc_cmd_read(fd.as_raw_fd(), &mut cmd) } {
         Ok(_) => {
             let _ = close(fd);
 

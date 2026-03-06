@@ -1,17 +1,17 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
+//! "Rendezvous structures used by the run-time dynamic linker to
+//! communicate details of shared object loading to the debugger."
+//! See glibc's elf/link.h
+//! https://sourceware.org/git/?p=glibc.git;a=blob;f=elf/link.h;h=3b5954d9818e8ea9f35638c55961f861f6ae6057
+
 use std::io::{Read, Seek, SeekFrom};
 
 use eyre::{eyre, Result};
 
 use crate::cli::memfault_core_handler::ElfPtrSize;
 use crate::util::mem::AsBytes;
-
-/// "Rendezvous structures used by the run-time dynamic linker to
-/// communicate details of shared object loading to the debugger."
-/// See glibc's elf/link.h
-/// https://sourceware.org/git/?p=glibc.git;a=blob;f=elf/link.h;h=3b5954d9818e8ea9f35638c55961f861f6ae6057
 
 // TODO: MFLT-11643 Add support for r_debug_extended
 

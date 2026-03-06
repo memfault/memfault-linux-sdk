@@ -1,0 +1,5 @@
+{
+    "metrics": {
+        "min_max_metrics": ["my_custom_metric", "my_service_latency"]
+    }
+}

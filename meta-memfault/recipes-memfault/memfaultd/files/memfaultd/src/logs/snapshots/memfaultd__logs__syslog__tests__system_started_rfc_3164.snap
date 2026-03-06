@@ -1,9 +1,10 @@
 ---
 source: memfaultd/src/logs/syslog.rs
-expression: result
+expression: entry
+snapshot_kind: text
 ---
 {
-  "ts": "2025-05-15T14:30:45+00:00",
+  "ts": "test",
   "data": {
     "MESSAGE": "System started",
     "_PID": "1234",

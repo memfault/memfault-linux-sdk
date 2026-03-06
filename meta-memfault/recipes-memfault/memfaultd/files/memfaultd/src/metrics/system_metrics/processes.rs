@@ -147,15 +147,15 @@ where
     ///
     /// The following values from the resulting Vector are currently used:
     /// - minfault: The number of minor faults the process has made
-    ///             which have not required loading a memory page from
-    ///             disk. (index 6)
+    ///   which have not required loading a memory page from
+    ///   disk. (index 6)
     /// - majfault: The number of major faults the process has made
-    ///             which have required loading a memory page from
-    ///             disk. (index 8)
+    ///   which have required loading a memory page from
+    ///   isk. (index 8)
     /// - utime: Amount of time that this process has been scheduled
-    ///          in user mode, measured in clock ticks (index 10)
+    ///   in user mode, measured in clock ticks (index 10)
     /// - stime: Amount of time that this process has been scheduled
-    ///          in kernel mode, measured in clock ticks (index 11)
+    ///   in kernel mode, measured in clock ticks (index 11)
     /// - num_threads: Number of threads in the corresponding process (Index 16)
     /// - vsize: Virtual memory size in bytes for the process (index 19)
     /// - rss: number of pages the process has in real memory (index 20)

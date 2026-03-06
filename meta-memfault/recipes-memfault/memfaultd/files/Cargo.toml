@@ -9,11 +9,11 @@ resolver = "2"
 
 [profile.release]
 # We do not handle FFI unwinding so we need to keep panic abort for now.
-panic="abort"
+panic = "abort"
 opt-level = "z"
 
 [profile.dev]
-panic="abort"
+panic = "abort"
 
 [workspace.lints.clippy]
 unwrap_used = "deny"

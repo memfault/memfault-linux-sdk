@@ -1,0 +1,15 @@
+---
+source: memfaultd/src/config/device_config.rs
+expression: device_config
+snapshot_kind: text
+---
+{
+  "revision": 42,
+  "sampling": {
+    "debugging_resolution": "High",
+    "logging_resolution": "High",
+    "monitoring_resolution": "High"
+  },
+  "data_upload_start_date": "2025-11-24T16:02:39.340159894Z",
+  "logging": null
+}
