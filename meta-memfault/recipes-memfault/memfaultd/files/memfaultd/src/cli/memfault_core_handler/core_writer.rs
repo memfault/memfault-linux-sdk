@@ -381,7 +381,7 @@ mod test {
 
     impl Read for FailReader {
         fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
-            Err(io::Error::new(io::ErrorKind::Other, "read failed"))
+            Err(io::Error::other("read failed"))
         }
     }
 

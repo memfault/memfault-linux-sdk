@@ -1,6 +1,7 @@
 ---
 source: memfaultd/src/network/requests.rs
 expression: response
+snapshot_kind: text
 ---
 {
   "data": {
@@ -11,7 +12,8 @@ expression: response
           "logging.resolution": "high",
           "monitoring.resolution": "low"
         },
-        "data_upload_start_date": null
+        "data_upload_start_date": null,
+        "memfaultd": null
       }
     },
     "revision": 123,

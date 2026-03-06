@@ -5,7 +5,10 @@ use super::NetworkConfig;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::util::serialization::optional_datetime_to_rfc3339;
+use crate::{
+    config::{LogFilterRule, LogRuleAction},
+    util::serialization::optional_datetime_to_rfc3339,
+};
 
 /// Device metadata required to prepare and commit uploads.
 #[derive(Serialize, Deserialize, Debug)]
@@ -148,7 +151,28 @@ pub struct DeviceConfigResponseMemfault {
     pub sampling: DeviceConfigResponseSampling,
     #[serde(with = "optional_datetime_to_rfc3339", default)]
     pub data_upload_start_date: Option<DateTime<Utc>>,
+    pub memfaultd: Option<DeviceConfigResponseMemfaultd>,
 }
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DeviceConfigResponseMemfaultd {
+    #[serde(rename = "sdk-settings")]
+    pub sdk_settings: Option<DeviceConfigSdkSettings>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DeviceConfigSdkSettings {
+    #[serde(rename = "logs.filters")]
+    pub log_filters: Option<DeviceConfigResponseLogFilters>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DeviceConfigResponseLogFilters {
+    pub default_action: Option<LogRuleAction>,
+    #[serde(rename = "rules")]
+    pub log_filter_rules: Option<Vec<LogFilterRule>>,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DeviceConfigResponseSampling {
     #[serde(rename = "debugging.resolution")]
@@ -176,7 +200,7 @@ mod test {
     use super::*;
 
     use insta::assert_json_snapshot;
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     #[test]
     fn test_prepare_upload_serialization() {
@@ -295,5 +319,147 @@ mod test {
             response.data.config.memfault.sampling.monitoring_resolution,
             DeviceConfigResponseResolution::Low
         ));
+    }
+
+    #[test]
+    fn test_device_config_with_memfaultd() {
+        let json = json!({
+            "data": {
+                "revision": 42,
+                "completed": 50,
+                "config": {
+                    "memfault": {
+                        "sampling": {
+                            "debugging.resolution": "high",
+                            "logging.resolution": "normal",
+                            "monitoring.resolution": "low"
+                        },
+                        "memfaultd": {
+                            "sdk-settings": {
+                                "logs.filters": {
+                                    "default_action": null,
+                                    "rules": [
+                                        {
+                                            "service": "example.service",
+                                            "counter_name": null,
+                                            "pattern": ".*error.*",
+                                            "level": "ERROR",
+                                            "extra_fields": {
+                                                "tag": "important"
+                                            },
+                                            "action": "include"
+                                        },
+                                        {
+                                            "service": null,
+                                            "counter_name": null,
+                                            "pattern": "debug",
+                                            "level": null,
+                                            "extra_fields": null,
+                                            "action": "exclude"
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                },
+                "data_upload_start_date": "2025-01-15T10:30:00Z"
+            }
+        });
+
+        verify_response("device_config_memfaultd", json, 42, Some(50));
+    }
+
+    #[test]
+    fn test_device_config_with_memfaultd_empty_memfaultd() {
+        let json = json!({
+            "data": {
+                "config": {
+                    "memfault": {
+                        "sampling": {
+                            "debugging.resolution": "high",
+                            "logging.resolution": "normal",
+                            "monitoring.resolution": "low"
+                        },
+                        "data_upload_start_date": "2025-01-15T10:30:00Z",
+                        "memfaultd":  null
+                    }
+                },
+                "revision": 42,
+                "completed": 50
+            }
+        });
+
+        verify_response("device_config_no_memfaultd", json, 42, Some(50));
+    }
+
+    #[test]
+    fn test_device_config_with_memfaultd_empty_logs() {
+        let json = json!({
+            "data": {
+                "config": {
+                    "memfault": {
+                        "sampling": {
+                            "debugging.resolution": "high",
+                            "logging.resolution": "normal",
+                            "monitoring.resolution": "low"
+                        },
+                        "data_upload_start_date": "2025-01-15T10:30:00Z",
+                        "memfaultd": {
+                            "sdk-settings": {
+                                "logs": null
+                            }
+                        }
+                    }
+                },
+                "revision": 42,
+                "completed": 50
+            }
+        });
+
+        verify_response("device_cconfig_no_logs", json, 42, Some(50));
+    }
+
+    #[test]
+    fn test_device_config_with_memfaultd_empty_sdk_settings() {
+        let json = json!({
+            "data": {
+                "config": {
+                    "memfault": {
+                        "sampling": {
+                            "debugging.resolution": "high",
+                            "logging.resolution": "normal",
+                            "monitoring.resolution": "low"
+                        },
+                        "data_upload_start_date": "2025-01-15T10:30:00Z",
+                        "memfaultd": {
+                            "sdk-settings": null
+                        }
+                    }
+                },
+                "revision": 42,
+                "completed": 50
+            }
+        });
+
+        verify_response("device_config_no_sdk_settings", json, 42, Some(50));
+    }
+
+    fn verify_response(test_name: &str, json_val: Value, revision: u32, completed: Option<u32>) {
+        let json_string = json_val.to_string();
+        let parsed: Result<DeviceConfigResponse, _> = serde_json::from_str(&json_string);
+
+        assert!(parsed.is_ok());
+
+        let response = parsed.unwrap();
+
+        assert_eq!(response.data.revision, revision);
+        assert_eq!(response.data.completed, completed);
+        assert!(matches!(
+            response.data.config.memfault.sampling.debugging_resolution,
+            DeviceConfigResponseResolution::High
+        ));
+
+        assert_json_snapshot!(test_name, response);
     }
 }

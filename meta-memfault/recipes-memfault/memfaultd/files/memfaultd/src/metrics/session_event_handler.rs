@@ -156,7 +156,7 @@ mod tests {
         mar::manifest::{Manifest, Metadata},
         metrics::{
             hrt::HRT_DEFAULT_MAX_SAMPLES_PER_MIN, KeyedMetricReading, MetricReportManager,
-            MetricStringKey, MetricValue, SessionName,
+            MetricStringKey, MetricValue, MetricsSet, SessionName,
         },
         test_utils::in_histograms,
         util::path::AbsolutePath,
@@ -382,6 +382,7 @@ mod tests {
             NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN).unwrap(),
             &[session_config],
             true,
+            MetricsSet::empty(),
         ));
 
         let tempdir = TempDir::new().unwrap();

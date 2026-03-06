@@ -45,7 +45,7 @@ use eyre::{eyre, Result, WrapErr};
 use flate2::write::GzEncoder;
 use kernlog::KernelLog;
 use log::{debug, error, info, warn, LevelFilter, Log};
-use prctl::set_dumpable;
+use nix::sys::prctl::set_dumpable;
 use stack_unwinder::{EhFrameFinderImpl, UnwindHandler};
 use std::io::BufWriter;
 use std::path::Path;
@@ -244,7 +244,7 @@ pub fn process_corefile(
         .coredump
         .filters
         .as_ref()
-        .map_or(false, |filters| {
+        .is_some_and(|filters| {
             filters.iter().any(|filter| match filter {
                 TraceFilter::ExecutableName { name } => process_name == *name,
                 TraceFilter::ExecutablePath { path } => process_path.starts_with(path),

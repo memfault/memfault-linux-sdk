@@ -206,16 +206,13 @@ mod tests {
             }
         }
 
-        fn read_config(&self) -> Option<TestJson> {
+        fn read_config(&self) -> Option<TestJson<'_>> {
             let file = match File::open(&self.path) {
                 Ok(file) => file,
                 Err(_) => return None,
             };
             let reader = BufReader::new(file);
-            match serde_json::from_reader(reader) {
-                Ok(config) => Some(config),
-                Err(_) => None,
-            }
+            serde_json::from_reader(reader).ok()
         }
     }
 }

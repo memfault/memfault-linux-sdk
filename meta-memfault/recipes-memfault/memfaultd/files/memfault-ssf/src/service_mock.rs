@@ -1,14 +1,14 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, Sender};
 
 use crate::{Message, MsgMailbox};
 
 /// The ServiceMock allows you to mock a service processing messages of a specific type.
 pub struct ServiceMock<M: Message> {
     pub mbox: MsgMailbox<M>,
-    receiver: Receiver<M>,
+    receiver: Receiver<(M, Sender<M::Reply>)>,
 }
 
 impl<M: Message> ServiceMock<M> {
@@ -23,7 +23,10 @@ impl<M: Message> ServiceMock<M> {
     }
 
     pub fn take_messages(&mut self) -> Vec<M> {
-        self.receiver.try_iter().collect()
+        self.receiver
+            .try_iter()
+            .map(|(message, _)| message)
+            .collect()
     }
 }
 

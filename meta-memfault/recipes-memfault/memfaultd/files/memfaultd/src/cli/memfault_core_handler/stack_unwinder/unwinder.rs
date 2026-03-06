@@ -87,74 +87,87 @@ impl<'a, E: EhFrameFinder> Unwinder<'a, E> {
                 cur_return_addr as _,
                 EhFrame::cie_from_offset,
             );
-            let fde = match fde {
-                Ok(fde) => fde,
+            match fde {
+                Ok(fde) => {
+                    let unwind_row = fde.unwind_info_for_address(
+                        &unwind_info.eh_frame,
+                        &unwind_info.bases,
+                        &mut unwind_ctx,
+                        cur_return_addr as _,
+                    )?;
+
+                    if unwind_row.register(return_register_idx()) == RegisterRule::Undefined
+                        && !first_frame
+                    {
+                        // If the return address rule is undefined, we know this function never returns,
+                        // so we can exit.
+                        //
+                        // Note: there is an edge case here where the first frame may never return, like a
+                        // rust null ptr write. For architectures that have it we will us the return
+                        // address directly from the coredump.
+                        break;
+                    }
+
+                    // Unwind CFA
+                    let cfa_rule = unwind_row.cfa();
+                    let cfa = parse_cfa_rule(
+                        cfa_rule,
+                        ctx,
+                        &unwind_info.eh_frame,
+                        fde.cie().encoding(),
+                        memory,
+                    )?;
+
+                    // Unwind the registers
+                    let result = unwind_row.registers().try_for_each(|(register, rule)| {
+                        parse_register_rule(
+                            rule,
+                            register,
+                            cfa,
+                            ctx,
+                            memory,
+                            fde.cie().encoding(),
+                            &unwind_info.eh_frame,
+                        )
+                    });
+                    if let Err(e) = result {
+                        debug!("Failed to unwind registers: {:?}", e);
+                        break;
+                    }
+
+                    set_stack_pointer(&mut ctx.registers, cfa);
+
+                    cur_return_addr = get_return_register(&ctx.registers)
+                        .ok_or_else(|| eyre!("Failed to get return address from registers"))?;
+
+                    // A return address of 0 indicates the end of the stack
+                    if cur_return_addr == 0 {
+                        break;
+                    }
+
+                    // For trampoline functions, the return address is the address of the trampoline.
+                    // This differs from a normal function where the return address is the instruction
+                    // after the call
+                    let pc_offset = !fde.is_signal_trampoline() as usize;
+                    cur_return_addr -= pc_offset;
+                }
                 Err(e) => {
-                    // If we can't get an FDE, we've reached the end of the stack
                     debug!("Failed to get FDE: {:?}", e);
-                    break;
+                    // if we're in the first frame, we can just fall back to the RA
+                    if first_frame {
+                        cur_return_addr = get_return_register(&ctx.registers)
+                            .ok_or_else(|| eyre!("Failed to get return address from registers"))?;
+
+                        // A return address of 0 indicates the end of the stack
+                        if cur_return_addr == 0 {
+                            break;
+                        }
+                    } else {
+                        // If we can't get an FDE, we've reached the end of the stack
+                        break;
+                    }
                 }
             };
-            let unwind_row = fde.unwind_info_for_address(
-                &unwind_info.eh_frame,
-                &unwind_info.bases,
-                &mut unwind_ctx,
-                cur_return_addr as _,
-            )?;
-
-            if unwind_row.register(return_register_idx()) == RegisterRule::Undefined && !first_frame
-            {
-                // If the return address rule is undefined, we know this function never returns,
-                // so we can exit.
-                //
-                // Note: there is an edge case here where the first frame may never return, like a
-                // rust null ptr write. For architectures that have it we will us the return
-                // address directly from the coredump.
-                break;
-            }
-
-            // Unwind CFA
-            let cfa_rule = unwind_row.cfa();
-            let cfa = parse_cfa_rule(
-                cfa_rule,
-                ctx,
-                &unwind_info.eh_frame,
-                fde.cie().encoding(),
-                memory,
-            )?;
-
-            // Unwind the registers
-            let result = unwind_row.registers().try_for_each(|(register, rule)| {
-                parse_register_rule(
-                    rule,
-                    register,
-                    cfa,
-                    ctx,
-                    memory,
-                    fde.cie().encoding(),
-                    &unwind_info.eh_frame,
-                )
-            });
-            if let Err(e) = result {
-                debug!("Failed to unwind registers: {:?}", e);
-                break;
-            }
-
-            set_stack_pointer(&mut ctx.registers, cfa);
-
-            cur_return_addr = get_return_register(&ctx.registers)
-                .ok_or_else(|| eyre!("Failed to get return address from registers"))?;
-
-            // A return address of 0 indicates the end of the stack
-            if cur_return_addr == 0 {
-                break;
-            }
-
-            // For trampoline functions, the return address is the address of the trampoline.
-            // This differs from a normal function where the return address is the instruction
-            // after the call
-            let pc_offset = !fde.is_signal_trampoline() as usize;
-            cur_return_addr -= pc_offset;
 
             ctx.pc_stack.push(cur_return_addr);
 
@@ -374,10 +387,15 @@ pub struct UnwindFrameContext {
 
 #[cfg(test)]
 mod test {
-    use std::io::Cursor;
+    use std::{collections::VecDeque, fs::File, io::Cursor, path::PathBuf};
 
     use gimli::{DW_OP_breg0, DW_OP_deref_size, DW_OP_lit0, Encoding, Format, RunTimeEndian};
     use rstest::rstest;
+
+    use crate::cli::memfault_core_handler::{
+        elf_utils::{get_base_addr_from_reader, read_elf_header, SectionMap},
+        stack_unwinder::stacktrace_format::SymbolFileDescriptor,
+    };
 
     use super::*;
 
@@ -490,6 +508,32 @@ mod test {
         assert_eq!(val, expected);
     }
 
+    #[test]
+    fn test_no_fde_first_frame_falls_back_to_ra() {
+        let starting_addr = 0x1usize;
+        let ra_val = 0x4321usize;
+
+        let mut mock = MockEhFrameFinder {
+            responses: [
+                Ok(simple_exe_eh_frame_info()),
+                Err(eyre!("no eh_frame for ra address")),
+            ]
+            .into_iter()
+            .collect(),
+        };
+
+        let mut ctx = UnwindFrameContext::default();
+        ctx.registers.insert(return_register_idx(), ra_val);
+
+        let mut memory = Cursor::new(vec![0u8; 0x10000]);
+        let mut unwinder = Unwinder::new(&mut mock);
+        unwinder
+            .unwind_stack(starting_addr, &mut ctx, &mut memory)
+            .unwrap();
+
+        assert_eq!(ctx.pc_stack, vec![starting_addr, ra_val]);
+    }
+
     fn encoding() -> Encoding {
         Encoding {
             format: Format::Dwarf32,
@@ -502,5 +546,33 @@ mod test {
     fn eh_frame(data: &'static [u8]) -> EhFrame<EndianSlice<'static, NativeEndian>> {
         let endian = NativeEndian;
         EhFrame::new(data, endian)
+    }
+
+    struct MockEhFrameFinder {
+        responses: VecDeque<Result<EhFrameInfo>>,
+    }
+
+    impl EhFrameFinder for MockEhFrameFinder {
+        fn find_eh_frame(&mut self, _pc: usize) -> Result<EhFrameInfo> {
+            self.responses
+                .pop_front()
+                .unwrap_or_else(|| Err(eyre!("no more responses")))
+        }
+
+        fn get_symbol_file_descriptors(&self) -> Result<Vec<SymbolFileDescriptor>> {
+            Ok(vec![])
+        }
+    }
+
+    fn simple_exe_eh_frame_info() -> EhFrameInfo {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("src/cli/memfault_core_handler/fixtures/simple_executable/simple_exe.elf");
+        let mut file = File::open(&path).unwrap();
+        let elf_header = read_elf_header(&mut file).unwrap();
+        let base_addr = get_base_addr_from_reader(&mut file, &elf_header).unwrap();
+        let mut section_map = SectionMap::new(File::open(&path).unwrap(), &elf_header).unwrap();
+        let eh_frame_hdr = section_map.get_section(".eh_frame_hdr").unwrap().unwrap();
+        let eh_frame = section_map.get_section(".eh_frame").unwrap().unwrap();
+        EhFrameInfo::new(eh_frame_hdr, eh_frame, base_addr, base_addr)
     }
 }

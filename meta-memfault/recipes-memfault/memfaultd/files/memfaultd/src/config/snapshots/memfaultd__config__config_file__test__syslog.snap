@@ -69,7 +69,11 @@ expression: content
   "http_server": {
     "bind_address": "127.0.0.1:8787"
   },
-  "battery_monitor": null,
+  "battery_monitor": {
+    "battery_info_command": null,
+    "auto": true,
+    "interval_seconds": 600
+  },
   "connectivity_monitor": null,
   "sessions": null,
   "metrics": {
@@ -94,7 +98,8 @@ expression: content
     "high_resolution_telemetry": {
       "enable": true,
       "max_samples_per_minute": 750
-    }
+    },
+    "min_max_metrics": []
   },
   "custom_trace": {
     "log_compression": "gzip",

@@ -49,7 +49,7 @@ fn send_logs(num_log_lines: u64) {
     );
     log_lines.into_iter().for_each(|log_line| {
         log_filter
-            .apply_rules(log_line)
+            .apply_rules(log_line, None)
             .expect("Failed to process log line");
     });
 }

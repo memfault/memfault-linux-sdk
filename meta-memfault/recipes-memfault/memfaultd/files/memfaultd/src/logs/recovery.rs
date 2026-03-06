@@ -66,7 +66,7 @@ fn get_recovery(file_infos: Vec<FileInfo>, gen_uuid: fn() -> Uuid) -> Recovery {
             },
             _ => None,
         })
-        .last()
+        .next_back()
         .unwrap_or_else(gen_uuid);
 
     let (mut to_recover_infos, to_delete_infos): (Vec<FileInfo>, Vec<FileInfo>) =

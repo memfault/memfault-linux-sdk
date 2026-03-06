@@ -1,2 +1,6 @@
 [build]
 rustflags = ["-C", "force-unwind-tables=yes"]
+
+[target.mipsel-unknown-linux-gnu]
+linker = "mipsel-linux-gnu-gcc"
+rustflags = ["-C", "panic=unwind"]
