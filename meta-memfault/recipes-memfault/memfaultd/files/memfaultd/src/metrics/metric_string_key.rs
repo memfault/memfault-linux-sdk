@@ -75,7 +75,7 @@ impl Ord for MetricStringKey {
 }
 impl PartialOrd for MetricStringKey {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.inner.cmp(&other.inner))
+        Some(self.cmp(other))
     }
 }
 

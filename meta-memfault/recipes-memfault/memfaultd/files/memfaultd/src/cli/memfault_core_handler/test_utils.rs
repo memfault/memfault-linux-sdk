@@ -12,7 +12,7 @@ use goblin::elf::{
 };
 use procfs::process::{MMPermissions, MMapPath, MemoryMap};
 use std::fs::read;
-use std::io::{Cursor, Error, ErrorKind, Read, Seek, SeekFrom, Take};
+use std::io::{Cursor, Error, Read, Seek, SeekFrom, Take};
 use std::path::Path;
 use take_mut::take;
 
@@ -159,7 +159,7 @@ impl Seek for FakeProcMem {
             SeekFrom::Current(pos) => self
                 .stream_position()
                 .map(|p| pos.checked_add(p as i64).unwrap() as u64),
-            SeekFrom::End(_) => Err(Error::new(ErrorKind::Other, "Not implemented")),
+            SeekFrom::End(_) => Err(Error::other("Not implemented")),
         }
         .unwrap();
 
@@ -184,17 +184,14 @@ impl Seek for FakeProcMem {
                     .get_mut()
                     .seek(SeekFrom::Start(ph.p_offset + vaddr - ph.p_vaddr))
             }
-            None => Err(Error::new(
-                ErrorKind::Other,
-                format!("Invalid seek position: {:#x}", vaddr),
-            )),
+            None => Err(Error::other(format!("Invalid seek position: {:#x}", vaddr))),
         }
     }
 
     fn stream_position(&mut self) -> std::io::Result<u64> {
         let inner_pos = self.inner.get_mut().stream_position()?;
         self.file_offset_to_vaddr(inner_pos)
-            .ok_or_else(|| Error::new(ErrorKind::Other, "Invalid stream position"))
+            .ok_or_else(|| Error::other("Invalid stream position"))
     }
 }
 

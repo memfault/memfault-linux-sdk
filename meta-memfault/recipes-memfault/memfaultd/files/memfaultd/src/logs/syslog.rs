@@ -155,18 +155,42 @@ mod tests {
         "<34>1 2023-05-15T14:30:45Z hostname systemd 1234 ID - [meta key=\"value\"] System started",
         "system_started_rfc_5424"
     )]
-    #[case(
-        "<34>May 15 14:30:45 hostname systemd[1234]: System started",
-        "system_started_rfc_3164"
-    )]
-    #[case(
-        "<13>May 15 14:30:46 hostname kernel: Kernel panic detected!!",
-        "kernel_panic_rfc_3164"
-    )]
     fn test_read_syslog_message(#[case] input: &str, #[case] snapshot_name: &str) {
         let result = SyslogServer::parse_syslog_message(input, Utc).unwrap();
 
         assert_json_snapshot!(snapshot_name, result);
+    }
+
+    #[rstest]
+    #[case(
+        "<34>May 15 14:30:45 hostname systemd[1234]: System started",
+        "system_started_rfc_3164",
+        "15/05 14:30"
+    )]
+    #[case(
+        "<13>May 15 14:30:46 hostname kernel: Kernel panic detected!!",
+        "kernel_panic_rfc_3164",
+        "15/05 14:30"
+    )]
+    fn test_read_syslog_message_no_year(
+        #[case] input: &str,
+        #[case] snapshot_name: &str,
+        #[case] expected_date_str: &str,
+    ) {
+        let entry = SyslogServer::parse_syslog_message(input, Utc).unwrap();
+
+        assert_json_snapshot!(snapshot_name, entry, {
+            ".ts" => "test"
+        });
+
+        let now = Utc::now();
+        let expected_current_year_str = format!("{}", now.format("%Y"));
+        let current_year_str = format!("{}", entry.ts.format("%Y"));
+
+        assert_eq!(expected_current_year_str, current_year_str);
+
+        let date_str = format!("{}", entry.ts.format("%d/%m %H:%M"));
+        assert_eq!(date_str, expected_date_str);
     }
 
     #[test]

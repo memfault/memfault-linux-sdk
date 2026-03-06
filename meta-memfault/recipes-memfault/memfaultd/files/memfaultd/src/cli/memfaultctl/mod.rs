@@ -408,7 +408,7 @@ pub fn main() -> Result<()> {
             let file_name = file_name
                 .trim()
                 .split('/')
-                .last()
+                .next_back()
                 .ok_or_else(|| eyre!("{} is not a valid file path", file_name))?
                 .to_string();
 

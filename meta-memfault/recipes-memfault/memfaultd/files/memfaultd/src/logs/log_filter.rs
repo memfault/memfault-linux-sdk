@@ -12,7 +12,7 @@ use log::warn;
 use regex::{Captures, Regex};
 
 use crate::{
-    config::{LogFilterRule, LogRuleAction, LogToMetricRule},
+    config::{DeviceConfigLogging, LogFilterRule, LogRuleAction, LogToMetricRule},
     logs::levels::{
         LOG_LEVEL_ALERT, LOG_LEVEL_CRITICAL, LOG_LEVEL_DEBUG, LOG_LEVEL_EMERGENCY, LOG_LEVEL_ERROR,
         LOG_LEVEL_INFO, LOG_LEVEL_NOTICE, LOG_LEVEL_WARN,
@@ -182,12 +182,29 @@ impl LogFilter {
     ///
     /// This method also increments any logs to metrics counters whose patterns
     /// match the specified LogEntry
-    pub fn apply_rules(&mut self, log_entry: LogEntry) -> Option<LogEntry> {
-        for rule in &self.rules {
+    pub fn apply_rules(
+        &mut self,
+        log_entry: LogEntry,
+        logging_config: Option<&DeviceConfigLogging>,
+    ) -> Option<LogEntry> {
+        let rule_iter: Box<dyn Iterator<Item = &LogFilterRule>> = match logging_config
+            .and_then(|config| config.filters.as_ref())
+            .and_then(|filters| filters.log_filter_rules.as_ref())
+        {
+            Some(device_config_rules) => {
+                Box::new(self.rules.iter().chain(device_config_rules.iter()))
+            }
+            None => Box::new(self.rules.iter()),
+        };
+        let default_action = logging_config
+            .and_then(|logging| logging.filters.as_ref())
+            .and_then(|filters| filters.default_action)
+            .unwrap_or(self.default_action);
+        for rule in rule_iter {
             match Self::apply_rule(
                 rule,
                 &log_entry,
-                &self.default_action,
+                &default_action,
                 &self.metrics_mbox,
                 &mut self.regex_cache,
             ) {
@@ -202,7 +219,7 @@ impl LogFilter {
         }
 
         // No rules matched - fall back to default action
-        if self.default_action == LogRuleAction::Exclude {
+        if default_action == LogRuleAction::Exclude {
             None
         } else {
             Some(log_entry)
@@ -385,7 +402,11 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::{logs::log_entry::LogValue, metrics::TakeMetrics};
+    use crate::{
+        config::{DeviceConfigLogging, DeviceConfigLoggingFilters},
+        logs::log_entry::LogValue,
+        metrics::TakeMetrics,
+    };
     use ssf::ServiceMock;
 
     #[rstest]
@@ -400,11 +421,11 @@ mod tests {
     fn no_rules_default_action(#[case] log_entry: LogEntry, #[case] default_action: LogRuleAction) {
         let service = ServiceMock::new();
         let sender = service.mbox;
-        let mut log_filter = LogFilter::new(vec![], vec![], default_action.clone(), sender);
+        let mut log_filter = LogFilter::new(vec![], vec![], default_action, sender);
         if default_action == LogRuleAction::Include {
-            assert!(log_filter.apply_rules(log_entry).is_some());
+            assert!(log_filter.apply_rules(log_entry, None).is_some());
         } else {
-            assert!(log_filter.apply_rules(log_entry).is_none());
+            assert!(log_filter.apply_rules(log_entry, None).is_none());
         }
     }
 
@@ -432,7 +453,7 @@ mod tests {
             action: Some(LogRuleAction::Include),
         };
         let mut log_filter = LogFilter::new(vec![log_rule], vec![], default_action, sender);
-        assert!(log_filter.apply_rules(log_entry).is_some());
+        assert!(log_filter.apply_rules(log_entry, None).is_some());
     }
 
     #[rstest]
@@ -459,7 +480,7 @@ mod tests {
             action: Some(LogRuleAction::Include),
         };
         let mut log_filter = LogFilter::new(vec![log_rule], vec![], default_action, sender);
-        assert!(log_filter.apply_rules(log_entry).is_some());
+        assert!(log_filter.apply_rules(log_entry, None).is_some());
     }
 
     #[rstest]
@@ -486,7 +507,7 @@ mod tests {
             action: Some(LogRuleAction::Include),
         };
         let mut log_filter = LogFilter::new(vec![log_rule], vec![], default_action, sender);
-        assert!(log_filter.apply_rules(log_entry).is_some());
+        assert!(log_filter.apply_rules(log_entry, None).is_some());
     }
 
     #[rstest]
@@ -582,7 +603,7 @@ mod tests {
             test_name,
             log_entries
                 .into_iter()
-                .flat_map(|entry| log_filter.apply_rules(entry))
+                .flat_map(|entry| log_filter.apply_rules(entry, None))
                 .collect::<Vec<_>>()
         );
 
@@ -690,7 +711,7 @@ mod tests {
             test_name,
             log_entries
                 .into_iter()
-                .flat_map(|entry| log_filter.apply_rules(entry))
+                .flat_map(|entry| log_filter.apply_rules(entry, None))
                 .collect::<Vec<_>>()
         );
 
@@ -733,7 +754,7 @@ mod tests {
             test_name,
             log_entries
                 .into_iter()
-                .flat_map(|entry| log_filter.apply_rules(entry))
+                .flat_map(|entry| log_filter.apply_rules(entry, None))
                 .collect::<Vec<_>>()
         );
 
@@ -741,5 +762,41 @@ mod tests {
             format!("{}-metrics", test_name).as_str(),
             service.take_metrics().unwrap()
         );
+    }
+
+    #[test]
+    fn test_filter_rules_with_device_config() {
+        let mut service = ServiceMock::new();
+        let sender = service.mbox.clone();
+        let log_rule = LogFilterRule {
+            service: Some("test_service".to_string()),
+            counter_name: None,
+            pattern: Some("test .*".to_string()),
+            level: None,
+            extra_fields: None,
+            action: Some(LogRuleAction::Exclude),
+        };
+        let mut log_filter = LogFilter::new(vec![log_rule], vec![], LogRuleAction::Include, sender);
+        let device_config_rule = LogFilterRule {
+            service: None,
+            counter_name: Some("device_config".to_string()),
+            pattern: Some("device config".to_string()),
+            level: None,
+            extra_fields: None,
+            action: Some(LogRuleAction::Include),
+        };
+        let device_config_logging = Some(DeviceConfigLogging {
+            filters: Some(DeviceConfigLoggingFilters {
+                default_action: None,
+                log_filter_rules: Some(vec![device_config_rule]),
+            }),
+        });
+        let log_entry =
+            LogEntry::new_with_message_level_and_service("device config", "7", "test_service");
+        assert!(log_filter
+            .apply_rules(log_entry, device_config_logging.as_ref())
+            .is_some());
+
+        assert_json_snapshot!(service.take_metrics().unwrap());
     }
 }

@@ -1,0 +1,48 @@
+---
+source: memfaultd/src/network/requests.rs
+expression: response
+snapshot_kind: text
+---
+{
+  "data": {
+    "config": {
+      "memfault": {
+        "sampling": {
+          "debugging.resolution": "high",
+          "logging.resolution": "normal",
+          "monitoring.resolution": "low"
+        },
+        "data_upload_start_date": null,
+        "memfaultd": {
+          "sdk-settings": {
+            "logs.filters": {
+              "default_action": null,
+              "rules": [
+                {
+                  "service": "example.service",
+                  "counter_name": null,
+                  "pattern": ".*error.*",
+                  "level": "ERROR",
+                  "extra_fields": {
+                    "tag": "important"
+                  },
+                  "action": "include"
+                },
+                {
+                  "service": null,
+                  "counter_name": null,
+                  "pattern": "debug",
+                  "level": null,
+                  "extra_fields": null,
+                  "action": "exclude"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "revision": 42,
+    "completed": 50
+  }
+}

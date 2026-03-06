@@ -5,7 +5,10 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 
 use eyre::{eyre, Result};
-use procfs::process::{MemoryMap, MemoryMaps};
+use procfs::{
+    process::{MemoryMap, MemoryMaps},
+    FromRead,
+};
 
 use crate::cli::memfault_core_handler::memory_range::MemoryRange;
 use crate::cli::memfault_core_handler::ElfPtrSize;
@@ -54,9 +57,9 @@ impl ProcMaps for ProcMapsImpl {
     fn get_process_maps(&mut self) -> Result<Vec<MemoryMap>> {
         let maps_file_name = format!("/proc/{}/maps", self.pid);
 
-        Ok(MemoryMaps::from_path(maps_file_name)
+        Ok(MemoryMaps::from_file(maps_file_name)
             .map_err(|e| eyre!("Failed to read /proc/{}/maps: {}", self.pid, e))?
-            .memory_maps)
+            .0)
     }
 }
 

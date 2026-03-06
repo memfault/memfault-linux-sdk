@@ -1,0 +1,13 @@
+---
+source: memfaultd/src/metrics/metric_report.rs
+expression: sorted_metrics
+---
+{
+  "custom_gauge": 6.0,
+  "custom_gauge_max": 7.0,
+  "custom_gauge_min": 5.0,
+  "foo": 4.0,
+  "memory_pct": 2.0,
+  "memory_pct_max": 3.0,
+  "memory_pct_min": 1.0
+}

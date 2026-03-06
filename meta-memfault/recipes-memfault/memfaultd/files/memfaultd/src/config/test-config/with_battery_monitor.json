@@ -1,0 +1,5 @@
+{
+  "battery_monitor": {
+    "battery_info_command": "get_battery"
+  }
+}

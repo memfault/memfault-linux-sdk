@@ -1,7 +1,6 @@
 ---
 source: memfaultd/src/config/config_file.rs
 expression: content
-snapshot_kind: text
 ---
 {
   "persist_dir": "/media/memfault",
@@ -66,7 +65,11 @@ snapshot_kind: text
   "http_server": {
     "bind_address": "127.0.0.1:8787"
   },
-  "battery_monitor": null,
+  "battery_monitor": {
+    "battery_info_command": null,
+    "auto": true,
+    "interval_seconds": 600
+  },
   "connectivity_monitor": null,
   "sessions": null,
   "metrics": {
@@ -91,7 +94,8 @@ snapshot_kind: text
     "high_resolution_telemetry": {
       "enable": true,
       "max_samples_per_minute": 750
-    }
+    },
+    "min_max_metrics": []
   },
   "custom_trace": {
     "log_compression": "gzip",

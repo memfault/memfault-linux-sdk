@@ -212,13 +212,7 @@ impl Default for LogFilterConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct LogFiltersConfig {
-    pub default_action: LogRuleAction,
-    pub rules: Vec<LogFilterRule>,
-}
-
-#[derive(Clone, PartialEq, Serialize, Deserialize, Debug)]
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum LogRuleAction {
     Pass,
@@ -226,7 +220,7 @@ pub enum LogRuleAction {
     Exclude,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct LogFilterRule {
     pub service: Option<String>,
     pub counter_name: Option<String>,
@@ -274,7 +268,8 @@ pub struct MarConfig {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BatteryMonitorConfig {
-    pub battery_info_command: String,
+    pub battery_info_command: Option<String>,
+    pub auto: bool,
     #[serde(with = "seconds_to_duration")]
     pub interval_seconds: Duration,
 }
@@ -300,6 +295,8 @@ pub struct MetricReportConfig {
     pub system_metric_collection: SystemMetricConfig,
     pub statsd_server: Option<StatsDServerConfig>,
     pub high_resolution_telemetry: HrtConfig,
+    #[serde(default)]
+    pub min_max_metrics: Vec<MetricStringKey>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -644,6 +641,8 @@ mod test {
     #[case("with_linux_custom_trace_zlib")]
     #[case("with_linux_custom_trace_none")]
     #[case("with_persist_storage_config")]
+    #[case("with_battery_monitor")]
+    #[case("with_min_max_metrics")]
     fn can_parse_test_files(#[case] name: &str) {
         let input_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("src/config/test-config")

@@ -96,7 +96,7 @@ mod tests {
     fn rl(limit: u32) -> RLFixture {
         let clock = FakeRelativeClock::default();
         RLFixture {
-            rl: RateLimiter::new_with_clock(NonZeroU32::new(limit).unwrap(), &clock),
+            rl: RateLimiter::new_with_clock(NonZeroU32::new(limit).unwrap(), clock.clone()),
             clock,
         }
     }
@@ -141,7 +141,7 @@ mod tests {
 
     impl<I, C: clock::Clock> RateLimiter<I, C> {
         #[cfg(test)]
-        pub fn new_with_clock(capacity: NonZeroU32, clock: &C) -> Self {
+        pub fn new_with_clock(capacity: NonZeroU32, clock: C) -> Self {
             use governor::Quota;
             use governor::RateLimiter as GovRateLimiter;
 

@@ -141,9 +141,36 @@ mod ebpf {
     pub fn build_ebpf() {}
 }
 
+mod uclibc_shims {
+    pub fn build_uclibc_shims() {
+        use std::env;
+
+        let target = env::var("TARGET").ok();
+        if target.as_deref() == Some("mipsel-unknown-linux-uclibc") {
+            println!("cargo:rerun-if-changed=src/libc_shims.c");
+
+            cc::Build::new()
+                .file("src/libc_shims.c")
+                .compile("uclibc_shims");
+
+            if let Ok(out_dir) = env::var("OUT_DIR") {
+                println!("cargo:rustc-link-search=native={out_dir}");
+                let archive_path = format!("{out_dir}/libuclibc_shims.a");
+                println!("cargo:rustc-link-arg=-Wl,--whole-archive");
+                println!("cargo:rustc-link-arg={archive_path}");
+                println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
+            } else {
+                println!("cargo:rustc-link-lib=static=uclibc_shims");
+            }
+        }
+    }
+}
+
 fn main() {
     generate_build_info_rs();
     #[cfg(feature = "ebpf")]
     ebpf::build_ebpf();
+    uclibc_shims::build_uclibc_shims();
+
     println!("cargo:rerun-if-changed=build.rs");
 }

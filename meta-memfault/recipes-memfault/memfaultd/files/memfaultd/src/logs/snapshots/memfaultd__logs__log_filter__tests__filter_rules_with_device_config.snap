@@ -1,0 +1,8 @@
+---
+source: memfaultd/src/logs/log_filter.rs
+expression: service.take_metrics().unwrap()
+snapshot_kind: text
+---
+{
+  "device_config": 1.0
+}

@@ -3,39 +3,34 @@
 // See License.txt for details
 use std::{
     io::Read,
-    ops::Sub,
     str::{from_utf8, FromStr},
-    sync::{Arc, Mutex},
-    time::Duration,
 };
 
 use eyre::Result;
+use ssf::MsgMailbox;
 use tiny_http::{Method, Request, Response};
 
-use crate::util::time_measure::TimeMeasure;
+use crate::metrics::battery::BatteryReadingMessage;
 use crate::{
     http_server::{HttpHandler, HttpHandlerResult},
-    metrics::{BatteryMonitor, BatteryMonitorReading},
+    metrics::BatteryMonitorReading,
 };
 
 /// A server that listens for battery reading pushes and stores them in memory.
 #[derive(Clone)]
-pub struct BatteryReadingHandler<T: TimeMeasure> {
+pub struct BatteryReadingHandler {
     data_collection_enabled: bool,
-    battery_monitor: Arc<Mutex<BatteryMonitor<T>>>,
+    battery_monitor_mbox: MsgMailbox<BatteryReadingMessage>,
 }
 
-impl<T> BatteryReadingHandler<T>
-where
-    T: TimeMeasure + Copy + Ord + Sub<T, Output = Duration> + Send + Sync,
-{
+impl BatteryReadingHandler {
     pub fn new(
         data_collection_enabled: bool,
-        battery_monitor: Arc<Mutex<BatteryMonitor<T>>>,
+        battery_monitor_mbox: MsgMailbox<BatteryReadingMessage>,
     ) -> Self {
         Self {
             data_collection_enabled,
-            battery_monitor,
+            battery_monitor_mbox,
         }
     }
 
@@ -47,10 +42,7 @@ where
     }
 }
 
-impl<T> HttpHandler for BatteryReadingHandler<T>
-where
-    T: TimeMeasure + Copy + Ord + Sub<T, Output = Duration> + Send + Sync,
-{
+impl HttpHandler for BatteryReadingHandler {
     fn handle_request(&self, request: &mut Request) -> HttpHandlerResult {
         if request.url() != "/v1/battery/add_reading" || *request.method() != Method::Post {
             return HttpHandlerResult::NotHandled;
@@ -59,10 +51,8 @@ where
             match Self::parse_request(request.as_reader()) {
                 Ok(reading) => {
                     match self
-                        .battery_monitor
-                        .lock()
-                        .expect("Mutex poisoned")
-                        .add_new_reading(reading)
+                        .battery_monitor_mbox
+                        .send_and_forget(BatteryReadingMessage::new(reading))
                     {
                         Ok(()) => HttpHandlerResult::Response(Response::empty(200).boxed()),
                         Err(e) => HttpHandlerResult::Error(format!(
@@ -84,14 +74,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        sync::{Arc, Mutex},
-        time::Duration,
-    };
+    use super::*;
+
+    use std::time::Duration;
 
     use insta::assert_json_snapshot;
     use rstest::rstest;
-    use ssf::ServiceMock;
+    use ssf::{ServiceJig, ServiceMock};
     use tiny_http::{Method, TestRequest};
 
     use crate::{
@@ -100,16 +89,14 @@ mod tests {
     };
     use crate::{metrics::TakeMetrics, test_utils::TestInstant};
 
-    use super::BatteryReadingHandler;
     #[rstest]
     fn handle_push() {
         let mut metrics_mock = ServiceMock::new();
-        let handler = BatteryReadingHandler::new(
-            true,
-            Arc::new(Mutex::new(BatteryMonitor::<TestInstant>::new(
-                metrics_mock.mbox.clone(),
-            ))),
-        );
+        let mut battery_monitor = ServiceJig::prepare(BatteryMonitor::<TestInstant>::new(
+            metrics_mock.mbox.clone(),
+        ));
+
+        let handler = BatteryReadingHandler::new(true, battery_monitor.mailbox.clone().into());
         let r = TestRequest::new()
             .with_method(Method::Post)
             .with_path("/v1/battery/add_reading")
@@ -118,6 +105,8 @@ mod tests {
             handler.handle_request(&mut r.into()),
             HttpHandlerResult::Response(_)
         ));
+
+        battery_monitor.process_all();
 
         assert_json_snapshot!(metrics_mock.take_metrics().unwrap());
     }
@@ -135,12 +124,10 @@ mod tests {
         #[case] test_name: &str,
     ) {
         let mut metrics_mock = ServiceMock::new();
-        let handler = BatteryReadingHandler::new(
-            true,
-            Arc::new(Mutex::new(BatteryMonitor::<TestInstant>::new(
-                metrics_mock.mbox.clone(),
-            ))),
-        );
+        let mut battery_monitor = ServiceJig::prepare(BatteryMonitor::<TestInstant>::new(
+            metrics_mock.mbox.clone(),
+        ));
+        let handler = BatteryReadingHandler::new(true, battery_monitor.mailbox.clone().into());
         for reading in readings {
             let r = TestRequest::new()
                 .with_method(Method::Post)
@@ -150,6 +137,8 @@ mod tests {
                 handler.handle_request(&mut r.into()),
                 HttpHandlerResult::Response(_)
             ));
+
+            battery_monitor.process_all();
             TestInstant::sleep(Duration::from_secs(seconds_between_readings));
         }
 
@@ -160,10 +149,7 @@ mod tests {
     #[rstest]
     fn errors_when_body_is_invalid() {
         let mock = ServiceMock::new();
-        let handler = BatteryReadingHandler::<TestInstant>::new(
-            true,
-            Arc::new(Mutex::new(BatteryMonitor::<TestInstant>::new(mock.mbox))),
-        );
+        let handler = BatteryReadingHandler::new(true, mock.mbox);
         let r = TestRequest::new()
             .with_method(Method::Post)
             .with_path("/v1/battery/add_reading")

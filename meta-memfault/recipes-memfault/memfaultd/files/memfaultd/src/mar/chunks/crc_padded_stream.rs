@@ -40,10 +40,7 @@ impl<R: Read + StreamLen> Read for CRCPaddedStream<R> {
             if let Some(crc) = &mut self.crc {
                 crc.update(&buf[..result]);
             } else {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "CRC already finalized",
-                ));
+                return Err(std::io::Error::other("CRC already finalized"));
             }
             return Ok(result);
         }

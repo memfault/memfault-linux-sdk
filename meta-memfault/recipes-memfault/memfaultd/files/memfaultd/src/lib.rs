@@ -22,6 +22,8 @@ mod memfaultd;
 pub mod metrics;
 mod mmc;
 mod network;
+#[cfg(feature = "custom-rand")]
+pub mod random;
 mod reboot;
 mod retriable_error;
 mod service_manager;

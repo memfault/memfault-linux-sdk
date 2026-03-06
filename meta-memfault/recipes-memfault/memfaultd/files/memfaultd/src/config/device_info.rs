@@ -125,49 +125,10 @@ impl DeviceInfo {
     ) -> Result<(DeviceInfo, Vec<DeviceInfoWarning>)> {
         let mut warnings = vec![];
 
-        let mut software_version = defaults
-            .software_version()
-            .unwrap_or_else(|_| {
-                warnings.push(DeviceInfoWarning {
-                    line: None,
-                    message: "Failed to get default software version.".to_string(),
-                });
-                None
-            })
-            .map(DeviceInfoValue::Default);
-        let mut device_id = defaults.device_id().map_or_else(
-            |_| {
-                warnings.push(DeviceInfoWarning {
-                    line: None,
-                    message: format!("Failed to open {}", DEVICE_ID_PATH),
-                });
-                None
-            },
-            |id| Some(id.trim().to_string()),
-        );
-        let mut hardware_version = defaults.hardware_version().map_or_else(
-            |_| {
-                warnings.push(DeviceInfoWarning {
-                    line: None,
-                    message: format!(
-                        "Failed to to get hardware version from: '{}'",
-                        HARDWARE_VERSION_COMMAND
-                    ),
-                });
-                None
-            },
-            |hwv| Some(hwv.trim().to_string()),
-        );
-        let mut software_type = defaults
-            .software_type()
-            .unwrap_or_else(|_| {
-                warnings.push(DeviceInfoWarning {
-                    line: None,
-                    message: "Failed to get default software_type.".to_string(),
-                });
-                None
-            })
-            .map(DeviceInfoValue::Default);
+        let mut device_id: Option<String> = None;
+        let mut hardware_version: Option<String> = None;
+        let mut software_version: Option<DeviceInfoValue> = None;
+        let mut software_type: Option<DeviceInfoValue> = None;
 
         match output {
             Some(output) => {
@@ -202,6 +163,59 @@ impl DeviceInfo {
                 });
             }
         }
+
+        // If we don't have device-info provided values, fall back to defaults
+        software_version = software_version.or_else(|| {
+            defaults
+                .software_version()
+                .unwrap_or_else(|_| {
+                    warnings.push(DeviceInfoWarning {
+                        line: None,
+                        message: "Failed to get default software version.".to_string(),
+                    });
+                    None
+                })
+                .map(DeviceInfoValue::Default)
+        });
+        device_id = device_id.or_else(|| {
+            defaults.device_id().map_or_else(
+                |_| {
+                    warnings.push(DeviceInfoWarning {
+                        line: None,
+                        message: format!("Failed to open {}", DEVICE_ID_PATH),
+                    });
+                    None
+                },
+                |id| Some(id.trim().to_string()),
+            )
+        });
+        hardware_version = hardware_version.or_else(|| {
+            defaults.hardware_version().map_or_else(
+                |_| {
+                    warnings.push(DeviceInfoWarning {
+                        line: None,
+                        message: format!(
+                            "Failed to to get hardware version from: '{}'",
+                            HARDWARE_VERSION_COMMAND
+                        ),
+                    });
+                    None
+                },
+                |hwv| Some(hwv.trim().to_string()),
+            )
+        });
+        software_type = software_type.or_else(|| {
+            defaults
+                .software_type()
+                .unwrap_or_else(|_| {
+                    warnings.push(DeviceInfoWarning {
+                        line: None,
+                        message: "Failed to get default software_type.".to_string(),
+                    });
+                    None
+                })
+                .map(DeviceInfoValue::Default)
+        });
 
         let di = DeviceInfo {
             device_id: device_id.ok_or(eyre!("No device id supplied"))?,
@@ -544,6 +558,41 @@ mod tests {
         assert_eq!(
             r.0.software_version,
             Some(DeviceInfoValue::Default(expected_software_version))
+        );
+        assert_eq!(r.0.hardware_version, expected_hardware_version);
+        assert_eq!(r.0.device_id, expected_device_id);
+    }
+
+    #[rstest]
+    fn test_no_default_calls_with_device_info() {
+        let expected_software_type = "SOFTWARE_TYPE".to_string();
+        let expected_software_version = "SOFTWARE_VERSION".to_string();
+        let expected_hardware_version = "HARDWARE_VERSION".to_string();
+        let expected_device_id = "DEVICE_ID".to_string();
+
+        let mut di_defaults = MockDeviceInfoDefaults::new();
+        di_defaults.expect_software_type().never();
+        di_defaults.expect_software_version().never();
+        di_defaults.expect_hardware_version().never();
+        di_defaults.expect_device_id().never();
+
+        let output = format!(
+            "MEMFAULT_DEVICE_ID={}\nMEMFAULT_HARDWARE_VERSION={}\nMEMFAULT_SOFTWARE_VERSION={}\nMEMFAULT_SOFTWARE_TYPE={}\n",
+            expected_device_id,
+            expected_hardware_version,
+            expected_software_version,
+            expected_software_type,
+        );
+
+        let r = DeviceInfo::parse(Some(output.as_bytes()), di_defaults).unwrap();
+
+        assert_eq!(
+            r.0.software_type,
+            Some(DeviceInfoValue::Configured(expected_software_type))
+        );
+        assert_eq!(
+            r.0.software_version,
+            Some(DeviceInfoValue::Configured(expected_software_version))
         );
         assert_eq!(r.0.hardware_version, expected_hardware_version);
         assert_eq!(r.0.device_id, expected_device_id);

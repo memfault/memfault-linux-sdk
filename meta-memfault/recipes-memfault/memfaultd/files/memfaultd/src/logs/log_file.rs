@@ -106,7 +106,7 @@ pub struct LogFileControlImpl {
     max_size: usize,
     max_duration: Duration,
     compression_level: Compression,
-    on_log_completion: Box<(dyn FnMut(CompletedLog) -> Result<()> + Send)>,
+    on_log_completion: Box<dyn FnMut(CompletedLog) -> Result<()> + Send>,
     next_cid: Option<Uuid>,
 }
 
@@ -172,7 +172,7 @@ impl LogFileControlImpl {
     }
 
     fn dispatch_on_log_completion(
-        on_log_completion: &mut Box<(dyn FnMut(CompletedLog) -> Result<()> + Send)>,
+        on_log_completion: &mut Box<dyn FnMut(CompletedLog) -> Result<()> + Send>,
         mut log: LogFileImpl,
         next_cid: Uuid,
     ) {
@@ -180,6 +180,8 @@ impl LogFileControlImpl {
         log.writer.flush().unwrap_or_else(|e| {
             warn!("Failed to flush logs: {}", e);
         });
+        // Drop file handle before move to prevent errors on some file systems
+        drop(log.writer);
 
         let LogFileImpl { path, cid, .. } = log;
 

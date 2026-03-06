@@ -1,6 +1,18 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
+//! Minimalistic zip encoder which generates a compression-less zip stream on the fly from a list of
+//! files. The benefit of this is that it requires no temporary file storage. It implements the
+//! std::io::Read trait, so it can be used with any std::io::Read consumer. It can also tell the
+//! length of the stream beforehand, only looking at the list of files and their sizes on disk.
+//! This is useful for example when needing to specify a Content-Length header for a HTTP request.
+//! Note it is very minimalistic in its implementation: it only supports "store" (no compression).
+//! It only supports the 32-bit zip format, so it is limited to max. 4GB file sizes and does not
+//! allow for more than 65,535 entries. File timestamps are not implemented and neither are UTF-8
+//! filenames.
+//! Note that read() calls can copy less than the size of the caller's buffer, due to an
+//! implementation detail. Therefore it's recommended to use std::io::BufReader to wrap this stream.
+
 use std::fs::File;
 use std::io::Cursor;
 use std::io::Read;
@@ -13,18 +25,6 @@ use crate::util::io::StreamLen;
 use eyre::Result;
 use flate2::CrcReader;
 use take_mut::take;
-
-/// Minimalistic zip encoder which generates a compression-less zip stream on the fly from a list of
-/// files. The benefit of this is that it requires no temporary file storage. It implements the
-/// std::io::Read trait, so it can be used with any std::io::Read consumer. It can also tell the
-/// length of the stream beforehand, only looking at the list of files and their sizes on disk.
-/// This is useful for example when needing to specify a Content-Length header for a HTTP request.
-/// Note it is very minimalistic in its implementation: it only supports "store" (no compression).
-/// It only supports the 32-bit zip format, so it is limited to max. 4GB file sizes and does not
-/// allow for more than 65,535 entries. File timestamps are not implemented and neither are UTF-8
-/// filenames.
-/// Note that read() calls can copy less than the size of the caller's buffer, due to an
-/// implementation detail. Therefore it's recommended to use std::io::BufReader to wrap this stream.
 
 // Some implementation notes:
 // - The zip format is described here: https://en.wikipedia.org/wiki/ZIP_(file_format)

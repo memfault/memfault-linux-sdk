@@ -4,7 +4,6 @@
 //! Collect logs into log files and save them as MAR entries.
 //!
 use std::path::PathBuf;
-use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 use std::{fs, sync::atomic::AtomicUsize};
@@ -19,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use ssf::{Handler, MsgMailbox, Service};
 use tiny_http::{Header, Method, Request, Response, ResponseBox, StatusCode};
 
-use crate::config::{Config, LogFilterConfig, Resolution};
+use crate::config::{Config, DeviceConfig, DeviceConfigUpdateMessage, LogFilterConfig, Resolution};
 use crate::http_server::HttpHandlerResult;
 use crate::{config::LogToMetricRule, logs::completed_log::CompletedLog};
 use crate::{config::StorageConfig, http_server::ConvenientHeader};
@@ -35,7 +34,6 @@ pub const CRASH_LOGS_CRASH_TS_PARAM: &str = "time_of_crash";
 
 use super::log_filter::LogFilter;
 use super::log_level_mapper::LogLevelMapper;
-use super::log_to_metrics::LogToMetrics;
 use super::messages::GetLatestLogTimestampMsg;
 
 use crate::config::LevelMappingConfig;
@@ -62,11 +60,11 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
     /// This callback must move (or delete) the log file!
     pub fn open<R: FnMut(CompletedLog) -> Result<()> + Send + 'static>(
         log_config: LogCollectorConfig,
-        logging_resolution: Resolution,
         on_log_completion: R,
         headroom_limiter: H,
         metrics_mbox: MetricsMBox,
-    ) -> Result<(Self, Sender<Resolution>)> {
+        device_config: Arc<DeviceConfig>,
+    ) -> Result<Self> {
         fs::create_dir_all(&log_config.log_tmp_path).wrap_err_with(|| {
             format!(
                 "Unable to create directory to store in-progress logs: {}",
@@ -91,40 +89,29 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
             log_config.in_memory_lines
         };
 
-        let (logging_resolution_sender, logging_resolution_receiver) = channel::<Resolution>();
-
-        Ok((
-            Self {
-                inner: Some(Inner {
-                    log_file_control: LogFileControlImpl::open(
-                        log_config.log_tmp_path,
-                        log_config.log_max_size,
-                        log_config.log_max_duration,
-                        log_config.log_compression_level,
-                        on_log_completion,
-                    )?,
-                    rate_limiter: RateLimiter::new(log_config.max_lines_per_minute),
-                    headroom_limiter,
-                    #[allow(dead_code)]
-                    log_to_metrics: LogToMetrics::new(
-                        log_config.log_to_metrics_rules.clone(),
-                        metrics_mbox.clone(),
-                    ),
-                    log_filter: LogFilter::new(
-                        log_config.log_filter_config.rules,
-                        log_config.log_to_metrics_rules,
-                        log_config.log_filter_config.default_action,
-                        metrics_mbox,
-                    ),
-                    log_queue: CircularQueue::new(in_memory_lines),
-                    storage_config: log_config.storage_config,
-                    level_mapper,
-                    logging_resolution,
-                    logging_resolution_receiver,
-                }),
-            },
-            logging_resolution_sender,
-        ))
+        Ok(Self {
+            inner: Some(Inner {
+                log_file_control: LogFileControlImpl::open(
+                    log_config.log_tmp_path,
+                    log_config.log_max_size,
+                    log_config.log_max_duration,
+                    log_config.log_compression_level,
+                    on_log_completion,
+                )?,
+                rate_limiter: RateLimiter::new(log_config.max_lines_per_minute),
+                headroom_limiter,
+                log_filter: LogFilter::new(
+                    log_config.log_filter_config.rules,
+                    log_config.log_to_metrics_rules,
+                    log_config.log_filter_config.default_action,
+                    metrics_mbox,
+                ),
+                log_queue: CircularQueue::new(in_memory_lines),
+                storage_config: log_config.storage_config,
+                level_mapper,
+                device_config,
+            }),
+        })
     }
 
     /// Try to get the inner log_collector or return an error
@@ -214,20 +201,29 @@ impl<H: HeadroomCheck + Send + 'static> Handler<RecoverLogsMsg> for LogCollector
     }
 }
 
+impl<H: HeadroomCheck + Send + 'static> Handler<DeviceConfigUpdateMessage> for LogCollector<H> {
+    fn deliver(
+        &mut self,
+        m: DeviceConfigUpdateMessage,
+    ) -> <DeviceConfigUpdateMessage as ssf::Message>::Reply {
+        let _ = self.with_mut_inner(|inner| {
+            inner.device_config = m.config;
+            Ok(())
+        });
+    }
+}
+
 /// The log collector keeps one Inner struct behind a Arc<Mutex<>> so it can be
 /// shared by multiple threads.
 struct Inner<H: HeadroomCheck> {
     rate_limiter: RateLimiter<DateTime<Utc>>,
     log_file_control: LogFileControlImpl,
     headroom_limiter: H,
-    #[allow(dead_code)]
-    log_to_metrics: LogToMetrics,
     log_filter: LogFilter,
     log_queue: CircularQueue<LogEntry>,
     storage_config: StorageConfig,
     level_mapper: Option<LogLevelMapper>,
-    logging_resolution: Resolution,
-    logging_resolution_receiver: Receiver<Resolution>,
+    device_config: Arc<DeviceConfig>,
 }
 
 impl<H: HeadroomCheck> Inner<H> {
@@ -240,7 +236,10 @@ impl<H: HeadroomCheck> Inner<H> {
             level_mapper.map_log(&mut log)?;
         }
 
-        if let Some(log) = self.log_filter.apply_rules(log) {
+        if let Some(log) = self
+            .log_filter
+            .apply_rules(log, self.device_config.logging.as_ref())
+        {
             if !self
                 .headroom_limiter
                 .check(&log.ts, &mut self.log_file_control)?
@@ -279,14 +278,8 @@ impl<H: HeadroomCheck> Inner<H> {
     }
 
     fn should_persist(&mut self) -> bool {
-        // Check if there is an updated Resolution for
-        // Logging
-        while let Ok(resolution) = self.logging_resolution_receiver.try_recv() {
-            self.logging_resolution = resolution;
-        }
-
         matches!(self.storage_config, StorageConfig::Persist)
-            || matches!(self.logging_resolution, Resolution::Normal)
+            || matches!(self.logging_resolution(), Resolution::Normal)
     }
 
     pub fn get_log_queue(&mut self) -> Result<Vec<String>> {
@@ -305,6 +298,10 @@ impl<H: HeadroomCheck> Inner<H> {
 
     fn rotate_if_needed(&mut self) -> Result<bool> {
         self.log_file_control.rotate_if_needed()
+    }
+
+    fn logging_resolution(&self) -> Resolution {
+        self.device_config.sampling.logging_resolution
     }
 }
 
@@ -471,7 +468,7 @@ impl CrashLogHandler {
         let crash_logs = CrashLogs { logs };
 
         let serialized_logs = serde_json::to_string(&crash_logs)?;
-        let logs_len = serialized_logs.as_bytes().len();
+        let logs_len = serialized_logs.len();
         Ok(Response::new(
             StatusCode(200),
             vec![Header::from_strings("Content-Type", "application/json")?],
@@ -519,7 +516,6 @@ mod tests {
     use std::{io::Write, path::PathBuf, time::Duration};
     use std::{mem::replace, num::NonZeroU32};
 
-    use crate::test_utils::setup_logger;
     use crate::{
         config::LevelMappingConfig,
         logs::{
@@ -527,6 +523,7 @@ mod tests {
             log_file::{LogFile, LogFileControl},
         },
     };
+    use crate::{config::Sampling, test_utils::setup_logger};
     use crate::{logs::headroom::HeadroomCheck, util::circular_queue::CircularQueue};
     use chrono::{DateTime, Duration as ChronoDuration, Utc};
     use eyre::Context;
@@ -591,9 +588,10 @@ mod tests {
             },
         };
 
-        let (mut collector, _) = LogCollector::open(
+        let device_config = Arc::new(DeviceConfig::default());
+
+        let mut collector = LogCollector::open(
             config,
-            Resolution::Normal,
             |CompletedLog { path, .. }| {
                 remove_file(&path)
                     .with_context(|| format!("rm {path:?}"))
@@ -602,6 +600,7 @@ mod tests {
             },
             StubHeadroomLimiter,
             ServiceMock::new().mbox,
+            device_config,
         )
         .unwrap();
 
@@ -868,6 +867,151 @@ mod tests {
         (tmp_logs, file_path)
     }
 
+    #[rstest]
+    fn device_config_update_message_handler(_setup_logger: ()) {
+        let temp_dir = tempdir().expect("Unable to create temp dir");
+        let log_config = LogCollectorConfig {
+            log_tmp_path: temp_dir.path().to_owned(),
+            log_max_size: 1024,
+            log_max_duration: Duration::from_secs(3600),
+            log_compression_level: Compression::default(),
+            max_lines_per_minute: NonZeroU32::new(1_000).unwrap(),
+            log_to_metrics_rules: vec![],
+            log_filter_config: LogFilterConfig::default(),
+            in_memory_lines: IN_MEMORY_LINES,
+            storage_config: StorageConfig::Disabled, // Use Disabled to test resolution logic
+            level_mapping_config: LevelMappingConfig {
+                enable: false,
+                regex: None,
+            },
+        };
+
+        // Create initial device config with Normal resolution
+        let initial_config = DeviceConfig {
+            revision: None,
+            sampling: Sampling {
+                debugging_resolution: Resolution::Normal,
+                logging_resolution: Resolution::Normal,
+                monitoring_resolution: Resolution::Normal,
+            },
+            data_upload_start_date: None,
+            logging: None,
+        };
+
+        let mut collector = LogCollector::open(
+            log_config,
+            |CompletedLog { path, .. }| {
+                remove_file(&path)
+                    .with_context(|| format!("rm {path:?}"))
+                    .unwrap();
+                Ok(())
+            },
+            StubHeadroomLimiter,
+            ServiceMock::new().mbox,
+            Arc::new(initial_config),
+        )
+        .unwrap();
+
+        // Verify initial state - should persist logs with Normal resolution
+        let should_persist = collector
+            .with_mut_inner(|inner| Ok(inner.should_persist()))
+            .unwrap();
+        assert!(should_persist, "Should persist logs with Normal resolution");
+
+        // Create updated config with Off resolution
+        let updated_config = DeviceConfig {
+            revision: None,
+            sampling: Sampling {
+                debugging_resolution: Resolution::Off,
+                logging_resolution: Resolution::Off,
+                monitoring_resolution: Resolution::Off,
+            },
+            data_upload_start_date: None,
+            logging: None,
+        };
+
+        let update_message = DeviceConfigUpdateMessage {
+            config: Arc::new(updated_config),
+        };
+
+        // Send the device config update message
+        use ssf::Handler;
+        collector.deliver(update_message);
+
+        // Verify the config was updated - should not persist logs with Off resolution
+        let should_persist_after_update = collector
+            .with_mut_inner(|inner| Ok(inner.should_persist()))
+            .unwrap();
+        assert!(
+            !should_persist_after_update,
+            "Should not persist logs with Off resolution"
+        );
+
+        // Test with High resolution
+        let high_resolution_config = DeviceConfig {
+            revision: None,
+            sampling: Sampling {
+                debugging_resolution: Resolution::High,
+                logging_resolution: Resolution::High,
+                monitoring_resolution: Resolution::High,
+            },
+            data_upload_start_date: None,
+            logging: None,
+        };
+
+        let high_resolution_message = DeviceConfigUpdateMessage {
+            config: Arc::new(high_resolution_config),
+        };
+
+        collector.deliver(high_resolution_message);
+
+        // Verify High resolution does NOT enable persistence (only Normal does)
+        let should_persist_high = collector
+            .with_mut_inner(|inner| Ok(inner.should_persist()))
+            .unwrap();
+        assert!(
+            !should_persist_high,
+            "Should NOT persist logs with High resolution (only Normal enables persistence)"
+        );
+
+        // Test with Normal resolution to verify it does enable persistence
+        let normal_resolution_config = DeviceConfig {
+            revision: None,
+            sampling: Sampling {
+                debugging_resolution: Resolution::Normal,
+                logging_resolution: Resolution::Normal,
+                monitoring_resolution: Resolution::Normal,
+            },
+            data_upload_start_date: None,
+            logging: None,
+        };
+
+        let normal_resolution_message = DeviceConfigUpdateMessage {
+            config: Arc::new(normal_resolution_config),
+        };
+
+        collector.deliver(normal_resolution_message);
+
+        // Verify Normal resolution enables persistence
+        let should_persist_normal = collector
+            .with_mut_inner(|inner| Ok(inner.should_persist()))
+            .unwrap();
+        assert!(
+            should_persist_normal,
+            "Should persist logs with Normal resolution"
+        );
+
+        // Verify the device config reference is shared (Arc should be the same)
+        let config_arc = collector
+            .with_mut_inner(|inner| Ok(inner.device_config.clone()))
+            .unwrap();
+        assert_eq!(
+            config_arc.sampling.logging_resolution,
+            Resolution::Normal,
+            "Device config should be updated to Normal resolution"
+        );
+    }
+
     struct LogFixture {
         collector: Arc<Mutex<LogCollector<StubHeadroomLimiter>>>,
         service: SharedServiceThread<LogCollector<StubHeadroomLimiter>>,
@@ -970,7 +1114,8 @@ mod tests {
 
         let on_completion_should_fail = Arc::new(AtomicBool::new(false));
 
-        let (collector, _) = {
+        let device_config = Arc::new(DeviceConfig::default());
+        let collector = {
             let on_completion_should_fail = on_completion_should_fail.clone();
             let on_log_completion = move |CompletedLog { path, cid, .. }| {
                 on_log_completion_sender.send((path.clone(), cid)).unwrap();
@@ -988,10 +1133,10 @@ mod tests {
 
             LogCollector::open(
                 config,
-                Resolution::Off,
                 on_log_completion,
                 StubHeadroomLimiter,
                 ServiceMock::new().mbox,
+                device_config,
             )
             .unwrap()
         };

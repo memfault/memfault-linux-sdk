@@ -39,6 +39,7 @@ pub enum CapturedMetrics {
     Metrics(MetricsSet),
 }
 
+#[derive(Clone)]
 pub struct MetricsSet {
     pub metric_keys: HashSet<MetricStringKey>,
     pub wildcard_metric_keys: Vec<WildcardPattern>,
@@ -84,6 +85,28 @@ fn histo_min_max_keys() -> MetricsSet {
 }
 
 impl MetricsSet {
+    pub fn empty() -> Self {
+        MetricsSet {
+            metric_keys: HashSet::new(),
+            wildcard_metric_keys: Vec::new(),
+        }
+    }
+
+    /// Parse config strings into a MetricsSet.
+    ///
+    /// Currently there is only support matching keys, no wildcards
+    pub fn from_metric_keys(keys: &[MetricStringKey]) -> Self {
+        MetricsSet {
+            metric_keys: keys.iter().cloned().collect(),
+            wildcard_metric_keys: Vec::new(),
+        }
+    }
+
+    fn extend(&mut self, other: MetricsSet) {
+        self.metric_keys.extend(other.metric_keys);
+        self.wildcard_metric_keys.extend(other.wildcard_metric_keys);
+    }
+
     pub fn contains(&self, metric_string_key: &MetricStringKey) -> bool {
         self.metric_keys.contains(metric_string_key)
             || self
@@ -142,25 +165,39 @@ struct MetricReportSnapshot {
 }
 
 impl MetricReport {
-    pub fn new(report_type: MetricReportType, captured_metrics: CapturedMetrics) -> Self {
+    pub fn new(
+        report_type: MetricReportType,
+        captured_metrics: CapturedMetrics,
+        extra_histo_min_max: MetricsSet,
+    ) -> Self {
+        let mut histo_min_max_metrics = histo_min_max_keys();
+        histo_min_max_metrics.extend(extra_histo_min_max);
         Self {
             metrics: HashMap::new(),
             start: Instant::now(),
             boottime_start: get_system_clock(crate::util::system::Clock::Boottime).ok(),
             captured_metrics,
             report_type,
-            histo_min_max_metrics: histo_min_max_keys(),
+            histo_min_max_metrics,
         }
     }
 
     /// Creates a heartbeat report that captures all metrics
     pub fn new_heartbeat() -> Self {
-        MetricReport::new(MetricReportType::Heartbeat, CapturedMetrics::All)
+        MetricReport::new(
+            MetricReportType::Heartbeat,
+            CapturedMetrics::All,
+            MetricsSet::empty(),
+        )
     }
 
     /// Creates a daily heartbeat report that captures all metrics
     pub fn new_daily_heartbeat() -> Self {
-        MetricReport::new(MetricReportType::DailyHeartbeat, CapturedMetrics::All)
+        MetricReport::new(
+            MetricReportType::DailyHeartbeat,
+            CapturedMetrics::All,
+            MetricsSet::empty(),
+        )
     }
 
     fn is_captured(&self, metric_key: &MetricStringKey) -> bool {
@@ -391,6 +428,7 @@ mod tests {
                 metric_keys: HashSet::from_iter(metric_keys),
                 wildcard_metric_keys: session_core_metrics.wildcard_pattern_keys,
             }),
+            MetricsSet::empty(),
         );
 
         for m in metrics {
@@ -426,5 +464,77 @@ mod tests {
         let tempdir = TempDir::new().unwrap();
         let _ = metric_report.prepare_metric_report(tempdir.path());
         assert_eq!(metric_report.take_metrics().len(), 0);
+    }
+
+    // extra key in extra_histo_min_max gets min/max; unrelated key does not
+    #[rstest]
+    #[case(
+        in_histograms(vec![("custom_gauge", 1.0), ("custom_gauge", 2.0), ("custom_gauge", 3.0)]),
+        "extra_min_max_exact_key"
+    )]
+    // hardcoded key (memory_pct) still gets min/max when extra set is provided
+    #[case(
+        in_histograms(vec![("memory_pct", 1.0), ("memory_pct", 3.0), ("custom_gauge", 5.0), ("custom_gauge", 7.0), ("foo", 4.0)]),
+        "extra_min_max_merged_with_hardcoded"
+    )]
+    fn test_extra_histo_min_max(
+        #[case] metrics: impl Iterator<Item = KeyedMetricReading>,
+        #[case] test_name: &str,
+    ) {
+        let extra =
+            MetricsSet::from_metric_keys(&[MetricStringKey::from_str("custom_gauge").unwrap()]);
+        let mut metric_report =
+            MetricReport::new(MetricReportType::Heartbeat, CapturedMetrics::All, extra);
+
+        for m in metrics {
+            metric_report.add_metric(m).unwrap();
+        }
+        let sorted_metrics: BTreeMap<_, _> = metric_report.take_metrics().into_iter().collect();
+        assert_json_snapshot!(test_name, sorted_metrics);
+    }
+
+    fn key(s: &str) -> MetricStringKey {
+        MetricStringKey::from_str(s).unwrap()
+    }
+
+    #[test]
+    fn empty_contains_nothing() {
+        let set = MetricsSet::empty();
+        assert!(!set.contains(&key("foo")));
+        assert!(set.metric_keys.is_empty());
+        assert!(set.wildcard_metric_keys.is_empty());
+    }
+
+    #[test]
+    fn from_metric_keys_contains_provided_keys() {
+        let set = MetricsSet::from_metric_keys(&[key("custom_gauge"), key("my_metric")]);
+        assert!(set.contains(&key("custom_gauge")));
+        assert!(set.contains(&key("my_metric")));
+        assert!(!set.contains(&key("other_metric")));
+    }
+
+    #[test]
+    fn from_metric_keys_empty_slice_is_empty() {
+        let set = MetricsSet::from_metric_keys(&[]);
+        assert!(set.metric_keys.is_empty());
+        assert!(set.wildcard_metric_keys.is_empty());
+    }
+
+    #[test]
+    fn extend_merges_keys_from_both_sets() {
+        let mut a = MetricsSet::from_metric_keys(&[key("foo")]);
+        let b = MetricsSet::from_metric_keys(&[key("bar")]);
+        a.extend(b);
+        assert!(a.contains(&key("foo")));
+        assert!(a.contains(&key("bar")));
+        assert!(!a.contains(&key("baz")));
+    }
+
+    #[test]
+    fn extend_with_empty_is_noop() {
+        let mut a = MetricsSet::from_metric_keys(&[key("foo")]);
+        a.extend(MetricsSet::empty());
+        assert!(a.contains(&key("foo")));
+        assert_eq!(a.metric_keys.len(), 1);
     }
 }

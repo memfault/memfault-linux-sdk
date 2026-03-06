@@ -170,7 +170,7 @@ impl<'a> Iterator for ElfNoteIterator<'a> {
 }
 
 /// Helper function to iterate over ELF notes in a buffer.
-pub fn iterate_elf_notes(note_buffer: &[u8]) -> ElfNoteIterator {
+pub fn iterate_elf_notes(note_buffer: &[u8]) -> ElfNoteIterator<'_> {
     ElfNoteIterator::new(note_buffer)
 }
 
@@ -325,7 +325,7 @@ impl<'a> FileNote<'a> {
 
     // TODO: MFLT-11766 Use NT_FILE note and PT_LOADs in case /proc/pid/maps read failed
     #[allow(dead_code)]
-    pub fn iter(&self) -> impl Iterator<Item = &MappedFile> {
+    pub fn iter(&self) -> impl Iterator<Item = &MappedFile<'_>> {
         self.mapped_files.iter()
     }
 }

@@ -38,6 +38,7 @@ pub struct MetricReportManager {
     session_configs: Vec<SessionConfig>,
     core_metrics: CoreMetricKeys,
     hrt_max_samples_per_min: NonZeroU32,
+    extra_histo_min_max: MetricsSet,
 }
 
 impl MetricReportManager {
@@ -47,12 +48,14 @@ impl MetricReportManager {
         hrt_enabled: bool,
         hrt_max_samples_per_min: NonZeroU32,
         daily_heartbeats_enabled: bool,
+        extra_histo_min_max: MetricsSet,
     ) -> Self {
         Self::new_with_session_configs(
             hrt_enabled,
             hrt_max_samples_per_min,
             &[],
             daily_heartbeats_enabled,
+            extra_histo_min_max,
         )
     }
 
@@ -61,15 +64,27 @@ impl MetricReportManager {
         hrt_max_samples_per_min: NonZeroU32,
         session_configs: &[SessionConfig],
         daily_heartbeats_enabled: bool,
+        extra_histo_min_max: MetricsSet,
     ) -> Self {
         Self {
-            heartbeat: MetricReport::new_heartbeat(),
-            daily_heartbeat: daily_heartbeats_enabled.then(MetricReport::new_daily_heartbeat),
+            heartbeat: MetricReport::new(
+                MetricReportType::Heartbeat,
+                CapturedMetrics::All,
+                extra_histo_min_max.clone(),
+            ),
+            daily_heartbeat: daily_heartbeats_enabled.then(|| {
+                MetricReport::new(
+                    MetricReportType::DailyHeartbeat,
+                    CapturedMetrics::All,
+                    extra_histo_min_max.clone(),
+                )
+            }),
             hrt: hrt_enabled.then(|| HrtReport::new(hrt_max_samples_per_min)),
             sessions: HashMap::new(),
             session_configs: session_configs.to_vec(),
             core_metrics: CoreMetricKeys::get_session_core_metrics(),
             hrt_max_samples_per_min,
+            extra_histo_min_max,
         }
     }
 
@@ -82,7 +97,11 @@ impl MetricReportManager {
         let captured_metric_keys = self.captured_metric_keys_for_report(&report_type)?;
 
         if let Entry::Vacant(e) = self.sessions.entry(session_name) {
-            let session = e.insert(MetricReport::new(report_type, captured_metric_keys));
+            let session = e.insert(MetricReport::new(
+                report_type,
+                captured_metric_keys,
+                self.extra_histo_min_max.clone(),
+            ));
             // Make sure we always include the operational_crashes counter in every session report.
             session.add_to_counter(METRIC_OPERATIONAL_CRASHES, 0.0)?;
         }
@@ -304,6 +323,7 @@ impl Default for MetricReportManager {
             NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN)
                 .expect("Default HRT rate limit should be nonzero"),
             true,
+            MetricsSet::empty(),
         )
     }
 }
@@ -450,8 +470,12 @@ mod tests {
     #[rstest]
     #[case(in_histograms(vec![("foo", 1.0), ("bar",  2.0), ("baz", 3.0)]))]
     fn test_no_hrt_when_disabled(#[case] metrics: impl Iterator<Item = KeyedMetricReading>) {
-        let mut metric_report_manager =
-            MetricReportManager::new(false, NonZeroU32::new(1).unwrap(), true);
+        let mut metric_report_manager = MetricReportManager::new(
+            false,
+            NonZeroU32::new(1).unwrap(),
+            true,
+            MetricsSet::empty(),
+        );
         for m in metrics {
             metric_report_manager
                 .add_metric(m)
@@ -469,6 +493,7 @@ mod tests {
             NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN)
                 .expect("Default HRT rate limit should be nonzero"),
             true,
+            MetricsSet::empty(),
         );
         for m in metrics {
             metric_report_manager
@@ -529,6 +554,7 @@ mod tests {
                 .expect("Zero value passed to non-zero constructor"),
             &session_configs,
             true,
+            MetricsSet::empty(),
         );
 
         assert!(metric_report_manager.start_session(session_a_name).is_ok());
@@ -585,6 +611,7 @@ mod tests {
                 .expect("Zero value passed to non-zero constructor"),
             &session_configs,
             true,
+            MetricsSet::empty(),
         );
 
         assert!(metric_report_manager
@@ -627,6 +654,7 @@ mod tests {
                 .expect("Zero value passed to non-zero constructor"),
             &session_configs,
             true,
+            MetricsSet::empty(),
         );
 
         let metrics_a = in_histograms(vec![("foo", 1.0), ("bar", 2.0)]);
@@ -680,6 +708,7 @@ mod tests {
                 .expect("Zero value passed to non-zero constructor"),
             &session_configs,
             true,
+            MetricsSet::empty(),
         );
 
         let metrics = in_histograms(vec![("foo", 5.0), ("bar", 3.5)]);
@@ -715,6 +744,7 @@ mod tests {
             NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN)
                 .expect("Zero value passed to non-zero constructor"),
             false,
+            MetricsSet::empty(),
         );
 
         assert!(metric_report_manager.daily_heartbeat.is_none());
