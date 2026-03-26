@@ -63,7 +63,7 @@ flate2 = { version = "1.0.28", default-features = false, features = ["zlib"] }
 take_mut = "0.2.2"
 itertools = "0.10.5"
 governor = { version = "0.10.4", default-features = false, features = ["std"] }
-nix = { git = "https://github.com/memfault/nix", branch = "r0.31.1", default-features = false, features = ["process", "signal", "poll", "fs", "ioctl"] }
+nix = { version = "0.31.1", git = "https://github.com/memfault/nix", branch = "r0.31.1", default-features = false, features = ["process", "signal", "poll", "fs", "ioctl"] }
 kernlog = { version = "0.3.1", optional = true }
 tiny_http = {version = "0.12.0" }
 crc = "3.0.1"
