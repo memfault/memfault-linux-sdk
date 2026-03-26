@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.26.1] - 2026-03-26
+
+This is a patch release fixing a crash in journald log collection when
+encountering empty or malformed cursor files.
+
+### Fixed
+
+- Fixed a crash in `memfaultd` when loading an empty or malformed journald
+  cursor file. Empty cursor files are now ignored, and cursor strings are
+  validated before being passed to the systemd library.
+
 ## [1.26.0] - 2026-03-06
 
 This release adds several improvements to battery monitoring, including
@@ -47,9 +58,10 @@ address register.
 - Fixed an aggressive log statement that would print an error when falling back
   to `/etc/machine-id`. This error would print even if a device ID was provided.
 - Fixed some flakey tests that would fail at the start of each new year.
-- Fixed a bug in stacktrace coredumps where unwinding would exit early in cases where
-  no FDE is present in the first frame. For architectures that have a builtin
-  `RA` register (e.g., `LR`), that will be used to continue unwinding in these cases.
+- Fixed a bug in stacktrace coredumps where unwinding would exit early in cases
+  where no FDE is present in the first frame. For architectures that have a
+  builtin `RA` register (e.g., `LR`), that will be used to continue unwinding in
+  these cases.
 
 ### Removed
 
@@ -1610,3 +1622,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.25.2-kirkstone
 [1.26.0]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.26.0-kirkstone
+[1.26.1]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.26.1-kirkstone

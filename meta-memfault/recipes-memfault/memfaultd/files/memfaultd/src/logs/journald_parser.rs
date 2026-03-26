@@ -6,10 +6,10 @@ use eyre::{eyre, Error, Result};
 use futures::future::LocalBoxFuture;
 use libc::free;
 use serde::Serialize;
-use std::fs::read_to_string;
 use std::{collections::HashMap, path::PathBuf};
 use std::{ffi::c_char, mem::MaybeUninit};
 use std::{ffi::CString, os::fd::RawFd};
+use std::{fs::read_to_string, path::Path};
 use tokio::io::unix::AsyncFd;
 
 use log::{debug, warn};
@@ -72,13 +72,12 @@ pub struct JournalRawImpl {
 }
 
 impl JournalRawImpl {
-    /// Timeout journal polling after 1 minute.
     const JOURNAL_CURSOR_FILE: &'static str = "JOURNALD_CURSOR";
 
     pub fn new(tmp_path: PathBuf) -> Self {
         let mut journal = std::ptr::null_mut();
         let cursor_file = tmp_path.join(Self::JOURNAL_CURSOR_FILE);
-        let cursor_string = read_to_string(&cursor_file).ok();
+        let cursor_string = Self::load_cursor(&cursor_file);
 
         unsafe {
             sd_journal_open(&mut journal, 0);
@@ -86,20 +85,42 @@ impl JournalRawImpl {
 
         let wait_fd = unsafe { sd_journal_get_fd(journal) };
 
-        if let Some(cursor) = cursor_string {
-            let cursor = cursor.trim();
-            let ret = unsafe { sd_journal_seek_cursor(journal, cursor.as_ptr() as *const c_char) };
-            if ret < 0 {
-                warn!("Failed to seek journal to cursor: {}", ret);
+        let seek_to_cursor = cursor_string
+            .map(|cursor| {
+                Self::try_seek_to_cursor(journal, cursor)
+                    .map_err(|e| warn!("{}", e))
+                    .is_ok()
+            })
+            .unwrap_or(false);
+
+        if !seek_to_cursor {
+            if let Err(e) = Self::seek_to_current_boot_start(journal) {
+                warn!("Couldn't seek journal to start of current boot: {}", e);
             }
-        } else if let Err(e) = Self::seek_to_current_boot_start(journal) {
-            warn!("Couldn't seek journal to start of current boot: {}", e);
         }
 
         Self {
             journal,
             wait_fd,
             cursor_file,
+        }
+    }
+
+    fn load_cursor(cursor_file: &Path) -> Option<String> {
+        read_to_string(cursor_file)
+            .ok()
+            .map(|contents| contents.trim().to_string())
+            .filter(|trimmed| !trimmed.is_empty())
+    }
+
+    fn try_seek_to_cursor(journal: *mut sd_journal, cursor: String) -> Result<()> {
+        let c_cursor =
+            CString::new(cursor).map_err(|e| eyre!("Invalid journal cursor string: {}", e))?;
+        let ret = unsafe { sd_journal_seek_cursor(journal, c_cursor.as_ptr()) };
+        if ret < 0 {
+            Err(eyre!("Failed to seek journal to cursor: {}", ret))
+        } else {
+            Ok(())
         }
     }
 
@@ -354,6 +375,19 @@ mod test {
 
     use insta::{assert_json_snapshot, with_settings};
     use mockall::Sequence;
+
+    #[test]
+    fn test_load_cursor_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let cursor_file = dir.path().join(JournalRawImpl::JOURNAL_CURSOR_FILE);
+        std::fs::write(&cursor_file, b"").unwrap();
+
+        let result = JournalRawImpl::load_cursor(&cursor_file);
+        assert!(
+            result.is_none(),
+            "0-byte cursor file should be treated as absent"
+        );
+    }
 
     #[test]
     fn test_from_raw_journal_entry() {
