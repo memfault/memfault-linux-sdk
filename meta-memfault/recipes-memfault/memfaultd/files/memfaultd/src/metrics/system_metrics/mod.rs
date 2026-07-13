@@ -1,15 +1,12 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use std::{
-    path::PathBuf,
-    thread::sleep,
-    time::{Duration, Instant},
-};
+use std::{path::PathBuf, time::Instant};
 
 use disk::{get_tracked_disks, DiskMetricsCollector};
 use eyre::{eyre, Result};
 use log::{debug, error};
+use ssf::{Handler, Message, Service};
 
 use crate::{
     metrics::KeyedMetricReading,
@@ -19,7 +16,7 @@ use crate::{
 
 mod config;
 pub use config::{
-    CpuMetricsConfig, MemoryMetricsConfig, OuiMetricsConfig, SystemMetricConfig,
+    CpuMetricsConfig, FdMetricsConfig, MemoryMetricsConfig, OuiMetricsConfig, SystemMetricConfig,
     ThermalMetricsConfig,
 };
 
@@ -41,7 +38,7 @@ mod network_interfaces;
 use network_interfaces::{NetworkInterfaceMetricCollector, NetworkInterfaceMetricsConfig};
 pub use network_interfaces::{
     METRIC_INTERFACE_BYTES_PER_SECOND_RX_SUFFIX, METRIC_INTERFACE_BYTES_PER_SECOND_TX_SUFFIX,
-    NETWORK_INTERFACE_METRIC_NAMESPACE,
+    METRIC_INTERFACE_NET_SOCKETS_PREFIX, NETWORK_INTERFACE_METRIC_NAMESPACE,
 };
 
 mod processes;
@@ -59,6 +56,10 @@ mod diskstats;
 use diskstats::DiskstatsMetricCollector;
 pub use diskstats::{DiskstatsMetricsConfig, DISKSTATS_METRIC_NAMESPACE};
 
+mod fd;
+use fd::FdMetricCollector;
+pub use fd::FD_METRIC_NAMESPACE;
+
 mod oui_parse;
 
 mod oui;
@@ -70,14 +71,25 @@ use self::{
 };
 use super::MetricsMBox;
 
-pub trait SystemMetricFamilyCollector {
+pub trait SystemMetricFamilyCollector: Send {
     fn collect_metrics(&mut self) -> Result<Vec<KeyedMetricReading>>;
     fn family_name(&self) -> &'static str;
 }
+
+/// Unit tick message that drives a single round of system metric collection.
+///
+/// The `Scheduler` sends this to the `SystemMetricsCollector` service at the
+/// configured `poll_interval`, replacing the old internal `loop`/`sleep`.
+#[derive(Clone)]
+pub struct SystemMetricsCollectTick;
+
+impl Message for SystemMetricsCollectTick {
+    type Reply = ();
+}
+
 pub struct SystemMetricsCollector {
     metric_family_collectors: Vec<Box<dyn SystemMetricFamilyCollector>>,
     metrics_mbox: MetricsMBox,
-    poll_interval: Duration,
 }
 
 impl SystemMetricsCollector {
@@ -85,7 +97,7 @@ impl SystemMetricsCollector {
         let mut metric_family_collectors: Vec<Box<dyn SystemMetricFamilyCollector>> = vec![];
 
         if config.cpu_metrics_enabled() {
-            metric_family_collectors.push(Box::new(CpuMetricCollector::new()));
+            metric_family_collectors.push(Box::new(CpuMetricCollector::<Instant>::new()));
         }
 
         if config.memory_metrics_enabled() {
@@ -101,6 +113,10 @@ impl SystemMetricsCollector {
 
         if config.oui_metrics_enabled() {
             metric_family_collectors.push(Box::new(OuiMetricsCollector::new()));
+        }
+
+        if config.fd_metrics_enabled() {
+            metric_family_collectors.push(Box::new(FdMetricCollector::new()));
         }
 
         // Check if process metrics have been manually configured
@@ -181,12 +197,9 @@ impl SystemMetricsCollector {
             ))),
         };
 
-        let poll_interval = config.poll_interval();
-
         Self {
             metric_family_collectors,
             metrics_mbox,
-            poll_interval,
         }
     }
 
@@ -198,28 +211,97 @@ impl SystemMetricsCollector {
             .ok_or_else(|| eyre!("Couldn't get MemTotal"))
     }
 
-    pub fn run(&mut self) {
-        loop {
-            for collector in self.metric_family_collectors.iter_mut() {
-                match collector.collect_metrics() {
-                    Ok(readings) => {
-                        if let Err(e) = self.metrics_mbox.send_and_forget(readings) {
-                            debug!(
-                                "Couldn't add metric reading for family \"{}\": {:?}",
-                                collector.family_name(),
-                                e
-                            )
-                        }
+    /// Poll every metric family collector once and forward their readings to
+    /// the metrics mailbox.
+    fn collect(&mut self) {
+        for collector in self.metric_family_collectors.iter_mut() {
+            match collector.collect_metrics() {
+                Ok(readings) => {
+                    if let Err(e) = self.metrics_mbox.send_and_forget(readings) {
+                        debug!(
+                            "Couldn't add metric reading for family \"{}\": {:?}",
+                            collector.family_name(),
+                            e
+                        )
                     }
-                    Err(e) => debug!(
-                        "Failed to collect readings for family \"{}\": {}",
-                        collector.family_name(),
-                        e
-                    ),
                 }
+                Err(e) => debug!(
+                    "Failed to collect readings for family \"{}\": {}",
+                    collector.family_name(),
+                    e
+                ),
             }
+        }
+    }
+}
 
-            sleep(self.poll_interval);
+impl Service for SystemMetricsCollector {
+    fn name(&self) -> &str {
+        "SystemMetricsCollector"
+    }
+}
+
+impl Handler<SystemMetricsCollectTick> for SystemMetricsCollector {
+    fn deliver(&mut self, _tick: SystemMetricsCollectTick) {
+        self.collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use ssf::{ServiceJig, ServiceMock};
+
+    use super::*;
+    use crate::metrics::{KeyedMetricReading, MetricStringKey};
+
+    #[test]
+    fn tick_collects_and_forwards_readings() {
+        let mut metrics_mock = ServiceMock::<Vec<KeyedMetricReading>>::new();
+        let collector = SystemMetricsCollector::from_collectors(
+            vec![Box::new(StubCollector)],
+            metrics_mock.mbox.clone(),
+        );
+        let mut jig = ServiceJig::prepare(collector);
+
+        jig.mailbox
+            .send_and_forget(SystemMetricsCollectTick)
+            .unwrap();
+        jig.process_all();
+
+        let batches = metrics_mock.take_messages();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].len(), 1);
+        assert_eq!(batches[0][0].name.as_str(), "stub_metric");
+    }
+
+    /// A deterministic collector that yields a single fixed reading, so the
+    /// test doesn't depend on host `/proc` state.
+    struct StubCollector;
+
+    impl SystemMetricFamilyCollector for StubCollector {
+        fn collect_metrics(&mut self) -> Result<Vec<KeyedMetricReading>> {
+            Ok(vec![KeyedMetricReading::new_gauge(
+                MetricStringKey::from_str("stub_metric").unwrap(),
+                1.0,
+            )])
+        }
+
+        fn family_name(&self) -> &'static str {
+            "stub"
+        }
+    }
+
+    impl SystemMetricsCollector {
+        fn from_collectors(
+            metric_family_collectors: Vec<Box<dyn SystemMetricFamilyCollector>>,
+            metrics_mbox: MetricsMBox,
+        ) -> Self {
+            Self {
+                metric_family_collectors,
+                metrics_mbox,
+            }
         }
     }
 }

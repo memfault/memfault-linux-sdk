@@ -3,6 +3,7 @@
 // See License.txt for details
 use std::{
     collections::HashMap,
+    fs::FileTimes,
     time::{Duration, SystemTime},
 };
 use std::{
@@ -130,6 +131,15 @@ impl MarCollectorFixture {
             ),
         );
         serde_json::to_writer(BufWriter::new(manifest_file), &manifest).unwrap();
+
+        File::open(&path)
+            .unwrap()
+            .set_times(
+                FileTimes::new()
+                    .set_accessed(timestamp)
+                    .set_modified(timestamp),
+            )
+            .expect("failed to set log entry timestamps");
 
         path
     }

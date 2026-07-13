@@ -2,7 +2,7 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 //! Collect Network Interface metric readings from /proc/net/dev
-//! and /proc/net/wireless
+//! /proc/net/wireless, and /proc/net/sockstat
 //!
 //! Example /proc/net/dev output:
 //! Inter-|   Receive                                                |  Transmit
@@ -11,22 +11,33 @@
 //!  eth0:       0       0    0    0    0     0          0         0        0       0    0    0    0     0       0          0
 //! wlan0: 10919408    8592    0    0    0     0          0         0   543095    4066    0    0    0     0       0          0
 //!
+//! Example /proc/net/sockstat output:
+//! sockets: used 97
+//! TCP: inuse 7 orphan 0 tw 0 alloc 8 mem 0
+//! UDP: inuse 4 mem 2
+//! UDPLITE: inuse 0
+//! RAW: inuse 0
+//! FRAG: inuse 0 memory 0
+//!
 //! Kernel docs:
 //! https://docs.kernel.org/filesystems/proc.html#networking-info-in-proc-net
 //! Extra information about /proc/net/wireless
 //! https://hewlettpackard.github.io/wireless-tools/Linux.Wireless.Extensions.html
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{read_to_string, BufRead, BufReader};
 use std::iter::zip;
 use std::path::Path;
 use std::str::FromStr;
 use std::time::Duration;
 
 use chrono::Utc;
+use itertools::Itertools;
 use log::debug;
 use nom::bytes::complete::tag;
-use nom::character::complete::{alphanumeric1, i64, multispace0, multispace1, u64};
+use nom::character::complete::{alphanumeric1, i64, multispace0, multispace1, space1, u64};
+use nom::sequence::delimited;
+use nom::Parser;
 use nom::{
     combinator::opt,
     multi::count,
@@ -46,9 +57,11 @@ use eyre::{eyre, ErrReport, Result};
 
 const PROC_NET_DEV_PATH: &str = "/proc/net/dev";
 const PROC_NET_WIRELESS_PATH: &str = "/proc/net/wireless";
+const PROC_NET_SOCKSTAT_PATH: &str = "/proc/net/sockstat";
 pub const NETWORK_INTERFACE_METRIC_NAMESPACE: &str = "interface";
 pub const METRIC_INTERFACE_BYTES_PER_SECOND_RX_SUFFIX: &str = "bytes_per_second/rx";
 pub const METRIC_INTERFACE_BYTES_PER_SECOND_TX_SUFFIX: &str = "bytes_per_second/tx";
+pub const METRIC_INTERFACE_NET_SOCKETS_PREFIX: &str = "net/sockets";
 
 // Metric keys that are currently captured and reported
 // by memfaultd.
@@ -72,6 +85,7 @@ pub enum NetworkInterfaceMetricsConfig {
     Interfaces(HashSet<String>),
 }
 
+// NOTE: socket count doesn't need any timing data, similar to FD metrics
 pub struct NetworkInterfaceMetricCollector<T: TimeMeasure> {
     config: NetworkInterfaceMetricsConfig,
     previous_readings_by_interface: HashMap<String, ProcNetDevReading<T>>,
@@ -145,6 +159,46 @@ where
         Ok(wireless_metric_readings)
     }
 
+    pub fn get_socket_count_metrics(&mut self) -> Result<Vec<KeyedMetricReading>> {
+        let (sockets_inuse, tcp_inuse, tcp_orphan, tcp_tw, udp_inuse) = {
+            let path = Path::new(PROC_NET_SOCKSTAT_PATH);
+            let file = File::open(path)?;
+            let reader = BufReader::new(file);
+            let sockstat_contents = read_to_string(reader)?;
+            let sockstat_data = Self::parse_sockstat(sockstat_contents)?;
+            (
+                sockstat_data[0],
+                sockstat_data[1],
+                sockstat_data[2],
+                sockstat_data[3],
+                sockstat_data[4],
+            )
+        };
+
+        Ok(vec![
+            KeyedMetricReading::new_gauge(
+                MetricStringKey::from("net/sockets/tcp_inuse"),
+                tcp_inuse as f64,
+            ),
+            KeyedMetricReading::new_gauge(
+                MetricStringKey::from("net/sockets/sockets_inuse"),
+                sockets_inuse as f64,
+            ),
+            KeyedMetricReading::new_gauge(
+                MetricStringKey::from("net/sockets/tcp_tw"),
+                tcp_tw as f64,
+            ),
+            KeyedMetricReading::new_gauge(
+                MetricStringKey::from("net/sockets/tcp_orphan"),
+                tcp_orphan as f64,
+            ),
+            KeyedMetricReading::new_gauge(
+                MetricStringKey::from("net/sockets/udp_inuse"),
+                udp_inuse as f64,
+            ),
+        ])
+    }
+
     pub fn get_network_interface_metrics(&mut self) -> Result<Vec<KeyedMetricReading>> {
         // Track if any lines in /proc/net/dev are parse-able
         // so we can alert user if none are
@@ -202,6 +256,64 @@ where
     /// The first 8 values track RX traffic on the interface. The latter 8 track TX traffic.
     fn parse_interface_stats(input: &str) -> IResult<&str, Vec<u64>> {
         count(preceded(multispace1, u64), 16)(input)
+    }
+
+    /// Parses the contents of /proc/net/sockstat.
+    /// Example:
+    /// ```console
+    /// sockets: used 97
+    /// TCP: inuse 7 orphan 0 tw 0 alloc 8 mem 0
+    /// UDP: inuse 4 mem 2
+    /// UDPLITE: inuse 0
+    /// RAW: inuse 0
+    /// FRAG: inuse 0 memory 0
+    /// ```
+    /// Currently should only ever resolve in a vec of five u64s,
+    /// those being `sockets_inuse`, `tcp_inuse`, `tcp_orphan`, `tcp_tw`, and `udp_inuse`.
+    fn parse_sockstat(input: String) -> Result<Vec<u64>> {
+        let input = input.as_str();
+        let (remainder, sockets_inuse) = Self::parse_sockstat_sockets_line(input)
+            .map_err(|e| eyre!("failed parsing line describing socket usage: {}", e))?;
+
+        let (remainder, mut tcp_line_stats) = Self::parse_sockstat_line(remainder, 5)
+            .map_err(|e| eyre!("failed parsing line regarding TCP socket stats: {}", e))?;
+        // only care about inuse, orphan, tw
+        tcp_line_stats = tcp_line_stats[0..3].to_vec();
+
+        // this is probably overkill to be using this to capture 1 number from this line
+        // but I'd rather avoid code duplication atm
+        let (_remainder, mut udp_line_stats) = Self::parse_sockstat_line(remainder, 2)
+            .map_err(|e| eyre!("failed parsing line regarding UDP socket stats: {}", e))?;
+        udp_line_stats = udp_line_stats[0..1].to_vec();
+
+        let mut res = vec![sockets_inuse];
+        res.append(&mut tcp_line_stats);
+        res.append(&mut udp_line_stats);
+
+        Ok(res)
+    }
+    fn parse_sockstat_line(input: &str, num_entries: usize) -> IResult<&str, Vec<u64>> {
+        terminated(
+            preceded(
+                Self::parse_tcp_or_udp,
+                count(preceded(Self::parse_sockstat_word, u64), num_entries),
+            ),
+            multispace1,
+        )(input)
+    }
+    fn parse_tcp_or_udp(input: &str) -> IResult<&str, &str> {
+        tag("TCP:").or(tag("UDP:")).parse(input)
+    }
+    fn parse_sockstat_word(input: &str) -> IResult<&str, &str> {
+        delimited(space1, tag("inuse"), space1)
+            .or(delimited(space1, tag("orphan"), space1))
+            .or(delimited(space1, tag("tw"), space1))
+            .or(delimited(space1, tag("alloc"), space1))
+            .or(delimited(space1, tag("mem"), space1))
+            .parse(input)
+    }
+    fn parse_sockstat_sockets_line(input: &str) -> IResult<&str, u64> {
+        terminated(preceded(tag("sockets: used "), u64), multispace1)(input)
     }
 
     /// Parse the output of a line of /proc/net/dev, returning
@@ -392,10 +504,47 @@ where
     }
 
     fn collect_metrics(&mut self) -> Result<Vec<KeyedMetricReading>> {
-        let mut network_metrics = self.get_network_interface_metrics()?;
-        let net_wireless_metrics = self.get_wireless_interface_metrics()?;
-        network_metrics.extend(net_wireless_metrics);
-        Ok(network_metrics)
+        let network_metrics = self
+            .get_network_interface_metrics()
+            .inspect_err(|e| {
+                debug!(
+                    "unable to collect metrics from {}: {}",
+                    PROC_NET_DEV_PATH, e
+                )
+            })
+            .ok();
+        let net_wireless_metrics = self
+            .get_wireless_interface_metrics()
+            .inspect_err(|e| {
+                debug!(
+                    "unable to collect metrics from {}: {}",
+                    PROC_NET_WIRELESS_PATH, e
+                )
+            })
+            .ok();
+        let socket_count_metrics = self
+            .get_socket_count_metrics()
+            .inspect_err(|e| {
+                debug!(
+                    "unable to collect metrics from {}: {}",
+                    PROC_NET_SOCKSTAT_PATH, e
+                )
+            })
+            .ok();
+
+        let res = [network_metrics, net_wireless_metrics, socket_count_metrics]
+            .into_iter()
+            .while_some()
+            .flatten()
+            .collect::<Vec<KeyedMetricReading>>();
+
+        if res.is_empty() {
+            Err(eyre!(
+                "unable to collect network interface metrics. See previously emitted warnings"
+            ))
+        } else {
+            Ok(res)
+        }
     }
 }
 
@@ -654,5 +803,81 @@ mod test {
             net_metric_collector.interface_is_monitored(interface),
             should_be_monitored
         )
+    }
+
+    #[rstest]
+    #[case("sockets: used 97 ", Some(97), "")]
+    #[case("sockets: used", None, "")]
+    #[case(
+        "sockets: used 97
+        TCP: inuse 7 orphan 0 tw 0 alloc 8 mem 0",
+        Some(97),
+        "TCP: inuse 7 orphan 0 tw 0 alloc 8 mem 0"
+    )]
+    fn test_parse_sockstat_sockets_line(
+        #[case] line: &str,
+        #[case] expected: Option<u64>,
+        #[case] expected_remainder: &str,
+    ) {
+        let res = NetworkInterfaceMetricCollector::<TestInstant>::parse_sockstat_sockets_line(line);
+        match expected {
+            None => assert!(res.is_err()),
+            Some(expected_no) => match res {
+                Ok((remainder, res_no)) => {
+                    assert_eq!(res_no, expected_no);
+                    assert_eq!(remainder, expected_remainder);
+                }
+                Err(e) => panic!(
+                    "failed parsing sockstat sockets line when expected success: {}",
+                    e
+                ),
+            },
+        }
+    }
+    #[rstest]
+    #[case("TCP: inuse 7 orphan 0 tw 0 alloc 8 mem 0 ", Some(vec![7, 0, 0, 8, 0]), "", 5)]
+    #[case("UDP: inuse 4 mem 2 ", Some(vec![4, 2]), "", 2)]
+    #[case("JEFF!: inuse 4 mem lol ", None, "", 2)]
+    #[case("JEFF!: inuse 4 mem 12345 yomama 1 ", None, "", 3)]
+    #[case("JEFF!: inuse 4 mem 12345 yomama ", None, "", 3)]
+    fn test_parse_sockstat_line(
+        #[case] line: &str,
+        #[case] expected: Option<Vec<u64>>,
+        #[case] expected_remainder: &str,
+        #[case] num_entries: usize,
+    ) {
+        let res =
+            NetworkInterfaceMetricCollector::<TestInstant>::parse_sockstat_line(line, num_entries);
+        match expected {
+            None => assert!(res.is_err()),
+            Some(expected_no) => match res {
+                Ok((remainder, res_no)) => {
+                    assert_eq!(res_no, expected_no);
+                    assert_eq!(remainder, expected_remainder);
+                }
+                Err(e) => panic!("failed parsing sockstat line when expected success: {}", e),
+            },
+        }
+    }
+    #[rstest]
+    #[case(
+        "sockets: used 97
+        TCP: inuse 7 orphan 0 tw 0 alloc 8 mem 0
+        UDP: inuse 4 mem 2
+        UDPLITE: inuse 0
+        RAW: inuse 0
+        FRAG: inuse 0 memory 0
+        ".into(),
+        Some(vec![97, 7, 0, 0, 4])
+    )]
+    fn test_parse_sockstat(#[case] contents: String, #[case] expected: Option<Vec<u64>>) {
+        let res = NetworkInterfaceMetricCollector::<TestInstant>::parse_sockstat(contents);
+        match expected {
+            None => assert!(res.is_err()),
+            Some(expected_vec) => {
+                let res_vec = res.expect("expected to be valid sockstat report");
+                assert_eq!(expected_vec, res_vec);
+            }
+        }
     }
 }

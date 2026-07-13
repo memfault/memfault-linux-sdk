@@ -31,6 +31,7 @@ impl MarConfig {
                     Metadata::LinuxCustomTrace { .. } => config.coredumps,
                     Metadata::CustomDataRecording { .. } => false,
                     Metadata::Stacktrace { .. } => config.coredumps,
+                    Metadata::Chunks { .. } => false,
                 });
 
         if use_persist_dir {

@@ -148,7 +148,11 @@ impl<S: TaskService + Send + 'static> BoundedTaskServiceThread<S> {
         let join_handle = ServiceJoinHandle::new(handle_rx);
 
         spawn(move || {
-            let runtime = match Builder::new_current_thread().enable_io().build() {
+            let runtime = match Builder::new_current_thread()
+                .enable_io()
+                .enable_time()
+                .build()
+            {
                 Ok(runtime) => runtime,
                 Err(e) => {
                     error!("Failed to build task service runtime: {}", e);
@@ -188,7 +192,10 @@ impl<S: TaskService + 'static> BoundedTaskServiceThread<S> {
 
         spawn(move || {
             let service = init_fn();
-            let runtime = Builder::new_current_thread().enable_io().build();
+            let runtime = Builder::new_current_thread()
+                .enable_io()
+                .enable_time()
+                .build();
             match runtime {
                 Ok(runtime) => runtime.block_on(async_run(service, receiver, handle_tx)),
                 Err(e) => error!("Failed to spawn service: {}", e),

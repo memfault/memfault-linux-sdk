@@ -95,6 +95,7 @@ mod ebpf {
 
         let mut ebpf_programs_rs_src = String::new();
         ebpf_programs_rs_src.push_str("use aya::include_bytes_aligned;\n");
+        println!("cargo:rerun-if-changed=ebpf/vmlinux.h");
         for program in &PROGRAMS {
             println!("cargo:rerun-if-changed={}", program.src_dir);
             let program_dir = format!("{}/{}", out_dir, program.out_name);

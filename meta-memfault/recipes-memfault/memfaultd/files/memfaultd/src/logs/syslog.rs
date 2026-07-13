@@ -19,19 +19,18 @@
 //! https://www.rfc-editor.org/rfc/rfc5426.html
 //!
 use std::collections::HashMap;
-use std::net::{SocketAddr, UdpSocket};
 
 use chrono::{Datelike, Local, TimeZone, Utc};
 
 use eyre::{eyre, Result};
-use log::warn;
-use ssf::MsgMailbox;
+use futures::future::LocalBoxFuture;
+use ssf::{Service, TaskService};
 use syslog_loose::{parse_message_with_year_exact_tz, ProcId, SyslogSeverity};
+use tokio::net::UdpSocket;
 
 use crate::logs::{
     log_collector::LogEntrySender,
     log_entry::{LogData, LogEntry},
-    messages::LogEntryMsg,
 };
 
 use super::levels::{
@@ -44,35 +43,43 @@ use super::levels::{
 // with message sizes of up to and including 2048 octets."
 const MAX_UDP_PACKET_SIZE: usize = 2048;
 
-#[derive(Clone)]
-pub struct SyslogServer {}
+pub struct SyslogServer {
+    sender: LogEntrySender,
+    socket: UdpSocket,
+}
 
-// TODO: Refactor to use TaskService
+impl Service for SyslogServer {
+    fn name(&self) -> &str {
+        "SyslogServer"
+    }
+}
+impl TaskService for SyslogServer {
+    fn run_task(&mut self) -> LocalBoxFuture<'_, Result<(), String>> {
+        Box::pin(async { self.run_once().await.map_err(|e| format!("{}", e)) })
+    }
+}
+
 impl SyslogServer {
-    pub fn run(bind_address: SocketAddr, sender: MsgMailbox<LogEntryMsg>) -> Result<()> {
-        let sender = LogEntrySender::new(sender);
-        let socket = UdpSocket::bind(bind_address)?;
-
-        loop {
-            // From https://www.rfc-editor.org/rfc/rfc5426#section-3.1:
-            // "Each syslog UDP datagram MUST contain only one syslog message"
-            let mut buf = [0; MAX_UDP_PACKET_SIZE];
-            match socket.recv(&mut buf) {
-                Ok(amt) => {
-                    let message = String::from_utf8_lossy(&buf[..amt]);
-                    if let Ok(log_entry) = Self::parse_syslog_message(&message, Local) {
-                        if sender.send_entry(log_entry).is_err() {
-                            // An error indicates that the channel has been closed, we should
-                            // kill this thread.
-                            break;
-                        }
-                    }
+    pub fn new(sender: LogEntrySender, socket: UdpSocket) -> Self {
+        Self { sender, socket }
+    }
+    pub async fn run_once(&mut self) -> Result<()> {
+        // From https://www.rfc-editor.org/rfc/rfc5426#section-3.1:
+        // "Each syslog UDP datagram MUST contain only one syslog message"
+        let mut buf = [0; MAX_UDP_PACKET_SIZE];
+        match self.socket.recv(&mut buf).await {
+            Ok(amt) => {
+                let message = String::from_utf8_lossy(&buf[..amt]);
+                match Self::parse_syslog_message(&message, Local) {
+                    Ok(log_entry) => self
+                        .sender
+                        .send_entry(log_entry)
+                        .map_err(|e| eyre!("error when sending entry: {}", e)),
+                    Err(_e) => Ok(()),
                 }
-                Err(e) => warn!("Syslog server socket error: {}", e),
             }
+            Err(e) => Err(eyre!("Syslog server socket error: {}", e)),
         }
-
-        Ok(())
     }
 
     fn priority_code_from_syslog_severity(syslog_severity: SyslogSeverity) -> String {

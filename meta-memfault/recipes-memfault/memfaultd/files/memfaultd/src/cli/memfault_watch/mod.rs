@@ -176,6 +176,7 @@ fn run_from_args(args: MemfaultWatchArgs) -> Result<i32> {
         None,
         None,
         None,
+        None,
     );
 
     if !status.success() {

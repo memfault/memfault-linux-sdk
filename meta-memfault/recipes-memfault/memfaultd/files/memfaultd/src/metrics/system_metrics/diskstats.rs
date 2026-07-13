@@ -156,7 +156,7 @@ where
 
 impl<T> SystemMetricFamilyCollector for DiskstatsMetricCollector<T>
 where
-    T: TimeMeasure + Clone,
+    T: TimeMeasure + Clone + Send,
 {
     fn family_name(&self) -> &'static str {
         DISKSTATS_METRIC_NAMESPACE

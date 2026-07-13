@@ -28,7 +28,8 @@ use super::{
     },
     internal_metrics::{INTERNAL_METRIC_MAR_CLEANER_DURATION, INTERNAL_METRIC_MAR_ENTRY_COUNT},
     system_metrics::{
-        METRIC_INTERFACE_BYTES_PER_SECOND_RX_SUFFIX, METRIC_INTERFACE_BYTES_PER_SECOND_TX_SUFFIX,
+        FD_METRIC_NAMESPACE, METRIC_INTERFACE_BYTES_PER_SECOND_RX_SUFFIX,
+        METRIC_INTERFACE_BYTES_PER_SECOND_TX_SUFFIX, METRIC_INTERFACE_NET_SOCKETS_PREFIX,
         NETWORK_INTERFACE_METRIC_NAMESPACE, THERMAL_METRIC_NAMESPACE,
     },
     timeseries::{Bool, ReportTag, RssiAverage},
@@ -80,6 +81,10 @@ fn histo_min_max_keys() -> MetricsSet {
             ),
             // thermal/*
             WildcardPattern::new(THERMAL_METRIC_NAMESPACE, ""),
+            // net/sockets/*
+            WildcardPattern::new(METRIC_INTERFACE_NET_SOCKETS_PREFIX, ""),
+            // fs/handles/*
+            WildcardPattern::new(FD_METRIC_NAMESPACE, ""),
         ],
     }
 }

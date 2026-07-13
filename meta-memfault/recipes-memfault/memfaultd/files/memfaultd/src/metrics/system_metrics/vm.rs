@@ -151,7 +151,7 @@ where
 
 impl<T> SystemMetricFamilyCollector for VmMetricsCollector<T>
 where
-    T: TimeMeasure + Copy,
+    T: TimeMeasure + Copy + Send,
 {
     fn collect_metrics(&mut self) -> Result<Vec<KeyedMetricReading>> {
         self.get_vm_metrics()

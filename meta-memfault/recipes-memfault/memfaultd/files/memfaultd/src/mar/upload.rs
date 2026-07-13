@@ -126,6 +126,7 @@ fn should_upload(
         Metadata::LinuxCustomTrace { .. } => sampling.debugging_resolution >= Resolution::Normal,
         Metadata::CustomDataRecording { .. } => sampling.debugging_resolution >= Resolution::Normal,
         Metadata::Stacktrace { .. } => sampling.debugging_resolution >= Resolution::Normal,
+        Metadata::Chunks { .. } => true, // forward chunks whenever possible
     }
 }
 

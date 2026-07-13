@@ -5,13 +5,13 @@ use std::{
     fs::File,
     io::{BufReader, BufWriter, Read, Write},
     path::PathBuf,
-    sync::mpsc::Sender,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use eyre::{eyre, Result};
 use flate2::read::{GzEncoder, ZlibEncoder};
 use log::{error, warn};
+use ssf::MsgMailbox;
 use tiny_http::{Method, Request, Response};
 
 use crate::config::Config;
@@ -19,7 +19,7 @@ use crate::{
     config::{LinuxCustomTraceConfig, LinuxCustomTraceLogCompression},
     http_server::{HttpHandler, HttpHandlerResult, TraceRequest},
     mar::{MarConfig, MarEntryBuilder, Metadata, NoMetadata},
-    metrics::CrashInfo,
+    metrics::CrashInfoMessage,
     network::NetworkConfig,
     util::{
         fs::DEFAULT_GZIP_COMPRESSION_LEVEL, persistent_rate_limiter::PersistentRateLimiter,
@@ -28,13 +28,13 @@ use crate::{
 };
 
 #[cfg(feature = "logging")]
-use {crate::logs::messages::GetQueuedLogsMsg, ssf::MsgMailbox};
+use crate::logs::messages::GetQueuedLogsMsg;
 
 pub struct SaveTraceHandler {
     mar_staging_area: PathBuf,
     network_config: NetworkConfig,
     mar_config: MarConfig,
-    crash_free_interval_channel: Box<Sender<CrashInfo<Instant>>>,
+    crash_free_interval_mbox: MsgMailbox<CrashInfoMessage<Instant>>,
     trace_config: LinuxCustomTraceConfig,
     rate_limiter_path: PathBuf,
     #[cfg(feature = "logging")]
@@ -46,7 +46,7 @@ impl SaveTraceHandler {
     pub fn new(
         mar_staging_area: PathBuf,
         config: &Config,
-        crash_free_interval_channel: Box<Sender<CrashInfo<Instant>>>,
+        crash_free_interval_mbox: MsgMailbox<CrashInfoMessage<Instant>>,
         get_queued_logs_mbox: Option<MsgMailbox<GetQueuedLogsMsg>>,
         trace_config: LinuxCustomTraceConfig,
         rate_limiter_path: PathBuf,
@@ -58,7 +58,7 @@ impl SaveTraceHandler {
             mar_staging_area,
             network_config,
             mar_config,
-            crash_free_interval_channel,
+            crash_free_interval_mbox,
             trace_config,
             rate_limiter_path,
             get_queued_logs_mbox,
@@ -69,7 +69,7 @@ impl SaveTraceHandler {
     pub fn new(
         mar_staging_area: PathBuf,
         config: &Config,
-        crash_free_interval_channel: Box<Sender<CrashInfo<Instant>>>,
+        crash_free_interval_mbox: MsgMailbox<CrashInfoMessage<Instant>>,
         trace_config: LinuxCustomTraceConfig,
         rate_limiter_path: PathBuf,
     ) -> Self {
@@ -80,7 +80,7 @@ impl SaveTraceHandler {
             mar_staging_area,
             mar_config,
             network_config,
-            crash_free_interval_channel,
+            crash_free_interval_mbox,
             trace_config,
             rate_limiter_path,
         }
@@ -134,7 +134,7 @@ impl SaveTraceHandler {
         };
 
         if request.crash {
-            send_crash_info(&self.crash_free_interval_channel, request.program.clone());
+            send_crash_info(&self.crash_free_interval_mbox, request.program.clone());
         }
 
         let mut mar_entry_builder = match MarEntryBuilder::new(&self.mar_staging_area) {
@@ -221,6 +221,7 @@ impl SaveTraceHandler {
             Some(request.crash),
             request.signature,
             Some(request.source),
+            request.locals,
             filename,
             Some(self.log_compression_config().into()),
         ));
@@ -291,15 +292,15 @@ impl HttpHandler for SaveTraceHandler {
     }
 }
 
-fn send_crash_info<T>(channel: &Sender<CrashInfo<T>>, process_name: String)
+fn send_crash_info<T>(mbox: &MsgMailbox<CrashInfoMessage<T>>, process_name: String)
 where
-    T: TimeMeasure + Copy + Ord + std::ops::Add<Duration, Output = T> + Send + Sync + 'static,
+    T: TimeMeasure + Send + Sync + 'static,
 {
-    if let Err(e) = channel.send(CrashInfo {
+    if let Err(e) = mbox.send_and_forget(CrashInfoMessage {
         process_name,
         timestamp: T::now(),
     }) {
-        warn!("Failed to send crash timestamp: {}", e);
+        warn!("Failed to send crash info: {}", e);
     }
 }
 
@@ -307,9 +308,10 @@ where
 mod tests {
     use super::*;
     use crate::config::{Config, LinuxCustomTraceConfig};
+    use ssf::ServiceMock;
     use std::fs::create_dir_all;
     use std::io::Cursor;
-    use std::sync::mpsc::channel;
+    use std::time::Duration;
     use tempfile::TempDir;
 
     fn create_test_handler(
@@ -320,14 +322,14 @@ mod tests {
         let mar_staging_area = temp_dir.path().join("mar");
         create_dir_all(&mar_staging_area).unwrap();
 
-        let (sender, _receiver) = channel();
+        let crash_mock: ServiceMock<CrashInfoMessage<Instant>> = ServiceMock::new();
         let rate_limit_file_path = temp_dir.path().join("rate_limit_test");
         File::create(&rate_limit_file_path).unwrap();
 
         let handler = SaveTraceHandler::new(
             mar_staging_area,
             &config,
-            Box::new(sender),
+            crash_mock.mbox,
             #[cfg(feature = "logging")]
             None,
             trace_config,
