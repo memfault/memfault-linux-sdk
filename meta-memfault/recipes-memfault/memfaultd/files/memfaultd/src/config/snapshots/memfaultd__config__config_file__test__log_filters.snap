@@ -1,5 +1,6 @@
 ---
 source: memfaultd/src/config/config_file.rs
+assertion_line: 692
 expression: content
 ---
 {
@@ -111,6 +112,7 @@ expression: content
       ]
     }
   },
+  "chunks_relay": null,
   "mar": {
     "mar_file_max_size_kib": 10240,
     "mar_entry_max_age_seconds": 604800,
@@ -138,7 +140,8 @@ expression: content
       "cpu": null,
       "memory": null,
       "thermal": null,
-      "oui": null
+      "oui": null,
+      "fd": null
     },
     "statsd_server": {
       "bind_address": "127.0.0.1:8125",

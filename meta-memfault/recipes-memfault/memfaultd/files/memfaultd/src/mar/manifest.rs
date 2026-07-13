@@ -1,7 +1,11 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    str::FromStr,
+    time::Duration,
+};
 
 use chrono::Utc;
 use eyre::{eyre, ErrReport, Result};
@@ -156,6 +160,8 @@ pub enum Metadata {
         program: String,
         source: LinuxCustomTraceSource,
         #[serde(skip_serializing_if = "Option::is_none")]
+        locals: Option<TraceLocals>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         log_file_name: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         compression: Option<CompressionAlgorithm>,
@@ -176,6 +182,12 @@ pub enum Metadata {
     Stacktrace {
         stacktrace_file_name: String,
         compression: Option<CompressionAlgorithm>,
+    },
+    #[serde(rename = "chunks")]
+    Chunks {
+        chunks_file: String,
+        device_serial: String, // not optional for consistency
+        project_key: String,   // not optional as the default is device's own project key
     },
 }
 
@@ -210,6 +222,80 @@ impl serde::Serialize for LinuxCustomTraceSource {
             LinuxCustomTraceSource::Other(s) => s,
         };
         serializer.serialize_str(s)
+    }
+}
+
+/// Maximum total size, in bytes, of the keys and scalar values attached to a
+/// custom trace via the `locals` field. Mirrors the 4096 byte budget enforced
+/// by pyfault when it collects frame locals.
+pub const MAX_TRACE_LOCALS_SIZE_BYTES: usize = 4096;
+
+/// Arbitrary scalar key-value pairs attached to a Linux custom trace.
+/// Only scalar JSON values (string, number, bool, null) are permitted, mirroring
+/// the values pyfault collects (`str | int | float | bool | None`). The combined
+/// size of all keys and values is capped at [`MAX_TRACE_LOCALS_SIZE_BYTES`].
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct TraceLocals(BTreeMap<String, Value>);
+
+impl TraceLocals {
+    /// Validate that every value is a scalar and that the combined size of all
+    /// keys and values is within [`MAX_TRACE_LOCALS_SIZE_BYTES`] and that keys
+    /// are <= 128 bytes long.
+    fn validate(locals: BTreeMap<String, Value>) -> Result<Self, String> {
+        let mut total_size = 0;
+        for (key, value) in &locals {
+            if matches!(value, Value::Array(_) | Value::Object(_)) {
+                return Err(format!(
+                    "Invalid locals value for key '{key}': only scalar values \
+                     (string, number, bool, null) are allowed"
+                ));
+            }
+            if key.len() > 128 {
+                return Err(format!(
+                    "Locals keys must be <= 128 bytes ('{}' was {})",
+                    key.chars().take(32).collect::<String>(),
+                    key.len()
+                ));
+            }
+            total_size += key.len() + scalar_value_size(value);
+        }
+        if total_size > MAX_TRACE_LOCALS_SIZE_BYTES {
+            return Err(format!(
+                "Custom trace locals exceed maximum size of \
+                 {MAX_TRACE_LOCALS_SIZE_BYTES} bytes (got {total_size} bytes)"
+            ));
+        }
+        Ok(Self(locals))
+    }
+}
+
+impl FromStr for TraceLocals {
+    type Err = String;
+
+    /// Parse a JSON object of scalar key-value pairs, e.g.
+    /// `{"resource-id": "3411a39c", "retries": 3, "fatal": true}`.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        serde_json::from_str(s).map_err(|e| e.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for TraceLocals {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let locals = BTreeMap::<String, Value>::deserialize(deserializer)?;
+        Self::validate(locals).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Approximate on-the-wire size of a scalar local value.
+fn scalar_value_size(value: &Value) -> usize {
+    match value {
+        Value::String(s) => s.len(),
+        // Numbers, booleans and null are small; use their textual length.
+        other => other.to_string().len(),
     }
 }
 
@@ -373,12 +459,14 @@ impl Metadata {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new_custom_trace(
         program: String,
         reason: String,
         crash: Option<bool>,
         signature: Option<String>,
         source: Option<LinuxCustomTraceSource>,
+        locals: Option<TraceLocals>,
         log_file_name: Option<String>,
         compression: Option<CompressionAlgorithm>,
     ) -> Self {
@@ -388,8 +476,18 @@ impl Metadata {
             reason,
             program,
             source: source.unwrap_or(LinuxCustomTraceSource::Memfaultctl),
+            locals,
             log_file_name,
             compression,
+        }
+    }
+
+    // see comments for `Chunks` enum member for info on parameters
+    pub fn new_chunks(chunks_file: String, device_serial: String, project_key: String) -> Self {
+        Self::Chunks {
+            chunks_file,
+            device_serial,
+            project_key,
         }
     }
 }
@@ -471,6 +569,7 @@ impl Manifest {
                 stacktrace_file_name,
                 ..
             } => vec![stacktrace_file_name.clone()],
+            Metadata::Chunks { chunks_file, .. } => vec![chunks_file.clone()],
         }
     }
 }
@@ -517,6 +616,43 @@ mod tests {
     use crate::reboot::RebootReason;
 
     use super::*;
+
+    #[rstest]
+    #[case(r#"{"resource-id": "3411a39c", "retries": 3, "fatal": true, "note": null}"#)]
+    #[case(r#"{}"#)]
+    fn trace_locals_accepts_scalar_values(#[case] json: &str) {
+        assert!(TraceLocals::from_str(json).is_ok());
+    }
+
+    #[rstest]
+    #[case(r#"{"nested": {"a": 1}}"#)]
+    #[case(r#"{"list": [1, 2, 3]}"#)]
+    fn trace_locals_rejects_non_scalar_values(#[case] json: &str) {
+        let err = TraceLocals::from_str(json).unwrap_err();
+        assert!(
+            err.contains("only scalar values"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[rstest]
+    fn trace_locals_rejects_oversized_payload() {
+        let big_value = "x".repeat(MAX_TRACE_LOCALS_SIZE_BYTES + 1);
+        let json = format!(r#"{{"blob": "{big_value}"}}"#);
+        let err = TraceLocals::from_str(&json).unwrap_err();
+        assert!(err.contains("maximum size"), "unexpected error: {err}");
+    }
+
+    #[rstest]
+    fn trace_locals_rejects_non_object_json() {
+        assert!(TraceLocals::from_str(r#"[1, 2, 3]"#).is_err());
+    }
+
+    #[rstest]
+    fn trace_locals_deserialize_validates_scalars() {
+        let result: Result<TraceLocals, _> = serde_json::from_str(r#"{"nested": {"a": 1}}"#);
+        assert!(result.is_err());
+    }
 
     #[rstest]
     #[case("coredump-gzip", CompressionAlgorithm::Gzip)]

@@ -3,12 +3,10 @@
 // See License.txt for details
 use chrono::{DateTime, Utc};
 use log::warn;
-use ssf::{Handler, MsgMailbox, Service};
+use ssf::{Handler, Message, MsgMailbox, Service};
 
 use std::time::Duration;
-use std::{ops::Sub, thread::spawn};
-use std::{process::Command, time::Instant};
-use std::{str::FromStr, thread::sleep};
+use std::{ops::Sub, process::Command, str::FromStr};
 
 use eyre::{eyre, ErrReport, Result};
 
@@ -276,54 +274,84 @@ where
     }
 }
 
-pub fn start_battery_reading_thread(
-    config: &Config,
-    battery_msg_mailbox: MsgMailbox<BatteryReadingMessage>,
-) -> Result<()> {
-    let battery_monitor_interval = config.battery_monitor_interval();
-    let battery_info_command = config.battery_monitor_battery_info_command();
-    let battery_info_command_string = battery_info_command.map(|command| command.to_string());
-    let auto_mode = config.battery_monitor_auto_mode();
-    let sysfs_parser = auto_mode
-        .then(|| find_sysfs_battery_entry(SYSFS_POWER_SUPPLY_DIR))
-        .and_then(|res| res.ok().flatten())
-        .map(|path| SysfsBatteryParser::new(&path));
+/// Unit tick message that drives a single battery reading poll.
+///
+/// The `Scheduler` sends this to the `BatteryReadingService` at the
+/// configured interval, replacing the old internal `loop`/`sleep`.
+#[derive(Clone)]
+pub struct BatteryReadingTick;
 
-    // Do not spawn thread if auto mode disabled and no battery command
-    if sysfs_parser.is_none() && battery_info_command_string.is_none() {
-        return Ok(());
+impl Message for BatteryReadingTick {
+    type Reply = ();
+}
+
+/// SSF service that polls the battery on each scheduler tick and forwards
+/// a `BatteryReadingMessage` to the `BatteryMonitor` service.
+pub struct BatteryReadingService {
+    sysfs_parser: Option<SysfsBatteryParser>,
+    battery_info_command_string: Option<String>,
+    battery_mbox: MsgMailbox<BatteryReadingMessage>,
+}
+
+impl BatteryReadingService {
+    /// Returns `None` if neither auto sysfs nor a configured command can provide
+    /// readings
+    pub fn new(config: &Config, battery_mbox: MsgMailbox<BatteryReadingMessage>) -> Option<Self> {
+        let battery_info_command_string = config
+            .battery_monitor_battery_info_command()
+            .map(|c| c.to_string());
+        let auto_mode = config.battery_monitor_auto_mode();
+        let sysfs_parser = auto_mode
+            .then(|| find_sysfs_battery_entry(SYSFS_POWER_SUPPLY_DIR))
+            .and_then(|res| res.ok().flatten())
+            .map(|path| SysfsBatteryParser::new(&path));
+
+        if sysfs_parser.is_none() && battery_info_command_string.is_none() {
+            return None;
+        }
+
+        Some(Self {
+            sysfs_parser,
+            battery_info_command_string,
+            battery_mbox,
+        })
     }
 
-    spawn(move || {
-        let mut next_battery_interval = Instant::now() + battery_monitor_interval;
-        loop {
-            while Instant::now() < next_battery_interval {
-                sleep(next_battery_interval - Instant::now());
-            }
-            next_battery_interval += battery_monitor_interval;
-            if let Some(command_string) = &battery_info_command_string {
-                let battery_info_command = Command::new(command_string);
-                match BatteryMonitorReading::from_command(battery_info_command) {
-                    Ok(reading) => {
-                        if let Err(e) =
-                            battery_msg_mailbox.send_and_forget(BatteryReadingMessage::new(reading))
-                        {
-                            warn!("Error updating battery monitor metrics: {}", e);
-                        }
+    fn take_reading(&self) {
+        if let Some(command_string) = &self.battery_info_command_string {
+            let battery_info_command = Command::new(command_string);
+            match BatteryMonitorReading::from_command(battery_info_command) {
+                Ok(reading) => {
+                    if let Err(e) = self
+                        .battery_mbox
+                        .send_and_forget(BatteryReadingMessage::new(reading))
+                    {
+                        warn!("Error updating battery monitor metrics: {}", e);
                     }
-                    Err(e) => warn!("Failed to get battery reading: {e}"),
                 }
-            } else if let Some(parser) = &sysfs_parser {
-                if let Err(e) = parser.reading().map(|reading| {
-                    battery_msg_mailbox.send_and_forget(BatteryReadingMessage::new(reading))
-                }) {
-                    warn!("Failed to get battery reading: {e}")
-                }
+                Err(e) => warn!("Failed to get battery reading: {e}"),
+            }
+        } else if let Some(parser) = &self.sysfs_parser {
+            if let Err(e) = parser.reading().map(|reading| {
+                self.battery_mbox
+                    .send_and_forget(BatteryReadingMessage::new(reading))
+            }) {
+                warn!("Failed to get battery reading: {e}")
             }
         }
-    });
+    }
+}
 
-    Ok(())
+impl Service for BatteryReadingService {
+    fn name(&self) -> &str {
+        "BatteryReadingService"
+    }
+}
+
+impl Handler<BatteryReadingTick> for BatteryReadingService {
+    fn deliver(&mut self, _tick: BatteryReadingTick) {
+        self.take_reading()
+    }
 }
 
 #[cfg(test)]
@@ -332,8 +360,45 @@ mod tests {
     use super::*;
     use crate::metrics::{MetricValue, TakeMetrics};
     use crate::test_utils::TestInstant;
+    use insta::assert_debug_snapshot;
     use rstest::rstest;
-    use ssf::ServiceMock;
+    use ssf::{ServiceJig, ServiceMock};
+
+    #[test]
+    fn tick_sends_reading_to_battery_monitor() {
+        use std::{fs::File, io::Write};
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let battery_dir = temp_dir.path();
+
+        File::create(battery_dir.join("status"))
+            .unwrap()
+            .write_all(b"Charging\n")
+            .unwrap();
+        File::create(battery_dir.join("capacity"))
+            .unwrap()
+            .write_all(b"80")
+            .unwrap();
+
+        let mut battery_mock = ServiceMock::<BatteryReadingMessage>::new();
+        let service = BatteryReadingService {
+            sysfs_parser: Some(SysfsBatteryParser::new(battery_dir)),
+            battery_info_command_string: None,
+            battery_mbox: battery_mock.mbox.clone(),
+        };
+
+        let mut jig = ServiceJig::prepare(service);
+        jig.mailbox.send_and_forget(BatteryReadingTick).unwrap();
+        jig.process_all();
+
+        let readings: Vec<_> = battery_mock
+            .take_messages()
+            .into_iter()
+            .map(|m| m.reading)
+            .collect();
+        assert_debug_snapshot!(readings);
+    }
 
     #[rstest]
     #[case("Charging:80", true)]

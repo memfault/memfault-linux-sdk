@@ -2,8 +2,9 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 use eyre::{eyre, Context};
-use log::warn;
+use log::{debug, warn};
 use serde::{Deserialize, Serialize};
+use serde_json::error::Category;
 use std::net::IpAddr;
 use std::time::Duration;
 use std::{
@@ -42,6 +43,7 @@ pub struct MemfaultdConfig {
     #[serde(rename = "fluent-bit")]
     pub fluent_bit: FluentBitConfig,
     pub logs: LogsConfig,
+    pub chunks_relay: Option<ChunksRelayConfig>,
     pub mar: MarConfig,
     pub http_server: HttpServerConfig,
     pub battery_monitor: Option<BatteryMonitorConfig>,
@@ -243,6 +245,12 @@ pub struct LogToMetricsConfig {
     pub rules: Vec<LogToMetricRule>,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ChunksRelayConfig {
+    #[serde(rename = "min_chunks_headroom_kib", with = "kib_to_usize")]
+    pub chunks_headroom: usize,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 pub enum LogToMetricRule {
@@ -405,7 +413,36 @@ impl MemfaultdConfig {
         Self::merge_into(&mut config_json, runtime);
 
         // Transform the JSON object into a typed structure.
-        let config: MemfaultdConfig = serde_json::from_value(config_json)?;
+        let config: MemfaultdConfig = match serde_json::from_value(config_json) {
+            Err(serde_err) => {
+                let path_str = config_path.to_str().ok_or(eyre!(
+                    "invalid path string when trying to parse memfaultd config"
+                ))?;
+                let line = serde_err.line();
+                let column = serde_err.column();
+                let report_str = match serde_err.classify() {
+                    Category::Io => "IO failure on reading bytes from memfaultd config".into(),
+                    Category::Syntax => {
+                        format!(
+                            "{}:{}:{}: syntactically invalid JSON",
+                            path_str, line, column
+                        )
+                    }
+                    Category::Data => {
+                        format!(
+                            "{}:{}:{}: semantically invalid data for memfaultd config",
+                            path_str, line, column
+                        )
+                    }
+                    Category::Eof => {
+                        format!("{}:{}:{}: unexpected EOF", path_str, line, column)
+                    }
+                };
+                debug!("{}", report_str);
+                return Err(eyre!("{}", report_str));
+            }
+            Ok(config) => config,
+        };
 
         let mut validation_errors = vec![];
         if let Some(software_version) = &config.software_version {
@@ -643,6 +680,7 @@ mod test {
     #[case("with_persist_storage_config")]
     #[case("with_battery_monitor")]
     #[case("with_min_max_metrics")]
+    #[case("with_chunks_relay_storage")]
     fn can_parse_test_files(#[case] name: &str) {
         let input_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("src/config/test-config")

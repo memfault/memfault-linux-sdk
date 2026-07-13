@@ -1,0 +1,79 @@
+---
+source: memfaultd/src/metrics/system_metrics/memory.rs
+assertion_line: 542
+expression: memory_metrics_collector.get_memory_metrics().unwrap()
+---
+[
+  {
+    "name": "memory/memory/free",
+    "value": {
+      "Histogram": {
+        "value": 248090624.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/memory/used",
+    "value": {
+      "Histogram": {
+        "value": 75599872.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/memory/slab_recl",
+    "value": {
+      "Histogram": {
+        "value": 15269888.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/memory/slab_unrecl",
+    "value": {
+      "Histogram": {
+        "value": 18952192.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/memory/buffered",
+    "value": {
+      "Histogram": {
+        "value": 4653056.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/memory/cached",
+    "value": {
+      "Histogram": {
+        "value": 53379072.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/memory/cma_free",
+    "value": {
+      "Histogram": {
+        "value": 16384000.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/memory/cma_total",
+    "value": {
+      "Histogram": {
+        "value": 16777216.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  }
+]

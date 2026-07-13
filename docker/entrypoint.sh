@@ -4,8 +4,9 @@
 
 poky_dir="${HOME}/yocto/sources/poky"
 if [ ! -d "${poky_dir}" ]; then
-  git clone https://git.yoctoproject.org/git/poky --branch "${YOCTO_RELEASE}" "${poky_dir}"
+  git clone https://git.yoctoproject.org/poky --branch "${YOCTO_RELEASE}" "${poky_dir}"
 else
+  git -C "${poky_dir}" remote set-url origin https://git.yoctoproject.org/poky
   git -C "${poky_dir}" checkout "${YOCTO_RELEASE}" && git -C "${poky_dir}" pull --ff-only
 fi
 
@@ -25,8 +26,9 @@ fi
 
 raspberrypi_dir="${HOME}/yocto/sources/meta-raspberrypi"
 if [ ! -d "${raspberrypi_dir}" ]; then
-  git clone https://git.yoctoproject.org/git/meta-raspberrypi --branch "${YOCTO_RELEASE}" "${raspberrypi_dir}"
+  git clone https://git.yoctoproject.org/meta-raspberrypi --branch "${YOCTO_RELEASE}" "${raspberrypi_dir}"
 else
+  git -C "${raspberrypi_dir}" remote set-url origin https://git.yoctoproject.org/meta-raspberrypi
   git -C "${raspberrypi_dir}" checkout "${YOCTO_RELEASE}" && git -C "${raspberrypi_dir}" pull --ff-only
 fi
 

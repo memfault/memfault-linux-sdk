@@ -4,6 +4,8 @@
 use std::{ops::Sub, time::Duration};
 
 use eyre::Result;
+use log::warn;
+use ssf::{Handler, Message, Service};
 
 use crate::{
     config::{ConnectivityMonitorConfig, ConnectivityMonitorTarget},
@@ -14,9 +16,19 @@ use crate::{
     util::{can_connect::CanConnect, time_measure::TimeMeasure},
 };
 
+/// Unit tick message that drives a single connectivity check and counter update.
+///
+/// The `Scheduler` sends this to the `ConnectivityMonitor` service at the
+/// configured `interval_seconds`, replacing the old internal `loop`/`sleep`.
+#[derive(Clone)]
+pub struct ConnectivityMonitorTick;
+
+impl Message for ConnectivityMonitorTick {
+    type Reply = ();
+}
+
 pub struct ConnectivityMonitor<T, U> {
     targets: Vec<ConnectivityMonitorTarget>,
-    interval: Duration,
     last_checked_at: Option<T>,
     metrics_mbox: MetricsMBox,
     connection_checker: U,
@@ -30,7 +42,6 @@ where
     pub fn new(config: &ConnectivityMonitorConfig, metrics_mbox: MetricsMBox) -> Self {
         Self {
             targets: config.targets.clone(),
-            interval: config.interval_seconds,
             last_checked_at: None,
             metrics_mbox,
             connection_checker: U::new(config.timeout_seconds),
@@ -70,9 +81,27 @@ where
 
         Ok(())
     }
+}
 
-    pub fn interval_seconds(&self) -> Duration {
-        self.interval
+impl<T, U> Service for ConnectivityMonitor<T, U>
+where
+    T: TimeMeasure + Copy + Ord + Sub<T, Output = Duration>,
+    U: CanConnect,
+{
+    fn name(&self) -> &str {
+        "ConnectivityMonitor"
+    }
+}
+
+impl<T, U> Handler<ConnectivityMonitorTick> for ConnectivityMonitor<T, U>
+where
+    T: TimeMeasure + Copy + Ord + Sub<T, Output = Duration>,
+    U: CanConnect,
+{
+    fn deliver(&mut self, _tick: ConnectivityMonitorTick) {
+        if let Err(e) = self.update_connected_time() {
+            warn!("Failed to update connected time metrics: {}", e);
+        }
     }
 }
 
@@ -82,14 +111,42 @@ mod tests {
 
     use insta::assert_json_snapshot;
     use rstest::rstest;
-    use ssf::ServiceMock;
+    use ssf::{ServiceJig, ServiceMock};
 
-    use super::ConnectivityMonitor;
+    use super::{ConnectivityMonitor, ConnectivityMonitorTick};
     use crate::test_utils::{TestConnectionChecker, TestInstant};
     use crate::{
         config::{ConnectionCheckProtocol, ConnectivityMonitorConfig, ConnectivityMonitorTarget},
         metrics::TakeMetrics,
     };
+
+    #[test]
+    fn tick_updates_connected_time() {
+        let config = ConnectivityMonitorConfig {
+            targets: vec![ConnectivityMonitorTarget {
+                host: IpAddr::from_str("8.8.8.8").unwrap(),
+                port: 443,
+                protocol: ConnectionCheckProtocol::Tcp,
+            }],
+            interval_seconds: Duration::from_secs(15),
+            timeout_seconds: Duration::from_secs(10),
+        };
+        let mut metrics_mock = ServiceMock::new();
+        let monitor = ConnectivityMonitor::<TestInstant, TestConnectionChecker>::new(
+            &config,
+            metrics_mock.mbox.clone(),
+        );
+
+        TestConnectionChecker::connect();
+
+        let mut jig = ServiceJig::prepare(monitor);
+        jig.mailbox
+            .send_and_forget(ConnectivityMonitorTick)
+            .unwrap();
+        jig.process_all();
+
+        assert!(!metrics_mock.take_metrics().unwrap().is_empty());
+    }
 
     #[rstest]
     fn test_while_connected() {

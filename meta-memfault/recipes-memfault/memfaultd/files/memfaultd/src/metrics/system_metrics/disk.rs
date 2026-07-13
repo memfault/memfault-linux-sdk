@@ -290,7 +290,7 @@ where
 
 impl<M> SystemMetricFamilyCollector for DiskMetricsCollector<M>
 where
-    M: Mmc,
+    M: Mmc + Send,
 {
     fn family_name(&self) -> &'static str {
         DISK_METRIC_NAMESPACE

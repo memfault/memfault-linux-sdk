@@ -236,7 +236,7 @@ where
 
 impl<T> SystemMetricFamilyCollector for DiskSpaceMetricCollector<T>
 where
-    T: DiskSpaceInfoForPath,
+    T: DiskSpaceInfoForPath + Send,
 {
     fn family_name(&self) -> &'static str {
         DISKSPACE_METRIC_NAMESPACE

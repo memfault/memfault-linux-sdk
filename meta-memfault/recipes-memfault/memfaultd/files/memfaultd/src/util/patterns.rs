@@ -1,6 +1,18 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
+pub fn check_base64_encoding<T>(input: T) -> eyre::Result<()>
+where
+    T: AsRef<[u8]> + std::fmt::Display,
+{
+    use base64::{prelude::BASE64_STANDARD, Engine};
+    if BASE64_STANDARD.decode(&input).is_err() {
+        Err(eyre::eyre!("incorrect base64 encoding: {:.64}...", input))
+    } else {
+        Ok(())
+    }
+}
+
 pub fn alphanum_slug_is_valid(s: &str, max_len: usize) -> eyre::Result<()> {
     match (
         (1..max_len).contains(&s.len()),
@@ -53,6 +65,14 @@ pub fn alphanum_slug_dots_colon_spaces_parens_slash_is_valid(
 mod tests {
     use super::*;
     use rstest::rstest;
+
+    #[rstest]
+    #[case("aaaaaa", false)]
+    #[case("dGhpcyBzdHJpbmcgaXMgYmFzZTY0IGVuY29kZWQ=", true)]
+    #[case("this string is not base64 encoded", false)]
+    fn test_check_base64_encoding(#[case] input: &str, #[case] result: bool) {
+        assert_eq!(check_base64_encoding::<&str>(input).is_ok(), result);
+    }
 
     #[rstest]
     #[case("1.0.0-rc2", true)]

@@ -31,9 +31,12 @@
 //! KReclaimable:      14028 kB
 //! Slab:              32636 kB
 //! SReclaimable:      14028 kB
+//! CmaTotal:          16384 kB
+//! CmaFree:           16000 kB
 //!
 //! Only the following lines are currently processed:
-//! MemTotal, MemFree, and optionally MemAvailable
+//! MemTotal, MemFree, SUnreclaimable, SReclaimable, Cached, Buffers
+//! Optionally: MemAvailable, CmaTotal, CmaFree
 //!
 //! These lines are used by this module to calculate
 //! free and used memory. MemFree is used in place of
@@ -177,14 +180,17 @@ where
             .remove("Buffers")
             .ok_or_else(|| eyre!("{} is missing required value Buffers", PROC_MEMINFO_PATH))?;
 
-        // Check that MemTotal is nonzero to avoid dividing by 0
+        // Ignore errors since CMA can be disabled
+        let cma_free = stats.remove("CmaFree");
+        let cma_total = stats.remove("CmaTotal");
+
         if total != 0.0 {
             let available = stats.remove("MemAvailable").unwrap_or(free);
 
             let used = total - available;
             let _pct_used = (used / total) * 100.0;
 
-            Ok(vec![
+            let mut metrics = vec![
                 KeyedMetricReading::new_histogram(
                     MetricStringKey::from("memory/memory/free"),
                     free,
@@ -209,7 +215,20 @@ where
                     MetricStringKey::from("memory/memory/cached"),
                     cached,
                 ),
-            ])
+            ];
+
+            // If CMA is enabled, both CmaTotal and CmaFree should be present
+            if let (Some(cma_total), Some(cma_free)) = (cma_total, cma_free) {
+                metrics.push(KeyedMetricReading::new_histogram(
+                    MetricStringKey::from("memory/memory/cma_free"),
+                    cma_free,
+                ));
+                metrics.push(KeyedMetricReading::new_histogram(
+                    MetricStringKey::from("memory/memory/cma_total"),
+                    cma_total,
+                ));
+            }
+            Ok(metrics)
         } else {
             Err(eyre!("MemTotal is 0, can't calculate memory usage metrics"))
         }
@@ -218,7 +237,7 @@ where
 
 impl<T> SystemMetricFamilyCollector for MemoryMetricsCollector<T>
 where
-    T: MemInfoParser,
+    T: MemInfoParser + Send,
 {
     fn collect_metrics(&mut self) -> Result<Vec<KeyedMetricReading>> {
         self.get_memory_metrics()
@@ -237,12 +256,46 @@ mod test {
 
     use super::*;
 
+    // helper base memory string
+    fn base_memory_string() -> String {
+        String::from(
+            "MemTotal:         365916 kB
+MemFree:          242276 kB
+Buffers:            4544 kB
+Cached:            52128 kB
+SwapCached:            0 kB
+Active:            21668 kB
+Inactive:          51404 kB
+Active(anon):       2312 kB
+Inactive(anon):    25364 kB
+Active(file):      19356 kB
+Inactive(file):    26040 kB
+Unevictable:        3072 kB
+Mlocked:               0 kB
+SwapTotal:             0 kB
+SwapFree:              0 kB
+Dirty:                 0 kB
+Writeback:             0 kB
+AnonPages:         19488 kB
+Mapped:            29668 kB
+Shmem:             11264 kB
+KReclaimable:      14028 kB
+Slab:              33420 kB
+SReclaimable:      14912 kB
+SUnreclaim:        18508 kB
+KernelStack:        1904 kB
+",
+        )
+    }
+
     #[rstest]
     #[case("MemTotal:         365916 kB", "MemTotal", 365916.0)]
     #[case("MemFree:          242276 kB", "MemFree", 242276.0)]
     #[case("MemAvailable:     292088 kB", "MemAvailable", 292088.0)]
     #[case("Buffers:            4544 kB", "Buffers", 4544.0)]
     #[case("Cached:            52128 kB", "Cached", 52128.0)]
+    #[case("CmaFree:           16000 kB", "CmaFree", 16000.0)]
+    #[case("CmaTotal:           16384 kB", "CmaTotal", 16384.0)]
     fn test_parse_meminfo_line(
         #[case] proc_meminfo_line: &str,
         #[case] expected_key: &str,
@@ -257,75 +310,31 @@ mod test {
 
     #[rstest]
     fn test_get_memory_metrics() {
-        let meminfo = "MemTotal:         365916 kB
-MemFree:          242276 kB
-MemAvailable:     292088 kB
-Buffers:            4544 kB
-Cached:            52128 kB
-SwapCached:            0 kB
-Active:            21668 kB
-Inactive:          51404 kB
-Active(anon):       2312 kB
-Inactive(anon):    25364 kB
-Active(file):      19356 kB
-Inactive(file):    26040 kB
-Unevictable:        3072 kB
-Mlocked:               0 kB
-SwapTotal:             0 kB
-SwapFree:              0 kB
-Dirty:                 0 kB
-Writeback:             0 kB
-AnonPages:         19488 kB
-Mapped:            29668 kB
-Shmem:             11264 kB
-KReclaimable:      14028 kB
-Slab:              33420 kB
-SReclaimable:      14912 kB
-SUnreclaim:        18508 kB
-KernelStack:        1904 kB
-        ";
+        let mut meminfo = base_memory_string();
+        // Include All Metrics CmaTotal + CmaFree
+        meminfo.push_str(
+            "MemAvailable:     292088 kB
+CmaTotal:          16384 kB
+CmaFree:           16000 kB",
+        );
 
         with_settings!({sort_maps => true}, {
         assert_json_snapshot!(
-                              MemInfoParserImpl::parse_meminfo_stats(meminfo),
+                              MemInfoParserImpl::parse_meminfo_stats(&meminfo),
                               {"[].value.**.timestamp" => "[timestamp]", "[].value.**.value" => rounded_redaction(5)})
         });
     }
 
     #[rstest]
     fn test_get_memory_metrics_no_memavailable() {
-        let meminfo = "MemTotal:         365916 kB
-MemFree:          242276 kB
-Buffers:            4544 kB
-Cached:            52128 kB
-SwapCached:            0 kB
-Active:            21668 kB
-Inactive:          51404 kB
-Active(anon):       2312 kB
-Inactive(anon):    25364 kB
-Active(file):      19356 kB
-Inactive(file):    26040 kB
-Unevictable:        3072 kB
-Mlocked:               0 kB
-SwapTotal:             0 kB
-SwapFree:              0 kB
-Dirty:                 0 kB
-Writeback:             0 kB
-AnonPages:         19488 kB
-Mapped:            29668 kB
-Shmem:             11264 kB
-KReclaimable:      14028 kB
-Slab:              33420 kB
-SReclaimable:      14912 kB
-SUnreclaim:        18508 kB
-KernelStack:        1904 kB
-        ";
+        let meminfo = base_memory_string();
+
         let mut mock_meminfo_parser = MockMemInfoParser::new();
 
         mock_meminfo_parser
             .expect_get_meminfo_stats()
             .times(1)
-            .returning(|| Ok(MemInfoParserImpl::parse_meminfo_stats(meminfo)));
+            .returning(move || Ok(MemInfoParserImpl::parse_meminfo_stats(&meminfo)));
         let memory_metrics_collector = MemoryMetricsCollector::new(mock_meminfo_parser);
         with_settings!({sort_maps => true}, {
         assert_json_snapshot!(
@@ -433,5 +442,53 @@ KernelStack:        1904 kB
             .returning(|| Ok(MemInfoParserImpl::parse_meminfo_stats(meminfo)));
         let memory_metrics_collector = MemoryMetricsCollector::new(mock_meminfo_parser);
         assert!(memory_metrics_collector.get_memory_metrics().is_err())
+    }
+
+    #[rstest]
+    fn test_get_metrics_excludes_cma_when_cma_free_is_missing() {
+        // Include only CmaTotal and not CmaFree
+        let mut meminfo = base_memory_string();
+        meminfo.push_str(
+            "MemAvailable:     292088 kB
+CmaTotal:           16384 kB",
+        );
+
+        let mut mock_meminfo_parser = MockMemInfoParser::new();
+
+        mock_meminfo_parser
+            .expect_get_meminfo_stats()
+            .times(1)
+            .returning(move || Ok(MemInfoParserImpl::parse_meminfo_stats(&meminfo)));
+        let memory_metrics_collector = MemoryMetricsCollector::new(mock_meminfo_parser);
+        let metrics = memory_metrics_collector.get_memory_metrics().unwrap();
+
+        assert!(
+            !metrics.iter().any(|m| m.name.to_string().contains("cma")),
+            "Expected no CMA metrics to be included",
+        );
+    }
+
+    #[rstest]
+    fn test_get_metrics_includes_cma() {
+        let mut meminfo = base_memory_string();
+        // Include All Metrics CmaTotal + CmaFree
+        meminfo.push_str(
+            "MemAvailable:     292088 kB
+CmaTotal:          16384 kB
+CmaFree:           16000 kB",
+        );
+
+        let mut mock_meminfo_parser = MockMemInfoParser::new();
+
+        mock_meminfo_parser
+            .expect_get_meminfo_stats()
+            .times(1)
+            .returning(move || Ok(MemInfoParserImpl::parse_meminfo_stats(&meminfo)));
+        let memory_metrics_collector = MemoryMetricsCollector::new(mock_meminfo_parser);
+        with_settings!({sort_maps => true}, {
+        assert_json_snapshot!(
+                              memory_metrics_collector.get_memory_metrics().unwrap(),
+                              {"[].value.**.timestamp" => "[timestamp]", "[].value.**.value" => rounded_redaction(5)})
+        });
     }
 }

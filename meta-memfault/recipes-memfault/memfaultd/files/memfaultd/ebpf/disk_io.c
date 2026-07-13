@@ -9,53 +9,102 @@
 #include <linux/types.h>
 #include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
+#include <bpf/bpf_core_read.h>
 
-struct evt {
-    __u32 pid;
-    __u32 bytes;
-    __u32 dev;     // dev_t truncated to 32 bits for simplicity
-    char rwbs[8];
+#include "vmlinux.h"
+
+char LICENSE[] SEC("license") = "Dual BSD/GPL";
+
+#define DISK_OP_READ  0
+#define DISK_OP_WRITE 1
+
+// Upper bound on the number of unique (tgid, dev, op) tuples we can hold
+// between userspace drains. Exceeding this increments DISK_IO_DROPS.
+#define DISK_IO_MAX_ENTRIES 8192
+
+struct disk_io_key {
+    __u32 tgid;
+    __u32 dev;
+    __u32 op;
 };
 
+// Per-CPU keeps each CPU's counter independent, avoiding cross-CPU update
+// races without needing atomics. Userspace sums across CPUs at read time.
 struct {
-    __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
-    __type(key, int);
-    __uint(value_size, sizeof(__u32));
-    __uint(max_entries, 1024);
-} DISK_EVENTS SEC(".maps");
+    __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
+    __type(key, struct disk_io_key);
+    __type(value, __u64);
+    __uint(max_entries, DISK_IO_MAX_ENTRIES);
+} DISK_IO_STATS SEC(".maps");
 
-// tracepoint arguments layout (from /sys/kernel/debug/tracing/events/block/block_io_start/format)
-struct block_io_start_args {
-    __u16 common_type;           // offset:0,  size:2, signed:0
-    __u8  common_flags;          // offset:2,  size:1, signed:0
-    __u8  common_preempt_count;  // offset:3,  size:1, signed:0
-    __s32 common_pid;            // offset:4,  size:4, signed:1
+// Cumulative count of bio events that couldn't be recorded because
+// DISK_IO_STATS was full. Userspace computes deltas across reads.
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __type(key, __u32);
+    __type(value, __u64);
+    __uint(max_entries, 1);
+} DISK_IO_DROPS SEC(".maps");
 
-    __u32 dev;                   // offset:8,  size:4, signed:0 (dev_t)
-    __u32 __pad1;                // offset:12, size:4, padding for alignment
-    __u64 sector;                // offset:16, size:8, signed:0 (sector_t)
-    __u32 nr_sector;             // offset:24, size:4, signed:0
-    __u32 bytes;                 // offset:28, size:4, signed:0
-#if __KERNEL >= 611
-    __u16 ioprio;                // offset:32, size:2, signed:0
-#endif
-    char  rwbs[8];               // offset:34, size:8, signed:0
-    char  comm[16];              // offset:42, size:16, signed:0
-    __u32 cmd_data_loc;          // offset:60, size:4, signed:0 (__data_loc)
-};
+static __always_inline void record_drop(void)
+{
+    __u32 zero = 0;
+    __u64 *counter = bpf_map_lookup_elem(&DISK_IO_DROPS, &zero);
+    if (counter) {
+        *counter += 1;
+    }
+}
+
+// rwbs is a short string like "R", "W", "RA", "WS", "FW". We only care about
+// read vs. write; flush/discard/other get skipped.
+static __always_inline int classify_op(const char *rwbs)
+{
+    #pragma unroll
+    for (int i = 0; i < 8; i++) {
+        char c = rwbs[i];
+        if (c == '\0') {
+            break;
+        }
+        if (c == 'W') {
+            return DISK_OP_WRITE;
+        }
+        if (c == 'R') {
+            return DISK_OP_READ;
+        }
+    }
+    return -1;
+}
 
 SEC("tracepoint/block/block_io_start")
-int handle_block_io_start(struct block_io_start_args *ctx)
+int handle_block_io_start(struct trace_event_raw_block_rq *ctx)
 {
-    struct evt e = {};
+    char rwbs[8];
+    bpf_core_read(rwbs, sizeof(rwbs), &ctx->rwbs);
 
-    e.pid = bpf_get_current_pid_tgid() >> 32;
-    e.dev = ctx->dev;
-    e.bytes = ctx->bytes;
+    int op = classify_op(rwbs);
+    if (op < 0) {
+        return 0;
+    }
 
-    __builtin_memcpy(e.rwbs, ctx->rwbs, sizeof(e.rwbs));
+    __u64 bytes = BPF_CORE_READ(ctx, bytes);
+    if (bytes == 0) {
+        return 0;
+    }
 
-    // submit via perf event
-    bpf_perf_event_output(ctx, &DISK_EVENTS, BPF_F_CURRENT_CPU, &e, sizeof(e));
+    struct disk_io_key key = {
+        .tgid = bpf_get_current_pid_tgid() >> 32,
+        .dev = BPF_CORE_READ(ctx, dev),
+        .op = (__u32)op,
+    };
+
+    __u64 *counter = bpf_map_lookup_elem(&DISK_IO_STATS, &key);
+    if (counter) {
+        *counter += bytes;
+        return 0;
+    }
+
+    if (bpf_map_update_elem(&DISK_IO_STATS, &key, &bytes, BPF_NOEXIST) != 0) {
+        record_drop();
+    }
     return 0;
 }

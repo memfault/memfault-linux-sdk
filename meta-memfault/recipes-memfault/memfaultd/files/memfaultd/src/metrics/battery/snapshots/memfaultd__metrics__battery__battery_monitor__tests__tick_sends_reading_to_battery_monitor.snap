@@ -1,0 +1,11 @@
+---
+source: memfaultd/src/metrics/battery/battery_monitor.rs
+expression: readings
+---
+[
+    BatteryMonitorReading {
+        battery_soc_pct: 80.0,
+        battery_charging_state: Charging,
+        battery_soh_pct: None,
+    },
+]

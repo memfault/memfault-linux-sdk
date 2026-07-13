@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config::Config,
-    http_server::{MetricsRequest, SessionRequest, TraceRequest},
+    http_server::{ChunksRequest, MetricsRequest, SessionRequest, TraceRequest},
     mar::{ExportFormat, EXPORT_MAR_URL},
     metrics::{KeyedMetricReading, SessionName},
 };
@@ -213,6 +213,25 @@ impl MemfaultdClient {
         match r.status() {
             StatusCode::OK => Ok(Some(r.json::<CrashLogs>()?.logs)),
             _ => Err(eyre!("Unexpected status code {}", r.status().as_u16())),
+        }
+    }
+
+    pub fn post_chunks(
+        &self,
+        project_key: Option<String>,
+        device_serial: Option<String>,
+        chunks: Vec<String>,
+    ) -> Result<()> {
+        let request = ChunksRequest::new(project_key, device_serial, chunks);
+        let body = serde_json::to_string(&request)?;
+        let r = self.post_url("/v1/chunks", body)?;
+        match r.status() {
+            StatusCode::OK => Ok(()),
+            _ => Err(eyre!(
+                "Unexpected status code {}: {}",
+                r.status().as_u16(),
+                from_utf8(&r.bytes()?)?
+            )),
         }
     }
 

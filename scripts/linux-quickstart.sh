@@ -7,8 +7,6 @@
 # Enable for trace
 # set -eux
 
-LATEST_VERSION="1.18.0"
-
 # Required so that the script works  if run as root user or a regular user
 # Mostly for compatibility with Yocto systems, which are often accessed as
 # the root user
@@ -34,21 +32,14 @@ main() {
   local use_musl
   local device_id
 
-  if [ -z "${MEMFAULTD_URL}" ]; then
-    release_url=$MEMFAULTD_URL
-  fi
-
   # Only use musl memfaultd when explicitly told to
   if [ -z "${USE_MUSL}" ]; then
     use_musl=$USE_MUSL
   fi
-  while getopts ":p:u:m:d:" opt; do
+  while getopts ":p:m:d:" opt; do
     case $opt in
       p)
         project_key="$OPTARG"
-        ;;
-      u)
-        release_url="$OPTARG"
         ;;
       m)
         use_musl=1
@@ -94,14 +85,12 @@ main() {
     ensure read -p "Enter an ID for this device: " device_id < /dev/tty
   fi
 
-  # fall back to default if a url is not specified
-  if [ -z "${release_url}" ]; then
-    if [ "${use_musl}" ]; then
-      release_url="https://github.com/memfault/memfaultd/releases/download/${LATEST_VERSION}/memfaultd-${_arch}-unknown-linux-musl"
-    else
-      release_url="https://github.com/memfault/memfaultd/releases/download/${LATEST_VERSION}/memfaultd-${_arch}-unknown-linux-gnu"
-    fi
+  if [ "${use_musl}" ]; then
+    release_url="https://github.com/memfault/memfaultd/releases/latest/download/memfaultd-${_arch}-unknown-linux-musl"
+  else
+    release_url="https://github.com/memfault/memfaultd/releases/latest/download/memfaultd-${_arch}-unknown-linux-gnu"
   fi
+
   local memfaultd_binary="${tmp_dir}/memfaultd"
 
   # install memfaultd
@@ -201,9 +190,11 @@ install_memfaultd_service_file() {
 [Unit]
 Description=memfaultd daemon
 After=local-fs.target network.target dbus.service
+
 [Service]
 Type=forking
-PIDFile=/run/memfaultd.pid
+RuntimeDirectory=memfaultd
+PIDFile=/run/memfaultd/memfaultd.pid
 ExecStart=/usr/bin/memfaultd --daemonize
 Restart=on-failure
 [Install]

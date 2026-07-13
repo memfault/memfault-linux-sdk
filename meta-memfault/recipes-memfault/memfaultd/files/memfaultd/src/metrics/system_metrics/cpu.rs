@@ -53,20 +53,59 @@ use crate::{
         core_metrics::METRIC_CPU_USAGE_PCT, system_metrics::SystemMetricFamilyCollector,
         KeyedMetricReading, MetricReading, MetricStringKey,
     },
-    util::math::counter_delta_with_overflow,
+    util::{math::counter_delta_with_overflow, time_measure::TimeMeasure},
 };
 use eyre::{eyre, ErrReport, Result};
 
 const PROC_STAT_PATH: &str = "/proc/stat";
 pub const CPU_METRIC_NAMESPACE: &str = "cpu";
+pub const CTXT_PER_SEC: &str = "cpu/context_switches_per_second";
+pub const FORK_PER_SEC: &str = "cpu/forks_per_second";
 
-pub struct CpuMetricCollector {
-    last_reading: Option<Vec<u64>>,
+#[derive(Debug, Clone, Copy)]
+struct SingleStat<T>
+where
+    T: TimeMeasure + Copy,
+{
+    pub counter: u64,
+    pub reading_time: T,
+}
+impl<T> SingleStat<T>
+where
+    T: TimeMeasure + Copy,
+{
+    pub fn rate_between(&self, other: Self) -> f64 {
+        let counter_delta = counter_delta_with_overflow(self.counter, other.counter);
+        let interval_secs = self.reading_time.since(&other.reading_time).as_secs_f64();
+        if interval_secs <= 0.0 {
+            return 0.0;
+        }
+        (counter_delta as f64) / interval_secs
+    }
+}
+type CtxtStat<T> = SingleStat<T>;
+type ProcessesStat<T> = SingleStat<T>;
+
+#[derive(Debug, Clone)]
+pub struct CpuMetricCollector<T>
+where
+    T: TimeMeasure + Copy,
+{
+    last_cpu_reading: Option<Vec<u64>>,
+    last_ctxt_reading: Option<CtxtStat<T>>,
+    last_processes_reading: Option<ProcessesStat<T>>,
 }
 
-impl CpuMetricCollector {
+impl<T> CpuMetricCollector<T>
+where
+    T: TimeMeasure + Copy,
+{
     pub fn new() -> Self {
-        Self { last_reading: None }
+        Self {
+            last_cpu_reading: None,
+            last_ctxt_reading: None,
+            last_processes_reading: None,
+        }
     }
 
     pub fn get_cpu_metrics(&mut self) -> Result<Vec<KeyedMetricReading>> {
@@ -79,19 +118,37 @@ impl CpuMetricCollector {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
 
-        let mut cpu_metric_readings = vec![];
+        let reading_time = T::now();
 
+        let mut cpu_metric_readings = vec![];
         for line in reader.lines() {
             // Discard errors - the assumption here is that we are only parsing
             // lines that follow the specified format and expect other lines in the file to error
-            if let Ok(cpu_stats) = Self::parse_proc_stat_line_cpu(line?.trim()) {
+            let line = line?;
+            let line = line.trim();
+            if let Ok(cpu_stats) = Self::parse_proc_stat_line_cpu(line) {
                 no_parseable_lines = false;
-                if let Ok(Some(mut readings)) = self.delta_since_last_reading(cpu_stats) {
+                if let Ok(Some(mut readings)) = self.cpu_delta_since_last_reading(cpu_stats) {
                     cpu_metric_readings.append(&mut readings);
                 }
-                // There is only one line in the /proc/stat file for the total CPU stats, break
-                // once we've found it to avoid reading and attempting to parse extraneous lines
-                break;
+            }
+            if let Ok(ctxt_counter) = Self::parse_proc_stat_line_ctxt(line) {
+                no_parseable_lines = false;
+                if let Some(reading) = self.ctxt_delta_since_last_reading(CtxtStat {
+                    counter: ctxt_counter,
+                    reading_time,
+                }) {
+                    cpu_metric_readings.push(reading);
+                }
+            }
+            if let Ok(counter) = Self::parse_proc_stat_line_processes(line) {
+                no_parseable_lines = false;
+                if let Some(reading) = self.processes_delta_since_last_reading(ProcessesStat {
+                    counter,
+                    reading_time,
+                }) {
+                    cpu_metric_readings.push(reading);
+                }
             }
         }
 
@@ -113,19 +170,78 @@ impl CpuMetricCollector {
         preceded(tag("cpu"), count(preceded(space1, u64), 7))(input)
     }
 
+    /// Parse the CPU stats from the suffix of a /proc/stat line following the `ctxt` tag
+    fn parse_ctxt_stats(input: &str) -> IResult<&str, u64> {
+        preceded(tag("ctxt"), preceded(space1, u64))(input)
+    }
+    /// Parse the CPU stats from the suffix of a /proc/stat line following the `processes` tag
+    fn parse_processes_stats(input: &str) -> IResult<&str, u64> {
+        preceded(tag("processes"), preceded(space1, u64))(input)
+    }
+
     /// Parse the output of a line of /proc/stat, returning
-    /// a pair of the cpu ID that the parsed line corresponds
-    /// to and the first 7 floats listed for it
+    /// the first 7 floats listed for `cpu`
     ///
     /// The 7 floats represent how much time since boot the cpu has
     /// spent in the "user", "nice", "system", "idle", "iowait", "irq",
     /// "softirq", in that order    
+    ///
     /// Example of a valid parse-able line:
-    /// cpu0 36675 176 11216 1552961 689 0 54
+    ///
+    /// cpu 36675 176 11216 1552961 689 0 54
     fn parse_proc_stat_line_cpu(line: &str) -> Result<Vec<u64>> {
         let (_, cpu_stats) = Self::parse_cpu_stats(line)
             .map_err(|_e| eyre!("Failed to parse CPU stats line: {}", line))?;
         Ok(cpu_stats)
+    }
+    /// Parse the output of a line of /proc/stat tagged with `ctxt`.
+    /// Returned `u64` indicates reported number.
+    ///
+    /// Example of a valid parse-able line:
+    ///
+    /// ctxt 1235748
+    fn parse_proc_stat_line_ctxt(line: &str) -> Result<u64> {
+        let (_, ctxt_stat) = Self::parse_ctxt_stats(line)
+            .map_err(|_e| eyre!("Failed to parse CPU ctxt line: {}", line))?;
+        Ok(ctxt_stat)
+    }
+    /// Parse the output of a line of /proc/stat tagged with `processes`.
+    /// Returned `u64` indicates reported number.
+    ///
+    /// Example of a valid parse-able line:
+    ///
+    /// processes 1237587
+    fn parse_proc_stat_line_processes(line: &str) -> Result<u64> {
+        let (_, stat) = Self::parse_processes_stats(line)
+            .map_err(|_e| eyre!("Failed to parse CPU processes line: {}", line))?;
+        Ok(stat)
+    }
+
+    fn ctxt_delta_since_last_reading(
+        &mut self,
+        current_stat: CtxtStat<T>,
+    ) -> Option<KeyedMetricReading> {
+        self.last_ctxt_reading
+            .replace(current_stat)
+            .map(|last_stat| {
+                KeyedMetricReading::new_histogram(
+                    MetricStringKey::from(CTXT_PER_SEC),
+                    current_stat.rate_between(last_stat),
+                )
+            })
+    }
+    fn processes_delta_since_last_reading(
+        &mut self,
+        current_stat: ProcessesStat<T>,
+    ) -> Option<KeyedMetricReading> {
+        self.last_processes_reading
+            .replace(current_stat)
+            .map(|last_stat| {
+                KeyedMetricReading::new_histogram(
+                    MetricStringKey::from(FORK_PER_SEC),
+                    current_stat.rate_between(last_stat),
+                )
+            })
     }
 
     /// Calculate the time spent in each state for the
@@ -134,12 +250,13 @@ impl CpuMetricCollector {
     ///
     /// Returns an Ok(None) if there is no prior reading
     /// to calculate a delta from.
-    fn delta_since_last_reading(
+    fn cpu_delta_since_last_reading(
         &mut self,
         cpu_stats: Vec<u64>,
     ) -> Result<Option<Vec<KeyedMetricReading>>> {
         // Check to make sure there was a previous reading to calculate a delta with
-        if let Some(last_stats) = self.last_reading.replace(cpu_stats.clone()) {
+        if let Some(last_stats) = self.last_cpu_reading.replace(cpu_stats.clone()) {
+            // TODO: probably want to remove this clone?
             let delta = cpu_stats
                 .iter()
                 .zip(last_stats)
@@ -189,7 +306,10 @@ impl CpuMetricCollector {
     }
 }
 
-impl SystemMetricFamilyCollector for CpuMetricCollector {
+impl<T> SystemMetricFamilyCollector for CpuMetricCollector<T>
+where
+    T: TimeMeasure + Copy + Send,
+{
     fn family_name(&self) -> &'static str {
         CPU_METRIC_NAMESPACE
     }
@@ -202,6 +322,9 @@ impl SystemMetricFamilyCollector for CpuMetricCollector {
 #[cfg(test)]
 mod test {
 
+    use std::time::Duration;
+
+    use crate::test_utils::TestInstant;
     use insta::{assert_json_snapshot, rounded_redaction, with_settings};
     use rstest::rstest;
 
@@ -209,9 +332,9 @@ mod test {
 
     #[rstest]
     #[case("cpu 1000 5 0 0 2 0 0", "test_basic_line")]
-    fn test_process_valid_proc_stat_line(#[case] proc_stat_line: &str, #[case] test_name: &str) {
+    fn test_process_valid_cpu_proc_stat_line(#[case] cpu_stat_line: &str, #[case] test_name: &str) {
         assert_json_snapshot!(test_name,
-                              CpuMetricCollector::parse_proc_stat_line_cpu(proc_stat_line).unwrap(), 
+                              CpuMetricCollector::<TestInstant>::parse_proc_stat_line_cpu(cpu_stat_line).unwrap(), 
                               {"[].value.**.timestamp" => "[timestamp]", "[].value.**.value" => rounded_redaction(5)})
     }
 
@@ -220,8 +343,117 @@ mod test {
     #[case("1000 5 0 0 2 0 0 0 0 0")]
     #[case("processor0 1000 5 0 0 2 0 0 0 0 0")]
     #[case("softirq 403453672 10204651 21667771 199 12328940 529390 0 3519783 161759969 147995 193294974")]
-    fn test_fails_on_invalid_proc_stat_line(#[case] proc_stat_line: &str) {
-        assert!(CpuMetricCollector::parse_proc_stat_line_cpu(proc_stat_line).is_err())
+    fn test_fails_on_invalid_cpu_proc_stat_line(#[case] cpu_stat_line: &str) {
+        assert!(CpuMetricCollector::<TestInstant>::parse_proc_stat_line_cpu(cpu_stat_line).is_err())
+    }
+
+    #[rstest]
+    #[case("ctxt 12345", 12345)]
+    #[case("ctxt 127987", 127987)]
+    fn test_process_valid_ctxt_proc_stat_line(#[case] ctxt_stat_line: &str, #[case] expected: u64) {
+        let (_, res) = CpuMetricCollector::<TestInstant>::parse_ctxt_stats(ctxt_stat_line)
+            .expect("parsed a valid ctxt stat");
+        assert_eq!(res, expected);
+    }
+    #[rstest]
+    #[case("ctxt ")]
+    #[case("asdf")]
+    #[case("processes 12345")]
+    #[case("cpu 1000 5 0 0 2 0 0")]
+    fn test_fails_on_invalid_ctxt_proc_stat_line(#[case] cpu_stat_line: &str) {
+        assert!(CpuMetricCollector::<TestInstant>::parse_ctxt_stats(cpu_stat_line).is_err())
+    }
+    #[rstest]
+    #[case("processes 12345", 12345)]
+    #[case("processes 127987", 127987)]
+    fn test_process_valid_processes_proc_stat_line(
+        #[case] processes_stat_line: &str,
+        #[case] expected: u64,
+    ) {
+        let (_, res) =
+            CpuMetricCollector::<TestInstant>::parse_processes_stats(processes_stat_line)
+                .expect("parsed a valid ctxt stat");
+        assert_eq!(res, expected);
+    }
+    #[rstest]
+    #[case("processes ")]
+    #[case("asdf")]
+    #[case("ctxt 12345")]
+    #[case("cpu 1000 5 0 0 2 0 0")]
+    fn test_fails_on_invalid_processes_proc_stat_line(#[case] cpu_stat_line: &str) {
+        assert!(CpuMetricCollector::<TestInstant>::parse_processes_stats(cpu_stat_line).is_err())
+    }
+
+    #[rstest]
+    #[case("ctxt 0", 0, "ctxt 10", 10, 10, 1.0f64)]
+    #[case("ctxt 10", 10, "ctxt 12", 12, 4, 0.5f64)]
+    #[case("ctxt 300", 300, "ctxt 301", 301, 1, 1.0f64)]
+    #[case(
+        "ctxt 18446744073709551615",
+        0xFFFFFFFFFFFFFFFF,
+        "ctxt 2",
+        2,
+        1,
+        2.0f64
+    )]
+    fn test_ctxt_metrics_calculation(
+        #[case] before_line: &str,
+        #[case] expected_before: u64,
+        #[case] after_line: &str,
+        #[case] expected_after: u64,
+        #[case] sleep_secs: u64,
+        #[case] expected_diff: f64,
+    ) {
+        let res_before = CpuMetricCollector::<TestInstant>::parse_proc_stat_line_ctxt(before_line)
+            .expect("valid before_line");
+        assert_eq!(expected_before, res_before);
+        let res_after = CpuMetricCollector::<TestInstant>::parse_proc_stat_line_ctxt(after_line)
+            .expect("valid before_line");
+        assert_eq!(expected_after, res_after);
+
+        let mut collector = CpuMetricCollector::<TestInstant>::new();
+
+        let delta1 = collector.ctxt_delta_since_last_reading(CtxtStat {
+            counter: res_before,
+            reading_time: TestInstant::from(Duration::from_secs(0)),
+        });
+
+        assert!(delta1.is_none());
+
+        let delta2 = collector
+            .ctxt_delta_since_last_reading(CtxtStat {
+                counter: res_after,
+                reading_time: TestInstant::from(Duration::from_secs(sleep_secs)),
+            })
+            .expect("delta 2 should be some value");
+
+        match delta2.value {
+            MetricReading::Histogram { value, .. } => assert_eq!(expected_diff, value),
+            _ => panic!("unexpected variant: {:#?}", delta2.value),
+        }
+    }
+
+    #[test]
+    fn test_processes_metrics_calculation() {
+        let mut collector = CpuMetricCollector::<TestInstant>::new();
+
+        let delta1 = collector.processes_delta_since_last_reading(ProcessesStat {
+            counter: 0,
+            reading_time: TestInstant::from(Duration::from_secs(0)),
+        });
+        assert!(delta1.is_none());
+
+        let delta2 = collector
+            .processes_delta_since_last_reading(ProcessesStat {
+                counter: 10,
+                reading_time: TestInstant::from(Duration::from_secs(10)),
+            })
+            .expect("delta 2 should be some value");
+
+        match delta2.value {
+            MetricReading::Histogram { value, .. } => assert_eq!(1.0, value),
+            _ => panic!("unexpected variant: {:#?}", delta2.value),
+        }
     }
 
     #[rstest]
@@ -237,15 +469,17 @@ mod test {
         #[case] proc_stat_line_c: &str,
         #[case] test_name: &str,
     ) {
-        let mut cpu_metric_collector = CpuMetricCollector::new();
+        let mut cpu_metric_collector = CpuMetricCollector::<TestInstant>::new();
 
-        let stats = CpuMetricCollector::parse_proc_stat_line_cpu(proc_stat_line_a).unwrap();
-        let result_a = cpu_metric_collector.delta_since_last_reading(stats);
+        let stats =
+            CpuMetricCollector::<TestInstant>::parse_proc_stat_line_cpu(proc_stat_line_a).unwrap();
+        let result_a = cpu_metric_collector.cpu_delta_since_last_reading(stats);
         matches!(result_a, Ok(None));
 
-        let stats = CpuMetricCollector::parse_proc_stat_line_cpu(proc_stat_line_b).unwrap();
+        let stats =
+            CpuMetricCollector::<TestInstant>::parse_proc_stat_line_cpu(proc_stat_line_b).unwrap();
         let mut result_b = cpu_metric_collector
-            .delta_since_last_reading(stats)
+            .cpu_delta_since_last_reading(stats)
             .unwrap()
             .unwrap();
         result_b.sort_by(|a, b| a.name.cmp(&b.name));
@@ -256,9 +490,10 @@ mod test {
                                   {"[].value.**.timestamp" => "[timestamp]", "[].value.**.value" => rounded_redaction(5)})
         });
 
-        let stats = CpuMetricCollector::parse_proc_stat_line_cpu(proc_stat_line_c).unwrap();
+        let stats =
+            CpuMetricCollector::<TestInstant>::parse_proc_stat_line_cpu(proc_stat_line_c).unwrap();
         let mut result_c = cpu_metric_collector
-            .delta_since_last_reading(stats)
+            .cpu_delta_since_last_reading(stats)
             .unwrap()
             .unwrap();
         result_c.sort_by(|a, b| a.name.cmp(&b.name));

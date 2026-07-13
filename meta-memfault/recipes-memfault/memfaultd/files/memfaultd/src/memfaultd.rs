@@ -3,7 +3,7 @@
 // See License.txt for details
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::thread::{sleep, spawn};
+use std::thread::spawn;
 use std::time::Duration;
 use std::{cmp::max, fs::create_dir_all, time::Instant};
 
@@ -14,17 +14,19 @@ use rand::{thread_rng, Rng};
 
 use ssf::{BroadcastMsgMailbox, MsgMailbox, Scheduler, ServiceManager};
 
-use crate::{
-    config::DeviceConfigUpdateMessage,
-    mar::MarConfig,
-    metrics::{start_battery_reading_thread, MetricsEventHandler},
+#[cfg(feature = "chunks-relay")]
+use crate::chunk_relay::{
+    ChunkRelayHttpHandler, ChunkRelayService, ChunksHeadroomLimiter, PrepareMarEntriesMsg,
 };
+
+use crate::{config::DeviceConfigUpdateMessage, mar::MarConfig, metrics::MetricsEventHandler};
 use crate::{
     mar::MarStagingCleanType,
     metrics::{
-        BatteryMonitor, BatteryReadingHandler, ConnectivityMonitor, DumpHrtMessage,
-        DumpMetricReportMessage, KeyedMetricReading, MetricReportType, ReportSyncEventHandler,
-        ReportsToDump, SessionEventHandler, SystemMetricsCollector,
+        BatteryMonitor, BatteryReadingHandler, BatteryReadingService, BatteryReadingTick,
+        ConnectivityMonitor, ConnectivityMonitorTick, DumpHrtMessage, DumpMetricReportMessage,
+        KeyedMetricReading, MetricReportType, ReportSyncEventHandler, ReportsToDump,
+        SessionEventHandler, SystemMetricsCollectTick, SystemMetricsCollector,
     },
 };
 use crate::{
@@ -37,7 +39,8 @@ use crate::{
     mar::upload::collect_and_upload,
     metrics::{
         core_metrics::{METRIC_MF_SYNC_FAILURE, METRIC_MF_SYNC_SUCCESS},
-        CrashFreeIntervalTracker, MetricReportManager, MetricsSet, StatsDServer,
+        CrashFreeIntervalTracker, CrashFreeTickMessage, MetricReportManager, MetricsSet,
+        StatsDServer,
     },
 };
 use crate::{http_server::HttpHandler, util::UpdateStatus};
@@ -68,8 +71,10 @@ use crate::{
         messages::GetQueuedLogsMsg, CompletedLog, HeadroomLimiter, LogCollector, LogCollectorConfig,
     },
     mar::{MarEntryBuilder, Metadata},
-    util::disk_size::get_disk_space,
 };
+
+#[cfg(any(feature = "logging", feature = "chunks-relay"))]
+use crate::util::disk_size::get_disk_space;
 
 const CONFIG_REFRESH_INTERVAL: Duration = Duration::from_secs(60 * 120);
 const DAILY_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60 * 60 * 24);
@@ -94,6 +99,8 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     for signal in term_signals {
         signal_hook::flag::register(signal, Arc::clone(&term))?;
     }
+    let net_config = Arc::new(NetworkConfig::from(&config));
+    let mar_config = Arc::new(MarConfig::from(&config));
 
     // This flag will be set when we get the SIGHUP signal to reload (currently reload = restart)
     let reload = Arc::new(AtomicBool::new(false));
@@ -190,8 +197,14 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     {
         use crate::util::system::ProcfsProcessNameMapper;
 
-        let disk_io: DiskIo<ProcfsProcessNameMapper> = DiskIo::load(metrics_mbox.clone().into())?;
-        system.spawn_bounded_task_service_thread(disk_io, 1024);
+        match DiskIo::<ProcfsProcessNameMapper>::load(metrics_mbox.clone().into()) {
+            Ok(disk_io) => {
+                system.spawn_bounded_task_service_thread(disk_io, 1024);
+            }
+            Err(e) => {
+                warn!("Failed to load disk I/O eBPF program, disk I/O metrics will be unavailable: {:#}", e);
+            }
+        }
     }
 
     // List of http handlers
@@ -238,10 +251,49 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
 
     let mut scheduler = Scheduler::default();
 
+    #[cfg(feature = "chunks-relay")]
+    {
+        let headroom_limiter = {
+            let path = config.chunks_path();
+            ChunksHeadroomLimiter::new(config.chunks_headroom(), move || get_disk_space(&path))
+        };
+
+        let chunk_relay_service = ChunkRelayService::open(
+            config.chunks_path(),
+            headroom_limiter,
+            config.config_file.project_key.clone(),
+        )?;
+        let chunk_relay_mbox = system.spawn_service_thread(chunk_relay_service);
+        let chunk_relay_event_handler = ChunkRelayHttpHandler::new(
+            chunk_relay_mbox.clone().into(),
+            config.config_file.enable_data_collection,
+        );
+        http_handlers.push(Box::new(chunk_relay_event_handler));
+
+        // Schedule a task to prepare chunk mar entries before upload
+        {
+            let net_config = net_config.clone();
+            let mar_config = mar_config.clone();
+            let mbox: MsgMailbox<PrepareMarEntriesMsg> = chunk_relay_mbox.into();
+            sync_tasks.push(Box::new(move |_forced, skip_serialization| {
+                if skip_serialization {
+                    debug!("Skipping serialization NYI");
+                    Ok(())
+                } else {
+                    mbox.send_and_wait_for_reply(PrepareMarEntriesMsg::new(
+                        net_config.clone(),
+                        mar_config.clone(),
+                    ))??;
+                    Ok(())
+                }
+            }));
+        }
+    }
+
     // Schedule dump jobs for both heartbeat, daily heartbeat, and HRT
     {
-        let net_config = Arc::new(NetworkConfig::from(&config));
-        let mar_config = Arc::new(MarConfig::from(&config));
+        let net_config = net_config.clone();
+        let mar_config = mar_config.clone();
         let heartbeat_interval = config.config_file.heartbeat_interval;
 
         let heartbeat_message = DumpMetricReportMessage::new(
@@ -288,53 +340,47 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         }
     }
 
-    // Start system metric collector thread
+    // Start system metric collector service, driven by a scheduled tick
     if config.builtin_system_metric_collection_enabled()
         && config.config_file.enable_data_collection
     {
         let system_metric_config = config.system_metric_config();
-        let mbox = metrics_mbox.clone().into();
-        spawn(move || {
-            let mut sys_metric_collector = SystemMetricsCollector::new(system_metric_config, mbox);
-            sys_metric_collector.run()
-        });
+        let poll_interval = system_metric_config.poll_interval();
+        let sys_metric_collector =
+            SystemMetricsCollector::new(system_metric_config, metrics_mbox.clone().into());
+        let sys_metric_mbox = system.spawn_service_thread(sys_metric_collector);
+        scheduler.schedule_message_subscription(
+            SystemMetricsCollectTick,
+            &sys_metric_mbox,
+            &poll_interval,
+        );
     }
 
-    // Start a thread to update battery metrics
-    // periodically if enabled by configuration
+    // Start battery reading service, driven by a scheduled tick
     if config.battery_monitor_periodic_update_enabled() && config.config_file.enable_data_collection
     {
-        if let Err(e) = start_battery_reading_thread(&config, battery_monitor_mbox.into()) {
-            warn!("Failed to start periodic battery reading thread: {e}");
+        let interval = config.battery_monitor_interval();
+        if let Some(service) = BatteryReadingService::new(&config, battery_monitor_mbox.into()) {
+            let br_mbox = system.spawn_service_thread(service);
+            scheduler.schedule_message_subscription(BatteryReadingTick, &br_mbox, &interval);
         }
     }
     // Connected time monitor is only enabled if config is defined
     if let Some(connectivity_monitor_config) = config.connectivity_monitor_config() {
         if config.config_file.enable_data_collection {
-            let mut connectivity_monitor =
-                ConnectivityMonitor::<Instant, TcpConnectionChecker>::new(
-                    connectivity_monitor_config,
-                    metrics_mbox.clone().into(),
-                );
-            spawn(move || {
-                let mut next_connectivity_reading_time =
-                    Instant::now() + connectivity_monitor.interval_seconds();
-                loop {
-                    while Instant::now() < next_connectivity_reading_time {
-                        sleep(next_connectivity_reading_time - Instant::now());
-                    }
-                    next_connectivity_reading_time += connectivity_monitor.interval_seconds();
-                    if let Err(e) = connectivity_monitor.update_connected_time() {
-                        warn!("Failed to update connected time metrics: {}", e);
-                    }
-                }
-            });
+            let interval = connectivity_monitor_config.interval_seconds;
+            let connectivity_monitor = ConnectivityMonitor::<Instant, TcpConnectionChecker>::new(
+                connectivity_monitor_config,
+                metrics_mbox.clone().into(),
+            );
+            let cm_mbox = system.spawn_service_thread(connectivity_monitor);
+            scheduler.schedule_message_subscription(ConnectivityMonitorTick, &cm_mbox, &interval);
         }
     }
     // Schedule a task to dump the metrics when a sync is forced
     {
-        let net_config = Arc::new(NetworkConfig::from(&config));
-        let mar_config = Arc::new(MarConfig::from(&config));
+        let net_config = net_config.clone();
+        let mar_config = mar_config.clone();
         let dump_metrics_mbox: MsgMailbox<DumpMetricReportMessage> = metrics_mbox.clone().into();
         sync_tasks.push(Box::new(move |forced, skip_serialization| match forced {
             true => {
@@ -358,8 +404,8 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     }
 
     {
-        let net_config = Arc::new(NetworkConfig::from(&config));
-        let mar_config = Arc::new(MarConfig::from(&config));
+        let net_config = net_config.clone();
+        let mar_config = mar_config.clone();
         let dump_metrics_mbox: MsgMailbox<DumpMetricReportMessage> = metrics_mbox.clone().into();
         sync_tasks.push(Box::new(move |forced, skip_serialization| match forced {
             true => {
@@ -383,8 +429,8 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     }
 
     {
-        let net_config = Arc::new(NetworkConfig::from(&config));
-        let mar_config = Arc::new(MarConfig::from(&config));
+        let net_config = net_config.clone();
+        let mar_config = mar_config.clone();
         let dump_metrics_mbox: MsgMailbox<DumpHrtMessage> = metrics_mbox.clone().into();
         sync_tasks.push(Box::new(move |forced, skip_serialization| match forced {
             true => {
@@ -406,8 +452,8 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
 
     // Schedule a task to dump the metrics when we are shutting down
     {
-        let net_config = Arc::new(NetworkConfig::from(&config));
-        let mar_config = Arc::new(MarConfig::from(&config));
+        let net_config = net_config.clone();
+        let mar_config = mar_config.clone();
 
         let dump_metrics_mbox: MsgMailbox<DumpMetricReportMessage> = metrics_mbox.clone().into();
         shutdown_tasks.push(Box::new(move || {
@@ -422,8 +468,9 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     }
     // Schedule a task to dump HRT when shutting down
     {
-        let net_config = Arc::new(NetworkConfig::from(&config));
-        let mar_config = Arc::new(MarConfig::from(&config));
+        let net_config = net_config.clone();
+        let mar_config = mar_config.clone();
+
         let dump_metrics_mbox: MsgMailbox<DumpHrtMessage> = metrics_mbox.clone().into();
         shutdown_tasks.push(Box::new(move || {
             dump_metrics_mbox
@@ -458,8 +505,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
 
             let mar_cleaner = mar_cleaner.clone();
 
-            let network_config = NetworkConfig::from(&config);
-            let mar_config = MarConfig::from(&config);
+            let network_config = net_config;
             let logs_clean_type = config.mar_logs_clean_type();
             let mar_staging_path = config.mar_tmp_staging_path();
             let on_log_completion = move |CompletedLog {
@@ -544,14 +590,25 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                 }
                 #[cfg(feature = "syslog")]
                 LogSource::Syslog(syslog_config) => {
-                    use crate::logs::syslog::SyslogServer;
+                    use crate::logs::{
+                        log_collector::LogEntrySender,
+                        syslog::SyslogServer
+                    };
+                    use tokio::net::UdpSocket;
 
                     let log_mbox = log_collector_mbox.clone();
-                    spawn(move || {
-                        if let Err(e) = SyslogServer ::run(syslog_config.bind_address, log_mbox.into()) {
-                            warn!("Couldn't start syslog receiver: {}", e)
+                    let sender = LogEntrySender::new(log_mbox.into());
+                    match std::net::UdpSocket::bind(syslog_config.bind_address) {
+                        Ok(socket) => {
+                            match UdpSocket::from_std(socket) {
+                                Ok(socket) => {
+                                    system.spawn_bounded_service_thread(SyslogServer::new(sender, socket), 128);
+                                },
+                                Err(e) => warn!("could not create an unblocking tokio socket from a blocking std::net socket: {}", e),
+                            }
                         }
-                    });
+                        Err(e) => warn!("could not connect to the configured UDP bind address: {}", e)
+                    }
                 }
                 #[cfg(not(feature = "syslog"))]
                 LogSource::Syslog(_) => warn!("logs.source configuration set to \"syslog\", but memfaultd was not compiled with the syslog feature. Logs will not be collected."),
@@ -600,9 +657,14 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
 
     // Schedule a task to compute operational and crashfree hours
     if config.config_file.enable_data_collection {
-        let mut crashfree_tracker =
+        let crashfree_tracker =
             CrashFreeIntervalTracker::<Instant>::new_hourly(metrics_mbox.clone().into());
-        http_handlers.push(crashfree_tracker.http_handler());
+        let crashfree_tracker_mbox = system.spawn_service_thread(crashfree_tracker);
+        // The HTTP handler forwards crash notifications to the tracker's mailbox.
+        http_handlers.push(CrashFreeIntervalTracker::<Instant>::http_handler(
+            crashfree_tracker_mbox.clone().into(),
+        ));
+
         let trace_config = config.linux_custom_trace_config();
         let rate_limiter_path = config.trace_rate_limiter_file_path();
 
@@ -610,7 +672,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         let save_trace_handler = SaveTraceHandler::new(
             config.mar_tmp_staging_path(),
             &config,
-            crashfree_tracker.channel_handler(),
+            crashfree_tracker_mbox.clone().into(),
             trace_log_collector_mbox,
             trace_config,
             rate_limiter_path,
@@ -620,21 +682,19 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         let save_trace_handler = SaveTraceHandler::new(
             config.mar_tmp_staging_path(),
             &config,
-            crashfree_tracker.channel_handler(),
+            crashfree_tracker_mbox.clone().into(),
             trace_config,
             rate_limiter_path,
         );
 
         http_handlers.push(Box::new(save_trace_handler));
 
-        spawn(move || {
-            let interval = Duration::from_secs(60);
-            loop {
-                if let Err(e) = crashfree_tracker.wait_and_update(interval) {
-                    warn!("Error updating crashfree hours: {}", e);
-                }
-            }
-        });
+        // CrashFreeTickMessage drives the periodic metric flush every 60 seconds.
+        scheduler.schedule_message_subscription(
+            CrashFreeTickMessage,
+            &crashfree_tracker_mbox,
+            &Duration::from_secs(60),
+        );
     }
 
     let reboot_tracker = RebootReasonTracker::new(&config, &service_manager);

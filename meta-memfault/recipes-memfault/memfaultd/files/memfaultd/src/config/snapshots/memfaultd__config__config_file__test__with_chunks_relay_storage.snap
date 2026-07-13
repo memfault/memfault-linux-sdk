@@ -58,7 +58,9 @@ expression: content
     "max_buffered_lines": 1000,
     "filtering": null
   },
-  "chunks_relay": null,
+  "chunks_relay": {
+    "min_chunks_headroom_kib": 1024
+  },
   "mar": {
     "mar_file_max_size_kib": 10240,
     "mar_entry_max_age_seconds": 604800,
@@ -72,17 +74,7 @@ expression: content
     "auto": true,
     "interval_seconds": 600
   },
-  "connectivity_monitor": {
-    "interval_seconds": 30,
-    "targets": [
-      {
-        "protocol": "tcp",
-        "host": "8.8.8.8",
-        "port": 443
-      }
-    ],
-    "timeout_seconds": 10
-  },
+  "connectivity_monitor": null,
   "sessions": null,
   "metrics": {
     "enable_daily_heartbeats": false,

@@ -14,6 +14,8 @@ mod ebpf;
 #[cfg(feature = "logging")]
 mod fluent_bit;
 
+#[cfg(feature = "chunks-relay")]
+pub mod chunk_relay;
 pub mod http_server;
 #[cfg(feature = "logging")]
 pub mod logs;

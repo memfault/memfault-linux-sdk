@@ -2,7 +2,10 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 use crate::{
-    cli::MemfaultdClient, config::Config, http_server::TraceRequest, mar::LinuxCustomTraceSource,
+    cli::MemfaultdClient,
+    config::Config,
+    http_server::TraceRequest,
+    mar::{LinuxCustomTraceSource, TraceLocals},
 };
 use eyre::Result;
 
@@ -13,6 +16,7 @@ pub fn save_trace(
     crash: Option<bool>,
     source: Option<String>,
     signature: Option<String>,
+    locals: Option<TraceLocals>,
 ) -> Result<()> {
     let client = MemfaultdClient::from_config(config)?;
     let source = if let Some(source) = source {
@@ -26,6 +30,7 @@ pub fn save_trace(
         reason,
         program,
         source,
+        locals,
         log_file_name: None,
     })
 }
