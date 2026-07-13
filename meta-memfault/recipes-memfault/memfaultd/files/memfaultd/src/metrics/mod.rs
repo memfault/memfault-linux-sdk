@@ -5,15 +5,17 @@ use chrono::{DateTime, Utc};
 
 mod battery;
 pub use battery::find_sysfs_battery_entry;
-pub use battery::start_battery_reading_thread;
 pub use battery::BatteryMonitor;
 pub use battery::BatteryMonitorReading;
 pub use battery::BatteryReadingHandler;
 pub use battery::BatteryReadingMessage;
+pub use battery::BatteryReadingService;
+pub use battery::BatteryReadingTick;
 pub use battery::SysfsBatteryParser;
 
 mod connectivity;
 pub use connectivity::ConnectivityMonitor;
+pub use connectivity::ConnectivityMonitorTick;
 pub use connectivity::ReportSyncEventHandler;
 
 mod hrt;
@@ -48,7 +50,6 @@ pub type MetricTimestamp = DateTime<Utc>;
 
 mod crashfree_interval;
 pub use crashfree_interval::CrashFreeIntervalTracker;
-pub use crashfree_interval::CrashInfo;
 
 mod session_name;
 pub use session_name::SessionName;
@@ -69,4 +70,4 @@ pub mod system_metrics;
 pub use system_metrics::DiskSpaceMetricsConfig;
 pub use system_metrics::DiskstatsMetricsConfig;
 pub use system_metrics::ProcessMetricsConfig;
-pub use system_metrics::SystemMetricsCollector;
+pub use system_metrics::{SystemMetricsCollectTick, SystemMetricsCollector};

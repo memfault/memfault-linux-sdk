@@ -1,7 +1,7 @@
 ---
 source: memfaultd/src/config/config_file.rs
+assertion_line: 692
 expression: content
-snapshot_kind: text
 ---
 {
   "persist_dir": "/media/memfault",
@@ -58,6 +58,7 @@ snapshot_kind: text
     "max_buffered_lines": 1000,
     "filtering": null
   },
+  "chunks_relay": null,
   "mar": {
     "mar_file_max_size_kib": 10240,
     "mar_entry_max_age_seconds": 604800,
@@ -85,7 +86,8 @@ snapshot_kind: text
       "cpu": null,
       "memory": null,
       "thermal": null,
-      "oui": null
+      "oui": null,
+      "fd": null
     },
     "statsd_server": {
       "bind_address": "127.0.0.1:8125",

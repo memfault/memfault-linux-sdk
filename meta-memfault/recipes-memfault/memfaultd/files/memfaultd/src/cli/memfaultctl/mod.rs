@@ -15,14 +15,16 @@ mod session;
 mod sync;
 mod trace;
 mod write_attributes;
+mod write_chunks;
 mod write_metrics;
 
 use crate::{
     cli::version::format_version,
-    mar::{DeviceAttribute, ExportFormat, MarConfig, Metadata},
+    mar::{DeviceAttribute, ExportFormat, MarConfig, Metadata, TraceLocals},
     metrics::{KeyedMetricReading, SessionName},
     reboot::{write_reboot_reason_and_reboot, RebootReason},
     service_manager::get_service_manager,
+    util::patterns::check_base64_encoding,
 };
 use crate::{mar::MarEntryBuilder, util::output_arg::OutputArg};
 
@@ -33,11 +35,12 @@ use crate::cli::memfaultctl::coredump::{trigger_coredump, ErrorStrategy};
 use crate::cli::memfaultctl::export::export;
 use crate::cli::memfaultctl::report_sync::report_sync;
 use crate::cli::memfaultctl::sync::sync;
+use crate::cli::memfaultctl::write_chunks::write_chunks;
 use crate::cli::show_settings::show_settings;
 use crate::config::Config;
 use crate::network::NetworkConfig;
 use eyre::{eyre, Context, Result};
-use log::LevelFilter;
+use log::{warn, LevelFilter};
 
 use self::session::{end_session, start_session};
 
@@ -112,6 +115,7 @@ enum MemfaultctlCommand {
     StartSession(StartSessionArgs),
     EndSession(EndSessionArgs),
     AddCustomDataRecording(AddCustomDataRecordingArgs),
+    WriteChunks(WriteChunksArgs),
     WriteMetrics(WriteMetricsArgs),
     SaveTrace(SaveTraceArgs),
 }
@@ -199,6 +203,27 @@ struct WriteAttributesArgs {
     /// attributes to write, in the format <VAR1=VAL1 ...>
     #[argh(positional)]
     attributes: Vec<DeviceAttribute>,
+}
+
+#[derive(FromArgs)]
+/// write chunks to memfaultd
+#[argh(subcommand, name = "write-chunks")]
+struct WriteChunksArgs {
+    /// the key for the project to relay these chunks to
+    #[argh(option)]
+    project_key: Option<String>,
+
+    /// the serial number of the device the chunks are collected for
+    #[argh(option)]
+    device_serial: Option<String>,
+
+    /// base64 encoded chunks
+    #[argh(positional, greedy)]
+    chunks: Vec<String>,
+
+    /// explicitly set no serial identifier for these chunks
+    #[argh(switch)]
+    no_serial: bool,
 }
 
 #[derive(FromArgs)]
@@ -296,6 +321,11 @@ struct SaveTraceArgs {
     /// input for Memfault signature algorithm that determines which Traces are grouped together
     #[argh(option)]
     signature: Option<String>,
+    /// JSON object of scalar key-value pairs to attach to the trace as metadata
+    /// (e.g. '"resource-id": "3411a39c", "retries": 3' wrapped in braces). Not
+    /// used for grouping.
+    #[argh(option)]
+    locals: Option<TraceLocals>,
 }
 
 fn check_data_collection_enabled(config: &Config, do_what: &str) -> Result<()> {
@@ -426,6 +456,37 @@ pub fn main() -> Result<()> {
                 .save(&network_config, &mar_config)
                 .map(|_entry| ())
         }
+        MemfaultctlCommand::WriteChunks(WriteChunksArgs {
+            project_key,
+            device_serial,
+            chunks,
+            no_serial,
+        }) => {
+            check_data_collection_enabled(&config, "write chunks")?;
+
+            if chunks.is_empty() {
+                return Err(eyre!(
+                    "No chunks provided. Please specify one or more base64 chunks as positional arguments."
+                ));
+            }
+
+            if no_serial && device_serial.is_some() {
+                return Err(eyre!(
+                    "--no-serial cannot be used together with --device-serial"
+                ));
+            } else if !no_serial && device_serial.is_none() {
+                return Err(eyre!(
+                    "Please specify the serial for the device with --device-serial <SERIAL>"
+                ));
+            }
+
+            for chunk in &chunks {
+                if let Err(errmsg) = check_base64_encoding(chunk) {
+                    warn!("{}", errmsg);
+                }
+            }
+            write_chunks(&config, project_key, device_serial, chunks)
+        }
         MemfaultctlCommand::WriteMetrics(WriteMetricsArgs { metrics }) => {
             check_data_collection_enabled(&config, "write metrics")?;
 
@@ -437,6 +498,7 @@ pub fn main() -> Result<()> {
             crash,
             source,
             signature,
-        }) => trace::save_trace(&config, program, reason, crash, source, signature),
+            locals,
+        }) => trace::save_trace(&config, program, reason, crash, source, signature, locals),
     }
 }

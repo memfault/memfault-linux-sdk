@@ -2,47 +2,65 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     marker::PhantomData,
     path::{Path, PathBuf},
     str::FromStr,
+    time::Duration,
 };
 
 use aya::{
-    maps::{AsyncPerfEventArray, MapData},
+    maps::{MapData, PerCpuArray, PerCpuHashMap},
     programs::TracePoint,
-    util::online_cpus,
-    Ebpf,
+    Ebpf, Pod,
 };
-use bytes::BytesMut;
-use eyre::{eyre, Context, Error, Result};
+use eyre::{eyre, Result};
 use ssf::{Service, TaskService};
 use tokio::{
     fs::{read_link, read_to_string},
-    sync::mpsc::{channel, Receiver, Sender},
-    task::JoinHandle,
+    time::{interval, Interval, MissedTickBehavior},
 };
 
 use crate::{
     ebpf_programs::DISK_IO,
-    metrics::{KeyedMetricReading, MetricStringKey},
+    metrics::{KeyedMetricReading, MetricStringKey, MetricsMBox},
+    util::system::ProcessNameMapper,
 };
-use crate::{metrics::MetricsMBox, util::system::ProcessNameMapper};
+
+const DISK_OP_READ: u32 = 0;
+const DISK_OP_WRITE: u32 = 1;
+
+// Bounded, to keep memory flat when many short-lived processes come and go
+// in a single sampling interval. Normal growth is pruned every run_once via
+// retain(), so this cap is a safety net rather than a steady-state target.
+const PROC_NAME_CACHE_CAPACITY: usize = 256;
+const MAP_FLUSH_DURATION: Duration = Duration::from_secs(10);
+
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, Eq, PartialEq, Hash)]
+struct DiskIoKey {
+    tgid: u32,
+    dev: u32,
+    op: u32,
+}
+
+// SAFETY: DiskIoKey has no padding (three u32 fields) and is plain-old-data.
+// Layout matches struct disk_io_key in ebpf/disk_io.c.
+unsafe impl Pod for DiskIoKey {}
 
 pub struct DiskIo<P: ProcessNameMapper> {
     _ebpf: Ebpf,
     metrics_mbox: MetricsMBox,
-    perf_array: AsyncPerfEventArray<MapData>,
-    event_tx: Sender<DiskIoEvent>,
-    event_rx: Receiver<DiskIoEvent>,
+    stats: PerCpuHashMap<MapData, DiskIoKey, u64>,
+    drops: PerCpuArray<MapData, u64>,
+    last_drops: u64,
     dev_name_cache: DevNameCache,
+    proc_name_cache: ProcNameCache,
+    flush_interval: Option<Interval>,
     _marker: PhantomData<P>,
 }
 
 impl<P: ProcessNameMapper> DiskIo<P> {
-    const DISK_IO_CHANNEL_SIZE: usize = 1024;
-    const EVENT_RX_MAX: usize = 8;
-
     pub fn load(metrics_mbox: MetricsMBox) -> Result<Self> {
         let mut ebpf = Ebpf::load(DISK_IO)?;
         let prog: &mut TracePoint = ebpf
@@ -52,86 +70,75 @@ impl<P: ProcessNameMapper> DiskIo<P> {
         prog.load()?;
         prog.attach("block", "block_io_start")?;
 
-        let perf_array: AsyncPerfEventArray<_> = ebpf
-            .take_map("DISK_EVENTS")
-            .ok_or_else(|| eyre!("Failed to fetch perf map"))?
+        let stats: PerCpuHashMap<_, DiskIoKey, u64> = ebpf
+            .take_map("DISK_IO_STATS")
+            .ok_or_else(|| eyre!("Failed to fetch DISK_IO_STATS map"))?
             .try_into()?;
 
-        let (event_tx, event_rx) = channel(Self::DISK_IO_CHANNEL_SIZE);
+        let drops: PerCpuArray<_, u64> = ebpf
+            .take_map("DISK_IO_DROPS")
+            .ok_or_else(|| eyre!("Failed to fetch DISK_IO_DROPS map"))?
+            .try_into()?;
 
         Ok(Self {
             _ebpf: ebpf,
             metrics_mbox,
-            perf_array,
-            event_tx,
-            event_rx,
+            stats,
+            drops,
+            last_drops: 0,
             dev_name_cache: DevNameCache::default(),
+            proc_name_cache: ProcNameCache::new(PROC_NAME_CACHE_CAPACITY),
+            flush_interval: None,
             _marker: PhantomData,
         })
     }
 
-    pub async fn init(&mut self) -> Result<()> {
-        let cpus = online_cpus().map_err(|e| eyre!("Failed to get number of cpus: {:?}", e))?;
-
-        for cpu in cpus {
-            let mut perf_array = self.perf_array.open(cpu, None)?;
-            let event_tx = self.event_tx.clone();
-
-            let _handle: JoinHandle<std::result::Result<(), Error>> = tokio::spawn(async move {
-                // TODO: Experiment with buffer size/count. It's unclear exactly how we should size this
-                let mut buffers = (0..16)
-                    .map(|_| BytesMut::with_capacity(128))
-                    .collect::<Vec<_>>();
-
-                loop {
-                    // TODO: Error handling is inadequate here. These futures will be cancelled currently
-                    // leading to missed perf events
-                    perf_array
-                        .read_events(&mut buffers)
-                        .await
-                        .wrap_err("Failed to read events from perf buffer")?;
-
-                    for buf in &mut buffers {
-                        if buf.is_empty() {
-                            continue;
-                        }
-
-                        let slice = &buf[0..size_of::<DiskIoEvent>()];
-
-                        // SAFETY: Cast here is safe because the struct consists only of scalar values
-                        let event: &DiskIoEvent =
-                            unsafe { &*(slice.as_ptr() as *const DiskIoEvent) };
-
-                        event_tx
-                            .send(*event)
-                            .await
-                            .wrap_err("Failed to send perf event")?;
-
-                        buf.clear();
-                    }
-                }
-            });
-        }
-
-        Ok(())
-    }
-
     pub async fn run_once(&mut self) -> Result<()> {
-        let mut events = Vec::with_capacity(Self::EVENT_RX_MAX);
-        let num_events = self
-            .event_rx
-            .recv_many(&mut events, Self::EVENT_RX_MAX)
-            .await;
-        if num_events == 0 {
-            return Err(eyre!("Disk IO events channel dropped"));
-        }
+        let keys: Vec<DiskIoKey> = self.stats.keys().filter_map(|k| k.ok()).collect();
 
-        let mut readings = Vec::with_capacity(num_events);
-        for event in &events[..num_events] {
-            if let Some(reading) = self.disk_io_event_to_metric(event).await {
+        let mut readings = Vec::with_capacity(keys.len() + 1);
+        let mut seen_tgids = HashSet::with_capacity(keys.len());
+
+        for key in &keys {
+            let total: u64 = match self.stats.get(key, 0) {
+                Ok(values) => values.iter().sum(),
+                Err(_) => continue,
+            };
+            // Delete so the next interval restarts at zero for this key.
+            // Any bytes counted between get() and remove() are lost, an
+            // acceptable microsecond-wide undercount.
+            let _ = self.stats.remove(key);
+
+            if total == 0 {
+                continue;
+            }
+
+            seen_tgids.insert(key.tgid);
+
+            let Some(proc_name) = self.proc_name_cache.get_or_resolve::<P>(key.tgid) else {
+                continue;
+            };
+            let Some(dev_name) = self.dev_name_cache.get(key.dev).await.map(str::to_string) else {
+                continue;
+            };
+
+            if let Some(reading) = build_metric_reading(&dev_name, key.op, &proc_name, total) {
                 readings.push(reading);
             }
         }
+
+        // Drops are cumulative on the kernel side; emit the delta since our
+        // last read so the metric behaves like a normal counter increment.
+        let drops_sum: u64 = self.drops.get(&0, 0).map(|v| v.iter().sum()).unwrap_or(0);
+        let drop_delta = drops_sum.saturating_sub(self.last_drops);
+        self.last_drops = drops_sum;
+        if drop_delta > 0 {
+            if let Ok(key) = MetricStringKey::from_str("diskstats/dropped_events") {
+                readings.push(KeyedMetricReading::new_counter(key, drop_delta as f64));
+            }
+        }
+
+        self.proc_name_cache.retain(&seen_tgids);
 
         if !readings.is_empty() {
             self.metrics_mbox.send_and_forget(readings)?;
@@ -139,30 +146,31 @@ impl<P: ProcessNameMapper> DiskIo<P> {
 
         Ok(())
     }
-
-    async fn disk_io_event_to_metric(&mut self, event: &DiskIoEvent) -> Option<KeyedMetricReading> {
-        let proc_name = P::get_process_name(event.pid).ok()?;
-        let dev_name = self.dev_name_cache.get(event.dev).await;
-        let disk_op = DiskOp::try_from(event.rwbs.as_slice()).ok();
-
-        build_metric_reading(dev_name, disk_op, &proc_name, event.bytes)
-    }
 }
 
 impl<P: ProcessNameMapper> TaskService for DiskIo<P> {
     fn run_task(&mut self) -> futures::future::LocalBoxFuture<'_, std::result::Result<(), String>> {
         Box::pin(async {
+            // Only run task on fixed interval
+            self.flush_interval
+                .as_mut()
+                .expect("Disk IO flush interval not present")
+                .tick()
+                .await;
+
             self.run_once()
                 .await
-                .map_err(|e| format!("Failed to fetch disk I/O metrics: {}", e))
+                .map_err(|e| format!("Failed to collect disk I/O metrics: {}", e))
         })
     }
 
     fn init(&mut self) -> futures::future::LocalBoxFuture<'_, std::result::Result<(), String>> {
         Box::pin(async {
-            self.init()
-                .await
-                .map_err(|e| format!("Failed to initialize disk I/O metric reader: {}", e))
+            let mut flush_interval = interval(MAP_FLUSH_DURATION);
+            flush_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+            self.flush_interval = Some(flush_interval);
+
+            Ok(())
         })
     }
 }
@@ -173,33 +181,21 @@ impl<P: ProcessNameMapper> Service for DiskIo<P> {
     }
 }
 
-enum DiskOp {
-    Read,
-    Write,
-}
+fn build_metric_reading(
+    dev_name: &str,
+    op: u32,
+    proc_name: &str,
+    bytes: u64,
+) -> Option<KeyedMetricReading> {
+    let metric_key_string = match op {
+        DISK_OP_READ => format!("diskstats/{}/{}/bytes_read", dev_name, proc_name),
+        DISK_OP_WRITE => format!("diskstats/{}/{}/bytes_written", dev_name, proc_name),
+        _ => return None,
+    };
 
-impl TryFrom<&[u8]> for DiskOp {
-    type Error = ();
-
-    fn try_from(value: &[u8]) -> std::result::Result<Self, Self::Error> {
-        let op_string = String::from_utf8_lossy(value);
-        if op_string.contains('W') {
-            Ok(Self::Write)
-        } else if op_string.contains('R') {
-            Ok(Self::Read)
-        } else {
-            Err(())
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Debug, Default, Clone, Copy)]
-struct DiskIoEvent {
-    pid: u32,
-    bytes: u32,
-    dev: u32,
-    rwbs: [u8; 8],
+    MetricStringKey::from_str(&metric_key_string)
+        .ok()
+        .map(|key| KeyedMetricReading::new_counter(key, bytes as f64))
 }
 
 #[derive(Debug, Default)]
@@ -221,6 +217,39 @@ impl DevNameCache {
         } else {
             None
         }
+    }
+}
+
+struct ProcNameCache {
+    entries: HashMap<u32, String>,
+    capacity: usize,
+}
+
+impl ProcNameCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            capacity,
+        }
+    }
+
+    fn get_or_resolve<P: ProcessNameMapper>(&mut self, pid: u32) -> Option<String> {
+        if let Some(name) = self.entries.get(&pid) {
+            return Some(name.clone());
+        }
+
+        let name = P::get_process_name(pid).ok()?;
+
+        if self.entries.len() >= self.capacity {
+            self.entries.clear();
+        }
+
+        self.entries.insert(pid, name.clone());
+        Some(name)
+    }
+
+    fn retain(&mut self, seen: &HashSet<u32>) {
+        self.entries.retain(|pid, _| seen.contains(pid));
     }
 }
 
@@ -264,30 +293,6 @@ async fn base_block_device_name(major_num: u32, minor_num: u32, root_dir: &str) 
     }
 
     None
-}
-
-fn build_metric_reading(
-    dev_name: Option<&str>,
-    disk_op: Option<DiskOp>,
-    proc_name: &str,
-    bytes: u32,
-) -> Option<KeyedMetricReading> {
-    let metric_key_string = match (dev_name, disk_op) {
-        (Some(dev_name), Some(DiskOp::Write)) => Some(format!(
-            "diskstats/{}/{}/bytes_written",
-            dev_name, proc_name
-        )),
-
-        (Some(dev_name), Some(DiskOp::Read)) => {
-            Some(format!("diskstats/{}/{}/bytes_read", dev_name, proc_name))
-        }
-
-        (None, _) | (_, None) => None,
-    }?;
-
-    MetricStringKey::from_str(&metric_key_string)
-        .ok()
-        .map(|key| KeyedMetricReading::new_counter(key, bytes as f64))
 }
 
 fn dev_major(dev: u32) -> u32 {
@@ -358,31 +363,31 @@ mod test {
 
     #[rstest]
     #[case(
-        Some("sda"),
-        Some(DiskOp::Write),
+        "sda",
+        DISK_OP_WRITE,
         "test_proc",
         1024,
         "diskstats/sda/test_proc/bytes_written",
         1024.0
     )]
     #[case(
-        Some("sda"),
-        Some(DiskOp::Read),
+        "sda",
+        DISK_OP_READ,
         "test_proc",
         2048,
         "diskstats/sda/test_proc/bytes_read",
         2048.0
     )]
     fn test_build_metric_reading(
-        #[case] dev_name: Option<&str>,
-        #[case] disk_op: Option<DiskOp>,
+        #[case] dev_name: &str,
+        #[case] op: u32,
         #[case] proc_name: &str,
-        #[case] bytes: u32,
+        #[case] bytes: u64,
         #[case] expected_str: &'static str,
         #[case] expected_val: f64,
     ) {
-        let result = build_metric_reading(dev_name, disk_op, proc_name, bytes)
-            .expect("Metric reading failed");
+        let result =
+            build_metric_reading(dev_name, op, proc_name, bytes).expect("Metric reading failed");
         assert_eq!(result.name.as_str(), expected_str);
         match result.value {
             crate::metrics::MetricReading::Counter { value, .. } => assert_eq!(value, expected_val),
@@ -391,18 +396,55 @@ mod test {
     }
 
     #[rstest]
-    #[case(None, None, "test_proc", 1024)]
-    #[case(Some("sda"), None, "test_proc", 1024)]
-    #[case(None, Some(DiskOp::Write), "test_proc", 1024)]
-    #[case(None, None, "test_proc", 0)]
-    fn test_build_metric_reading_failure(
-        #[case] dev_name: Option<&str>,
-        #[case] disk_op: Option<DiskOp>,
+    #[case("sda", 99, "test_proc", 1024)]
+    fn test_build_metric_reading_unknown_op(
+        #[case] dev_name: &str,
+        #[case] op: u32,
         #[case] proc_name: &str,
-        #[case] bytes: u32,
+        #[case] bytes: u64,
     ) {
-        let result = build_metric_reading(dev_name, disk_op, proc_name, bytes);
-        assert!(result.is_none());
+        assert!(build_metric_reading(dev_name, op, proc_name, bytes).is_none());
+    }
+
+    #[test]
+    fn test_proc_name_cache_retain_drops_unseen_pids() {
+        struct MockMapper;
+        impl ProcessNameMapper for MockMapper {
+            fn get_process_name(pid: u32) -> Result<String> {
+                Ok(format!("proc_{pid}"))
+            }
+        }
+
+        let mut cache = ProcNameCache::new(8);
+        cache.get_or_resolve::<MockMapper>(10);
+        cache.get_or_resolve::<MockMapper>(20);
+        cache.get_or_resolve::<MockMapper>(30);
+        assert_eq!(cache.entries.len(), 3);
+
+        let seen: HashSet<u32> = [10, 30].into_iter().collect();
+        cache.retain(&seen);
+        assert_eq!(cache.entries.len(), 2);
+        assert!(cache.entries.contains_key(&10));
+        assert!(cache.entries.contains_key(&30));
+        assert!(!cache.entries.contains_key(&20));
+    }
+
+    #[test]
+    fn test_proc_name_cache_clears_at_capacity() {
+        struct MockMapper;
+        impl ProcessNameMapper for MockMapper {
+            fn get_process_name(pid: u32) -> Result<String> {
+                Ok(format!("proc_{pid}"))
+            }
+        }
+
+        let mut cache = ProcNameCache::new(2);
+        cache.get_or_resolve::<MockMapper>(1);
+        cache.get_or_resolve::<MockMapper>(2);
+        assert_eq!(cache.entries.len(), 2);
+        cache.get_or_resolve::<MockMapper>(3);
+        assert_eq!(cache.entries.len(), 1);
+        assert!(cache.entries.contains_key(&3));
     }
 
     async fn build_test_dir() -> TempDir {

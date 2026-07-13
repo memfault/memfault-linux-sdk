@@ -33,15 +33,15 @@ implements Memfault-specific features and also acts as a configuration agent.
 
 ## Quickstart
 
-To get started in minutes using the QEMU emulator, read our [Quick Start with
-QEMU guide][quickstart-qemu].
+To get started in minutes using the QEMU emulator, read our [QEMU
+Example][quickstart-qemu].
 
-If you have a Raspberry Pi available, the [Quick Start with Raspberry Pi
-guide][quickstart-rpi] will walk you through building a complete system image,
-flashing it to an SDCard and updating your device remotely with Memfault OTA.
+If you have a Raspberry Pi available, the [Raspberry Pi Example][quickstart-rpi]
+will walk you through building a complete system image, flashing it to an SDCard
+and updating your device remotely with Memfault OTA.
 
-[quickstart-qemu]: https://docs.memfault.com/docs/linux/quickstart
-[quickstart-rpi]: https://docs.memfault.com/docs/linux/quickstart-raspberrypi
+[quickstart-qemu]: https://docs.memfault.com/docs/linux/qemu-example
+[quickstart-rpi]: https://docs.memfault.com/docs/linux/raspberrypi-example
 
 ## Getting Started
 

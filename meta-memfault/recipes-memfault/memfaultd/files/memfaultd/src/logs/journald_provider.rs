@@ -4,9 +4,8 @@
 use crate::logs::journald_parser::{Journal, JournalRaw};
 
 use eyre::Result;
+use futures::future::LocalBoxFuture;
 use ssf::{MsgMailbox, Service, TaskService};
-
-use std::{future::Future, pin::Pin};
 
 use super::{log_collector::LogEntrySender, log_entry::LogEntry, messages::LogEntryMsg};
 
@@ -53,7 +52,7 @@ impl<J: JournalRaw> Service for JournaldLogProvider<J> {
 }
 
 impl<J: JournalRaw> TaskService for JournaldLogProvider<J> {
-    fn run_task(&mut self) -> Pin<Box<dyn Future<Output = std::result::Result<(), String>> + '_>> {
+    fn run_task(&mut self) -> LocalBoxFuture<'_, Result<(), String>> {
         Box::pin(async {
             self.run_once()
                 .await

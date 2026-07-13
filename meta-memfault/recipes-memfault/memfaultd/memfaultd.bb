@@ -142,7 +142,6 @@ do_install_append() {
     rm ${D}/usr/bin/memfaultctl
     ln -sf /usr/bin/memfaultd ${D}/usr/bin/memfaultctl
 
-    # TODO: only install if feature is enabled
     rm ${D}/usr/bin/memfault-core-handler
     mkdir -p ${D}/usr/sbin
     ln -sf /usr/bin/memfaultd ${D}/usr/sbin/memfault-core-handler

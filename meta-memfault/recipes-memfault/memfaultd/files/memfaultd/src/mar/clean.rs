@@ -2,7 +2,6 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 use crate::{
-    mar::MarEntry,
     metrics::{
         internal_metrics::{
             INTERNAL_METRIC_MAR_CLEANER_DURATION, INTERNAL_METRIC_MAR_ENTRIES_DELETED,
@@ -186,9 +185,12 @@ fn clean_mar_staging(
     metrics_mbox: &MetricsMBox,
 ) -> Result<DiskSize> {
     let cleaning_start = Instant::now();
+
+    // Generate collection of mar entries to delete
     let (entries, total_space_used) = collect_mar_entries(mar_staging, reference_date)?;
     let total_entries = entries.len() as u64;
 
+    // Sorting happens here
     let marked_entries = mark_entries_for_deletion(
         entries,
         total_space_used,
@@ -233,6 +235,15 @@ fn clean_mar_staging(
     Ok(DiskSize::min(remaining_quota, usable_space))
 }
 
+/// Collects MAR entries in a mar staging area (`mar_staging: &Path`)
+/// with a reference date.
+/// Returns a Vec of `AgeSizePath`, where the age is relative to the reference_date,
+/// and in terms of `mtime`.
+/// `mtime` is used instead of, say, file creation time (...which apparently doesn't have a POSIX name?)
+/// as, for one thing, avoids unnecessarily parsing,
+/// and for another thing can be used to artificially keep interesting MARs around.
+/// Users should be careful to not e.g. `mv` or `cp` without the `-p` flag
+/// if they do not intend to keep the MAR around a bit longer.
 fn collect_mar_entries(
     mar_staging: &Path,
     reference_date: SystemTime,
@@ -243,27 +254,18 @@ fn collect_mar_entries(
             mar_staging.display()
         ))?
         .filter_map(|r| r.map_err(|e| warn!("Unable to read DirEntry: {}", e)).ok())
-        .map(|dir_entry| match MarEntry::from_path(dir_entry.path()) {
-            // Use the collection time from the manifest or folder creation time if the manifest cannot be parsed:
-            Ok(entry) => AgeSizePath::new(
-                &entry.path,
-                get_size(&entry.path).unwrap_or(DiskSize::ZERO),
-                entry.manifest.collection_time.timestamp.into(),
+        .map(|dir_entry| {
+            let path = dir_entry.path();
+            let timestamp = path
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or_else(|_| SystemTime::now());
+            AgeSizePath::new(
+                &path,
+                get_size(&path).unwrap_or(DiskSize::ZERO),
+                timestamp,
                 reference_date,
-            ),
-            Err(_) => {
-                let path = dir_entry.path();
-                let timestamp = path
-                    .metadata()
-                    .and_then(|m| m.created())
-                    .unwrap_or_else(|_| SystemTime::now());
-                AgeSizePath::new(
-                    &path,
-                    get_size(&path).unwrap_or(DiskSize::ZERO),
-                    timestamp,
-                    reference_date,
-                )
-            }
+            )
         })
         .collect();
     let total_space_used = entries
@@ -1181,12 +1183,27 @@ mod test {
             now - Duration::from_secs(120),
             false,
         );
+        assert!(file_is_at_least_this_old(
+            &oldest,
+            &now,
+            Duration::from_secs(120)
+        ));
         let middle = mar_fixture.create_logentry_with_size_and_age(
             8000,
             now - Duration::from_secs(30),
             false,
         );
+        assert!(file_is_at_least_this_old(
+            &middle,
+            &now,
+            Duration::from_secs(30)
+        ));
         let most_recent = mar_fixture.create_logentry_with_size_and_age(8000, now, false);
+        assert!(file_is_at_least_this_old(
+            &most_recent,
+            &now,
+            Duration::from_secs(0)
+        ));
         let _size_avail = clean_mar_staging(
             &mar_fixture.tmp_mar_staging,
             max_total_size,
@@ -1229,17 +1246,37 @@ mod test {
             now - Duration::from_secs(120),
             false,
         );
+        assert!(file_is_at_least_this_old(
+            &oldest,
+            &now,
+            Duration::from_secs(120)
+        ));
         let second_oldest = mar_fixture.create_logentry_with_size_and_age(
             10000,
             now - Duration::from_secs(30),
             false,
         );
+        assert!(file_is_at_least_this_old(
+            &second_oldest,
+            &now,
+            Duration::from_secs(30)
+        ));
         let second_newest = mar_fixture.create_logentry_with_size_and_age(
             10000,
             now - Duration::from_secs(10),
             false,
         );
+        assert!(file_is_at_least_this_old(
+            &second_newest,
+            &now,
+            Duration::from_secs(10)
+        ));
         let most_recent = mar_fixture.create_logentry_with_size_and_age(10000, now, false);
+        assert!(file_is_at_least_this_old(
+            &most_recent,
+            &now,
+            Duration::from_secs(0)
+        ));
 
         // Need to delete 2 entries to free up required headroom
         let _size_avail = clean_mar_staging(
@@ -1264,6 +1301,17 @@ mod test {
         });
     }
 
+    fn file_is_at_least_this_old(f: &Path, now: &SystemTime, expected_since: Duration) -> bool {
+        let moddate = f.metadata().expect("fresh tmp file").modified().expect(
+            "modified method should be supported on your dev machine. If it isn't, ask your neighbor :)",
+        );
+
+        let real_since = now
+            .duration_since(moddate)
+            .expect("should always be an earlier date fed into this test function");
+        real_since >= expected_since.saturating_sub(Duration::from_secs(1))
+    }
+
     #[rstest]
     fn removes_entries_exceeding_max_total_size_by_age(
         mut mar_fixture: MarCollectorFixture,
@@ -1285,17 +1333,37 @@ mod test {
             now - Duration::from_secs(120),
             false,
         );
+        assert!(file_is_at_least_this_old(
+            &oldest,
+            &now,
+            Duration::from_secs(120)
+        ));
         let second_oldest = mar_fixture.create_logentry_with_size_and_age(
             10000,
             now - Duration::from_secs(30),
             false,
         );
+        assert!(file_is_at_least_this_old(
+            &second_oldest,
+            &now,
+            Duration::from_secs(30)
+        ));
         let second_newest = mar_fixture.create_logentry_with_size_and_age(
             10000,
             now - Duration::from_secs(10),
             false,
         );
+        assert!(file_is_at_least_this_old(
+            &second_newest,
+            &now,
+            Duration::from_secs(10)
+        ));
         let most_recent = mar_fixture.create_logentry_with_size_and_age(10000, now, false);
+        assert!(file_is_at_least_this_old(
+            &most_recent,
+            &now,
+            Duration::from_secs(0)
+        ));
         let _size_avail = clean_mar_staging(
             &mar_fixture.tmp_mar_staging,
             max_total_size,
@@ -1472,7 +1540,17 @@ mod test {
         let now = SystemTime::now();
         let yesterday = now - Duration::from_secs(86400);
         let old_dir = mar_fixture.create_logentry_with_size_and_age(1, yesterday, false);
+        assert!(file_is_at_least_this_old(
+            &old_dir,
+            &now,
+            Duration::from_secs(86400)
+        ));
         let now_dir = mar_fixture.create_logentry_with_size_and_age(1, now, false);
+        assert!(file_is_at_least_this_old(
+            &now_dir,
+            &now,
+            Duration::from_secs(0)
+        ));
 
         let max_total_size = DiskSize::new_capacity(2048);
 

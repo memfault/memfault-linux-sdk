@@ -12,7 +12,7 @@ repository = "https://github.com/memfault/memfaultd"
 [dependencies]
 futures = "0.3.31"
 log = "0.4"
-tokio = { version = "1.43.1", features = ["sync", "macros", "rt", "net"] }
+tokio = { version = "1.43.1", features = ["sync", "macros", "rt", "net", "time"] }
 
 [lints]
 workspace = true

@@ -11,6 +11,8 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use log::error;
+
 use crate::{
     mar::{MarConfig, MarStagingCleanType},
     metrics::system_metrics::SystemMetricConfig,
@@ -71,6 +73,7 @@ pub struct Config {
     pub cached_device_config: Arc<RwLock<DiskBacked<DeviceConfig>>>,
 }
 
+const CHUNKS_SUBDIRECTORY: &str = "chunks";
 const LOGS_SUBDIRECTORY: &str = "logs";
 pub const MAR_STAGING_SUBDIRECTORY: &str = "mar";
 const DEVICE_CONFIG_FILE: &str = "device_config.json";
@@ -87,10 +90,8 @@ impl Config {
         // Select config file to read
         let config_file = user_config.unwrap_or_else(|| Path::new(Self::DEFAULT_CONFIG_PATH));
 
-        let config = MemfaultdConfig::load(config_file).wrap_err(eyre!(
-            "Unable to read config file {}",
-            &config_file.display()
-        ))?;
+        let config = MemfaultdConfig::load(config_file)
+            .wrap_err_with(|| format!("Unable to read config file {}", config_file.display()))?;
 
         let (device_info, warnings) =
             DeviceInfo::load().wrap_err(eyre!("Unable to load device info"))?;
@@ -164,6 +165,24 @@ impl Config {
 
     pub fn trace_rate_limiter_file_path(&self) -> PathBuf {
         self.tmp_dir().join(TRACE_RATE_LIMITER_FILENAME)
+    }
+
+    pub fn chunks_path(&self) -> PathBuf {
+        self.tmp_dir().join(CHUNKS_SUBDIRECTORY)
+    }
+
+    pub fn chunks_headroom(&self) -> DiskSize {
+        let bytes = match &self.config_file.chunks_relay {
+            Some(relay_config) => relay_config.chunks_headroom,
+            None => {
+                error!("memfaultd built with the `chunks-relay` feature, but no accompanying setting. Please revisit configuration");
+                1024
+            }
+        };
+        DiskSize {
+            bytes: bytes as u64,
+            inodes: self.config_file.tmp_dir_min_inodes as u64,
+        }
     }
 
     pub fn logs_path(&self) -> PathBuf {

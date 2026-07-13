@@ -10,6 +10,29 @@ use crate::{mar::MarConfig, network::NetworkConfig};
 
 use super::{KeyedMetricReading, MetricReportType, SessionName};
 
+#[derive(Clone)]
+pub struct CrashInfoMessage<T>
+where
+    T: Send + Sync + 'static,
+{
+    pub process_name: String,
+    pub timestamp: T,
+}
+
+impl<T> Message for CrashInfoMessage<T>
+where
+    T: Send + Sync + 'static,
+{
+    type Reply = ();
+}
+
+#[derive(Clone)]
+pub struct CrashFreeTickMessage;
+
+impl Message for CrashFreeTickMessage {
+    type Reply = ();
+}
+
 /// Allows KeyedMetricReading to be sent as a message. The `ssf` framework will
 /// automatically support sending `Vec<KeyedMetricReading>` as well.
 impl Message for KeyedMetricReading {

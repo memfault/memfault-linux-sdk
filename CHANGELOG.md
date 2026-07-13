@@ -6,6 +6,57 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.27.0] - 2026-07-13
+
+This release adds several new system metrics: CMA usage, context switch/fork
+rates, socket counts, and file descriptor usage, along with MIPS support for
+thread-filtered coredumps. See the Experimental section below for eBPF- and
+chunk-relay-gated changes.
+
+### Added
+
+- Added CMA (Contiguous Memory Allocator) usage metrics,
+  `memory/memory/cma_total` and `memory/memory/cma_free`, parsed from
+  `/proc/meminfo` on devices where CMA is enabled.
+- Added system metrics for context switch and fork rates,
+  `cpu/context_switches_per_second` and `cpu/forks_per_second`, parsed from
+  `/proc/stat`.
+- Added socket count system metrics parsed from `/proc/net/sockstat`:
+  `net/sockets/tcp_inuse`, `net/sockets/sockets_inuse`, `net/sockets/tcp_tw`,
+  `net/sockets/tcp_orphan`, and `net/sockets/udp_inuse`. Collection is
+  best-effort: a failure to read one socket metric no longer prevents the others
+  from being reported.
+- Added file descriptor usage metrics, `fs/file_nr/allocated` and
+  `fs/file_nr/max`, parsed from `/proc/sys/fs/file-nr`. These are also supported
+  by the `min_max` metrics config.
+- Added support for MIPS (o32) and MIPS64 (n64) in thread-filtered coredumps,
+  allowing the smaller `Threads` coredump capture strategy to be used on these
+  architectures instead of always falling back to a full kernel-selected dump.
+
+### Changed
+
+- MAR cleanup now checks file metadata instead of parsing the entire archive to
+  determine its age, reducing CPU and I/O overhead during cleanup.
+
+### Fixed
+
+- Fixed error propagation when `memfaultd.conf` fails to parse, providing more
+  useful telemetry for diagnosing configuration failures.
+
+### Experimental
+
+- Reworked the disk I/O eBPF program to use a kernel-side map with periodic
+  flushing instead of waking userspace on every event, and moved to CO-RE to
+  simplify kernel compatibility. This reduces CPU overhead on high-traffic
+  systems but raises the minimum supported kernel to 5.5 with BTF
+  (`CONFIG_DEBUG_INFO_BTF=y`) for the disk I/O metrics. Gated behind the `ebpf`
+  build feature (bundled into `experimental`).
+- Added a chunk relay feature that lets other devices submit chunk data to
+  `memfaultd` via `memfaultctl write-chunks`, which stages it in the MAR for
+  upload, subject to a configurable on-disk storage limit. Gated behind the
+  `chunks-relay` build feature (bundled into `experimental`) and not yet ready
+  for general use.
+
 ## [1.26.1] - 2026-03-26
 
 This is a patch release fixing a crash in journald log collection when
@@ -139,6 +190,13 @@ experimental feature. Keep an eye out for it in a future release!
 - Fixed a rare race condition where a coredump could be uploaded before the
   `gzip` encoder finished writing. This would result in a bad header for the
   compressed file, and make it impossible to decompress it.
+
+### Removed
+
+- The included version of `meta-rust-bin` (added in SDK `1.4.0`) is removed in
+  this release. See instructions in the
+  [Memfault Docs](https://docs.memfault.com/docs/linux/yocto-integration-guide)
+  for how to switch to the upstream version of `meta-rust-bin`.
 
 ### Experimental
 
@@ -1624,3 +1682,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.26.0-kirkstone
 [1.26.1]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.26.1-kirkstone
+[1.27.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.27.0-kirkstone
