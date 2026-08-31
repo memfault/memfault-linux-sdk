@@ -6,9 +6,16 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::{fs::File, io::Write};
 
-use headroom::ChunksHeadroomCheck;
+use base64::{prelude::BASE64_STANDARD, Engine};
 use hex;
 use itertools::Itertools;
+use nom::{
+    bytes::complete::{tag, take_until},
+    character::complete::anychar,
+    multi::many_till,
+    sequence::preceded,
+    IResult,
+};
 use sha2::{Digest, Sha256};
 
 use eyre::{eyre, Context, Result};
@@ -25,7 +32,7 @@ mod handler;
 pub use handler::ChunkRelayHttpHandler;
 
 mod headroom;
-pub use headroom::ChunksHeadroomLimiter;
+pub use headroom::{ChunksHeadroomCheck, ChunksHeadroomLimiter};
 
 use crate::util::patterns::check_base64_encoding;
 
@@ -200,5 +207,99 @@ impl Handler<PrepareMarEntriesMsg> for ChunkRelayService {
         let mar_config = m.mar_config();
 
         self.store_all_mar_entries(network_config, mar_config)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum ChunksEncoding {
+    Base64,
+    Hex,
+    Bin,
+    SdkDataExport,
+}
+
+impl ChunksEncoding {
+    pub fn to_base64(self, chunk: &String) -> Result<Vec<String>> {
+        Ok(match self {
+            ChunksEncoding::Base64 => match BASE64_STANDARD.decode(chunk) {
+                Err(e) => return Err(eyre!("incorrect base64 encoding: {:.64}... ({})", chunk, e)),
+                Ok(_) => vec![chunk.clone()],
+            },
+            ChunksEncoding::Hex => match hex::decode(chunk) {
+                Err(e) => return Err(eyre!("incorrect hex encoding: {:.64}... ({})", chunk, e)),
+                Ok(res) => vec![BASE64_STANDARD.encode(res)],
+            },
+
+            // last two are files to read
+            ChunksEncoding::Bin => match fs::read(chunk) {
+                Err(e) => return Err(eyre!("unable to read bin file: {:.64}... ({})", chunk, e)),
+                Ok(bytes) => vec![BASE64_STANDARD.encode(bytes)],
+            },
+            ChunksEncoding::SdkDataExport => match fs::read_to_string(chunk) {
+                Err(e) => {
+                    return Err(eyre!(
+                        "unable to read SDK data export file: {:.64}... ({})",
+                        chunk,
+                        e
+                    ))
+                }
+                Ok(s) => s.lines().map(parse_mc_string).collect::<Result<Vec<_>>>()?,
+            },
+        })
+    }
+}
+
+fn parse_mc_string(line: &str) -> Result<String> {
+    let (_, parsed) = parse_mc_string_to_iresult(line)
+        .map_err(|_e| eyre!("Failed to parse MC string: {}", line))?;
+    check_base64_encoding(parsed)?;
+    Ok(parsed.into())
+}
+
+fn parse_mc_string_to_iresult(input: &str) -> IResult<&str, &str> {
+    preceded(many_till(anychar, tag("MC:")), take_until(":"))(input)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case("MC:asdf:", "asdf")]
+    #[case("mflt: MC:asdf:", "asdf")]
+    #[case("I [211239845]: mflt: MC:asdf:", "asdf")]
+    #[case("I [211239845] mflt: MC:asdf:", "asdf")]
+    #[case("I [211239845]        mflt: MC:asdf:", "asdf")]
+    #[case("I          [211239845]        mflt: MC:asdf:", "asdf")]
+    fn test_parses_valid_mc_string(#[case] line: &str, #[case] expected: String) {
+        let parsed = parse_mc_string(line).expect("valid MC string should parse");
+        assert_eq!(parsed, expected);
+    }
+
+    #[rstest]
+    #[case("6869", "aGk=")]
+    fn test_translates_valid_hex_string(#[case] line: String, #[case] expected: String) {
+        let translated = ChunksEncoding::Hex
+            .to_base64(&line)
+            .expect("valid hex encoding");
+        assert_eq!(translated, vec![expected]);
+    }
+
+    #[rstest]
+    #[case("aGk=")]
+    #[case("asdf")]
+    fn test_base64_left_unchanged(#[case] line: String) {
+        let translated = ChunksEncoding::Base64
+            .to_base64(&line)
+            .expect("valid base64 encoding");
+        assert_eq!(translated, vec![line]);
+    }
+
+    #[rstest]
+    #[case("6869686968", ChunksEncoding::Base64)]
+    #[case("aGk=", ChunksEncoding::Hex)]
+    fn test_mismatched_format_errors(#[case] line: String, #[case] encoding: ChunksEncoding) {
+        assert!(encoding.to_base64(&line).is_err());
     }
 }

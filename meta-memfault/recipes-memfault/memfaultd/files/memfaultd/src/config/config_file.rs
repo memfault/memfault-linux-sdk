@@ -43,6 +43,7 @@ pub struct MemfaultdConfig {
     #[serde(rename = "fluent-bit")]
     pub fluent_bit: FluentBitConfig,
     pub logs: LogsConfig,
+    #[serde(rename = "chunks-relay")]
     pub chunks_relay: Option<ChunksRelayConfig>,
     pub mar: MarConfig,
     pub http_server: HttpServerConfig,
@@ -109,6 +110,13 @@ pub enum TraceFilter {
     ExecutablePath { path: String },
 }
 
+/// A custom k/v attribute captured into a coredump at the time of the crash.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct CoredumpAttribute {
+    pub key: MetricStringKey,
+    pub value: Value,
+}
+
 impl Default for LinuxCustomTraceConfig {
     fn default() -> Self {
         Self {
@@ -150,6 +158,8 @@ pub struct CoredumpConfig {
     pub capture_strategy: CoredumpCaptureStrategy,
     pub log_lines: usize,
     pub filters: Option<Vec<TraceFilter>>,
+    pub attributes: Option<Vec<CoredumpAttribute>>,
+    pub attributes_file: Option<AbsolutePath>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -394,7 +404,8 @@ use std::fs;
 use std::path::Path;
 
 use crate::config::utils::{
-    filter_path_is_valid, software_type_is_valid, software_version_is_valid,
+    coredump_attribute_value_is_valid, filter_path_is_valid, software_type_is_valid,
+    software_version_is_valid,
 };
 
 pub struct JsonConfigs {
@@ -463,6 +474,17 @@ impl MemfaultdConfig {
                     }
                 }
             });
+        }
+
+        if let Some(attributes) = &config.coredump.attributes {
+            for attribute in attributes {
+                if let Err(e) = coredump_attribute_value_is_valid(&attribute.value) {
+                    validation_errors.push(format!(
+                        "  Invalid value for coredump attribute \"{}\": {}",
+                        attribute.key, e
+                    ));
+                }
+            }
         }
 
         match validation_errors.is_empty() {
@@ -668,6 +690,9 @@ mod test {
     #[case("with_partial_logs")]
     #[case("without_coredump_compression")]
     #[case("with_coredump_capture_strategy_threads")]
+    #[case("with_coredump_attributes")]
+    #[case("with_coredump_attributes_all_scalar_types")]
+    #[case("with_coredump_attributes_file")]
     #[case("with_log_to_metrics_rules")]
     #[case("with_connectivity_monitor")]
     #[case("with_sessions")]
@@ -697,6 +722,13 @@ mod test {
 
     #[rstest]
     #[case("with_invalid_path")]
+    #[case("with_invalid_coredump_attribute")]
+    #[case("with_null_coredump_attribute")]
+    #[case("with_object_coredump_attribute")]
+    #[case("with_empty_coredump_attribute_key")]
+    #[case("with_non_ascii_coredump_attribute_key")]
+    #[case("with_relative_attributes_file")]
+    #[case("with_malformed_json")]
     #[case("with_invalid_swt_swv")]
     #[case("with_sessions_invalid_metric_name")]
     #[case("with_sessions_invalid_session_name")]
@@ -707,6 +739,15 @@ mod test {
             .with_extension("json");
         let result = MemfaultdConfig::load(&input_path);
         assert!(result.is_err());
+    }
+
+    /// Loading a config from a path that doesn't exist must be a clean error, not a panic: the
+    /// file read is the first fallible step in `load`.
+    #[test]
+    fn will_reject_missing_config_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("does-not-exist.conf");
+        assert!(MemfaultdConfig::load(&missing).is_err());
     }
 
     #[rstest]

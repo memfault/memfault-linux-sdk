@@ -72,10 +72,10 @@ where
 
         let mut diskstat_metric_readings = vec![];
 
-        for line in reader.lines() {
+        for line in reader.lines().map_while(Result::ok) {
             // Discard errors - the assumption here is that we are only parsing
             // lines that follow the specified format and expect other lines in the file to error
-            if let Ok((device_name, disk_stats)) = parse_proc_diskstats_line(line?.trim()) {
+            if let Ok((device_name, disk_stats)) = parse_proc_diskstats_line(line.trim()) {
                 no_parseable_lines = false;
 
                 if self.device_is_monitored(&device_name) {

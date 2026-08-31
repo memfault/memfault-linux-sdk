@@ -1,0 +1,4 @@
+{
+  "coredump": {
+    "attributes": [
+      { "key": "developer_mode", "value": true }

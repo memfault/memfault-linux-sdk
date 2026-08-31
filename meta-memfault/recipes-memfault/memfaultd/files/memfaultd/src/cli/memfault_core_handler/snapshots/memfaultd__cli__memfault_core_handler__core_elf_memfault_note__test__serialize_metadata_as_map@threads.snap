@@ -125,5 +125,15 @@ Map(
             ),
             Null,
         ),
+        (
+            Integer(
+                Integer(
+                    11,
+                ),
+            ),
+            Map(
+                [],
+            ),
+        ),
     ],
 )

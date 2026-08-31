@@ -24,7 +24,7 @@ use super::{
 };
 
 pub trait LogFile {
-    fn write_json_line(&mut self, json: LogEntry) -> Result<()>;
+    fn write_json_line(&mut self, json: &LogEntry) -> Result<()>;
     fn write_log<S: AsRef<str>>(
         &mut self,
         ts: DateTime<Utc>,
@@ -41,7 +41,7 @@ pub trait LogFile {
         };
 
         let log_entry = LogEntry { ts, data };
-        self.write_json_line(log_entry)
+        self.write_json_line(&log_entry)
     }
     fn flush(&mut self) -> Result<()>;
 }
@@ -79,8 +79,8 @@ impl LogFileImpl {
 }
 
 impl LogFile for LogFileImpl {
-    fn write_json_line(&mut self, json: LogEntry) -> Result<()> {
-        let bytes = serde_json::to_vec(&json)?;
+    fn write_json_line(&mut self, json: &LogEntry) -> Result<()> {
+        let bytes = serde_json::to_vec(json)?;
         let mut written = self.writer.write(&bytes)?;
         written += self.writer.write("\n".as_bytes())?;
         self.bytes_written += written;
@@ -301,7 +301,7 @@ mod tests {
                         .collect(),
                 },
             };
-            log.write_json_line(log_entry)
+            log.write_json_line(&log_entry)
                 .expect("error writing json line");
             count_lines += 1;
         }

@@ -3,7 +3,12 @@
 // See License.txt for details
 use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender};
 
-use crate::{BoundedMailbox, BoundedTaskMailbox, Handler, Mailbox, MailboxError, Message, Service};
+use futures::future::{ready, BoxFuture};
+
+use crate::{
+    AsyncBoundedTaskMailbox, AsyncHandler, BoundedMailbox, BoundedTaskMailbox, Handler, Mailbox,
+    MailboxError, Message, Service,
+};
 
 // This type alias includes a trait bound on the generic parameter which
 // triggers clippy's `type_alias_bounds` lint. The bound is intentional to
@@ -51,6 +56,10 @@ impl<M: Message> MsgMailbox<M> {
     pub fn send_and_wait_for_reply(&self, message: M) -> Result<M::Reply, MailboxError> {
         self.service_mailbox.send_and_wait_for_reply(message)
     }
+
+    pub async fn send_and_forget_async(&self, message: M) -> Result<(), MailboxError> {
+        self.service_mailbox.send_and_forget_async(message).await
+    }
 }
 
 impl<M: Message> Clone for MsgMailbox<M> {
@@ -95,6 +104,14 @@ impl<M: Message + Clone> From<Vec<MsgMailbox<M>>> for BroadcastMsgMailbox<M> {
 trait MsgMailboxT<M: Message>: Send + Sync {
     fn send_and_forget(&self, message: M) -> Result<(), MailboxError>;
     fn send_and_wait_for_reply(&self, message: M) -> Result<M::Reply, MailboxError>;
+
+    /// No async reply-wait counterpart: every impl but one would have to block
+    /// behind a resolved future, deadlocking if the target shares the caller's
+    /// executor. Use `AsyncBoundedTaskMailbox` directly for that.
+    fn send_and_forget_async(&self, message: M) -> BoxFuture<'_, Result<(), MailboxError>> {
+        Box::pin(ready(self.send_and_forget(message)))
+    }
+
     fn duplicate(&self) -> Box<dyn MsgMailboxT<M>>;
 }
 
@@ -149,6 +166,26 @@ where
     }
 }
 
+impl<M, S> MsgMailboxT<M> for AsyncBoundedTaskMailbox<S>
+where
+    S: Service + 'static,
+    M: Message,
+    S: AsyncHandler<M>,
+{
+    fn send_and_forget(&self, message: M) -> Result<(), MailboxError> {
+        self.0.try_send_and_forget_async(message)
+    }
+    fn send_and_wait_for_reply(&self, message: M) -> Result<M::Reply, MailboxError> {
+        self.0.blocking_send_and_wait_for_reply_async(message)
+    }
+    fn send_and_forget_async(&self, message: M) -> BoxFuture<'_, Result<(), MailboxError>> {
+        Box::pin(self.0.send_and_forget_async(message))
+    }
+    fn duplicate(&self) -> Box<dyn MsgMailboxT<M>> {
+        Box::new(self.clone())
+    }
+}
+
 impl<M, S> From<Mailbox<S>> for MsgMailbox<M>
 where
     M: Message,
@@ -185,6 +222,20 @@ where
     S: 'static,
 {
     fn from(mailbox: BoundedTaskMailbox<S>) -> Self {
+        MsgMailbox {
+            service_mailbox: Box::new(mailbox),
+        }
+    }
+}
+
+impl<M, S> From<AsyncBoundedTaskMailbox<S>> for MsgMailbox<M>
+where
+    M: Message,
+    S: Service,
+    S: AsyncHandler<M>,
+    S: 'static,
+{
+    fn from(mailbox: AsyncBoundedTaskMailbox<S>) -> Self {
         MsgMailbox {
             service_mailbox: Box::new(mailbox),
         }
@@ -268,7 +319,10 @@ impl<M: Message> MsgMailboxT<M> for BoundedMockMsgMailbox<M> {
 mod test {
     use std::thread::spawn;
 
+    use tokio::runtime::Builder;
+
     use super::*;
+    use crate::ServiceJig;
 
     #[test]
     fn test_broadcast_mailbox() {
@@ -300,6 +354,51 @@ mod test {
 
         let replies = join_handle.join().unwrap();
         assert_eq!(replies.len(), 2);
+    }
+
+    // `AsyncTestService` has no `Handler` impl, so arrival proves an
+    // `AsyncEnvelope` was enqueued.
+    #[test]
+    fn test_erased_async_mailbox_awaits_and_delivers_via_async_handler() {
+        let mut jig = ServiceJig::prepare(AsyncTestService::default());
+        let mbox: MsgMailbox<TestMessage> = jig.mailbox.for_async().into();
+
+        let runtime = Builder::new_current_thread().build().unwrap();
+        runtime
+            .block_on(mbox.send_and_forget_async(TestMessage))
+            .unwrap();
+
+        jig.process_all();
+        assert_eq!(jig.get_service().delivered, 1);
+    }
+
+    #[test]
+    fn test_sync_backed_mailbox_send_and_forget_async_resolves_immediately() {
+        let (mbox, rx) = MsgMailbox::<TestMessage>::mock();
+
+        let runtime = Builder::new_current_thread().build().unwrap();
+        runtime
+            .block_on(mbox.send_and_forget_async(TestMessage))
+            .unwrap();
+
+        assert!(rx.try_recv().is_ok());
+    }
+
+    #[derive(Default)]
+    struct AsyncTestService {
+        delivered: usize,
+    }
+
+    impl Service for AsyncTestService {
+        fn name(&self) -> &str {
+            "async_test_service"
+        }
+    }
+
+    impl AsyncHandler<TestMessage> for AsyncTestService {
+        async fn deliver_async(&mut self, _m: TestMessage) {
+            self.delivered += 1;
+        }
     }
 
     #[derive(Clone)]

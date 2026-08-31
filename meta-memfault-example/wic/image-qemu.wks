@@ -1,4 +1,4 @@
-part /boot --fstype=vfat --ondisk vda --offset 2048s --align 4 --fixed-size 63M --active --label boot
+part /boot --source bootimg-partition --sourceparams="loader=u-boot" --fstype=vfat --ondisk vda --offset 2048s --align 4 --fixed-size 63M --label boot
 
 # rootfs slot A
 part / --source rootfs --fstype=ext4 --ondisk vda --label root-a --align 4 --fixed-size 256M
@@ -9,4 +9,7 @@ part --fstype=ext4 --ondisk vda --label root-b --align 4 --fixed-size 256M
 # /media (auto-mounted via /etc/fstab)
 part --fstype=ext4 --ondisk vda --label media --align 4 --fixed-size 448M
 
-bootloader --ptable msdos --timeout 1
+# Partition 1 holds the U-Boot env (see IMAGE_BOOT_FILES); memfault_boot loads
+# the kernel from the rootfs slot, so the copy here is unused. --append only
+# feeds extlinux.conf, which nothing boots through now, and its root= pins slot A.
+bootloader --ptable msdos --timeout 1 --append="root=/dev/vda2 rootwait mem=384M ramoops.mem_address=0x58000000 ramoops.mem_size=0x20000"
