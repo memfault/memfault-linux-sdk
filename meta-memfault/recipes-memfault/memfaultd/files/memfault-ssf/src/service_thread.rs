@@ -8,12 +8,13 @@ use std::{
 };
 
 use log::{error, warn};
+use thiserror::Error;
 use tokio::runtime::Builder;
 use tokio::sync::mpsc as tokio_mpsc;
 
 use crate::{
     BoundedMailbox, BoundedTaskMailbox, Envelope, Mailbox, Service, ShutdownServiceMessage,
-    StatsAggregator, TaskService,
+    StatsAggregator, TaskEnvelope, TaskService,
 };
 
 /// Run a service inside a dedicated thread using a mpsc::channel to send/receive messages
@@ -167,7 +168,7 @@ impl<S: TaskService + Send + 'static> BoundedTaskServiceThread<S> {
                     return;
                 }
             };
-            runtime.block_on(async_run(service, receiver, handle_tx));
+            runtime.block_on(init_and_async_run(service, receiver, handle_tx));
         });
 
         BoundedTaskServiceThread {
@@ -197,7 +198,7 @@ impl<S: TaskService + 'static> BoundedTaskServiceThread<S> {
                 .enable_time()
                 .build();
             match runtime {
-                Ok(runtime) => runtime.block_on(async_run(service, receiver, handle_tx)),
+                Ok(runtime) => runtime.block_on(init_and_async_run(service, receiver, handle_tx)),
                 Err(e) => error!("Failed to spawn service: {}", e),
             }
         });
@@ -209,25 +210,39 @@ impl<S: TaskService + 'static> BoundedTaskServiceThread<S> {
     }
 }
 
-async fn async_run<S>(
+async fn init_and_async_run<S>(
     mut service: S,
-    mut receiver: tokio_mpsc::Receiver<Envelope<S>>,
+    receiver: tokio_mpsc::Receiver<TaskEnvelope<S>>,
+    join_handle_tx: Sender<Result<StatsAggregator, &'static str>>,
+) where
+    S: TaskService,
+{
+    if let Err(e) = service.init().await {
+        error!("Failed to initialize task: {}", e);
+        return;
+    }
+
+    async_run(service, receiver, join_handle_tx).await
+}
+
+pub(crate) async fn async_run<S>(
+    mut service: S,
+    mut receiver: tokio_mpsc::Receiver<TaskEnvelope<S>>,
     join_handle_tx: Sender<Result<StatsAggregator, &'static str>>,
 ) where
     S: TaskService,
 {
     let mut stats_aggregator = StatsAggregator::new();
 
-    if let Err(e) = service.init().await {
-        error!("Failed to initialize task: {}", e);
-        return;
-    }
-
     loop {
         tokio::select! {
-            Some(mut envelope) = receiver.recv() => {
+            Some(envelope) = receiver.recv() => {
                 let type_id = envelope.message_type_id();
-                match envelope.deliver_to(&mut service) {
+                let result = match envelope {
+                    TaskEnvelope::Sync(mut envelope) => envelope.deliver_to(&mut service),
+                    TaskEnvelope::Async(mut envelope) => envelope.deliver_to(&mut service).await,
+                };
+                match result {
                     Err(_e) => {
                         // Delivery failed - probably "attempt to deliver twice" - should never happen.
                         if let Err(e) = join_handle_tx.send(Err("Message delivery failed")) {
@@ -280,10 +295,13 @@ impl ServiceJoinHandle {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Error, Debug, PartialEq, Eq)]
 pub enum ServiceJoinHandleError {
+    #[error("Service stopped")]
     ServiceStopped,
+    #[error("Service is still running")]
     ServiceRunning,
+    #[error("Service failed: {0}")]
     ServiceFailed(&'static str),
 }
 

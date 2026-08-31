@@ -1,0 +1,13 @@
+---
+source: memfaultd/src/metrics/system_metrics/thermal.rs
+expression: result
+---
+{
+  "name": "thermal/cpu-temp/temp",
+  "value": {
+    "Histogram": {
+      "value": 50.0,
+      "timestamp": "[timestamp]"
+    }
+  }
+}

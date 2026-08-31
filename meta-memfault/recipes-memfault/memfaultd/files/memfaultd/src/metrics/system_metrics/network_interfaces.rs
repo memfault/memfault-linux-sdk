@@ -24,8 +24,8 @@
 //! Extra information about /proc/net/wireless
 //! https://hewlettpackard.github.io/wireless-tools/Linux.Wireless.Extensions.html
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::io::{read_to_string, BufRead, BufReader};
+use std::fs::{read_to_string, File};
+use std::io::{BufRead, BufReader};
 use std::iter::zip;
 use std::path::Path;
 use std::str::FromStr;
@@ -108,6 +108,50 @@ where
         }
     }
 
+    fn collect(&mut self) -> Result<Vec<KeyedMetricReading>> {
+        let network_metrics = self
+            .get_network_interface_metrics()
+            .inspect_err(|e| {
+                debug!(
+                    "unable to collect metrics from {}: {}",
+                    PROC_NET_DEV_PATH, e
+                )
+            })
+            .ok();
+        let net_wireless_metrics = self
+            .get_wireless_interface_metrics()
+            .inspect_err(|e| {
+                debug!(
+                    "unable to collect metrics from {}: {}",
+                    PROC_NET_WIRELESS_PATH, e
+                )
+            })
+            .ok();
+        let socket_count_metrics = self
+            .get_socket_count_metrics()
+            .inspect_err(|e| {
+                debug!(
+                    "unable to collect metrics from {}: {}",
+                    PROC_NET_SOCKSTAT_PATH, e
+                )
+            })
+            .ok();
+
+        let res = [network_metrics, net_wireless_metrics, socket_count_metrics]
+            .into_iter()
+            .while_some()
+            .flatten()
+            .collect::<Vec<KeyedMetricReading>>();
+
+        if res.is_empty() {
+            Err(eyre!(
+                "unable to collect network interface metrics. See previously emitted warnings"
+            ))
+        } else {
+            Ok(res)
+        }
+    }
+
     fn interface_is_monitored(&self, interface: &str) -> bool {
         match &self.config {
             // Ignore loopback, tunnel, veth, usb, and dummy interfaces in Auto mode
@@ -132,10 +176,10 @@ where
         }
         let file = File::open(path)?;
         let reader = BufReader::new(file);
+
         let mut wireless_metric_readings = vec![];
-        for line in reader.lines() {
-            if let Ok((interface_id, net_stats)) = Self::parse_proc_net_wireless_line(line?.trim())
-            {
+        for line in reader.lines().map_while(Result::ok) {
+            if let Ok((interface_id, net_stats)) = Self::parse_proc_net_wireless_line(line.trim()) {
                 // Ignore unmonitored interfaces
                 if self.interface_is_monitored(&interface_id) {
                     let level = net_stats
@@ -162,9 +206,7 @@ where
     pub fn get_socket_count_metrics(&mut self) -> Result<Vec<KeyedMetricReading>> {
         let (sockets_inuse, tcp_inuse, tcp_orphan, tcp_tw, udp_inuse) = {
             let path = Path::new(PROC_NET_SOCKSTAT_PATH);
-            let file = File::open(path)?;
-            let reader = BufReader::new(file);
-            let sockstat_contents = read_to_string(reader)?;
+            let sockstat_contents = read_to_string(path)?;
             let sockstat_data = Self::parse_sockstat(sockstat_contents)?;
             (
                 sockstat_data[0],
@@ -211,10 +253,10 @@ where
 
         let mut net_metric_readings = vec![];
 
-        for line in reader.lines() {
+        for line in reader.lines().map_while(Result::ok) {
             // Discard errors - the assumption here is that we are only parsing
             // lines that follow the specified format and expect other lines in the file to error
-            if let Ok((interface_id, net_stats)) = Self::parse_proc_net_dev_line(line?.trim()) {
+            if let Ok((interface_id, net_stats)) = Self::parse_proc_net_dev_line(line.trim()) {
                 no_parseable_lines = false;
 
                 // Ignore unmonitored interfaces
@@ -504,47 +546,7 @@ where
     }
 
     fn collect_metrics(&mut self) -> Result<Vec<KeyedMetricReading>> {
-        let network_metrics = self
-            .get_network_interface_metrics()
-            .inspect_err(|e| {
-                debug!(
-                    "unable to collect metrics from {}: {}",
-                    PROC_NET_DEV_PATH, e
-                )
-            })
-            .ok();
-        let net_wireless_metrics = self
-            .get_wireless_interface_metrics()
-            .inspect_err(|e| {
-                debug!(
-                    "unable to collect metrics from {}: {}",
-                    PROC_NET_WIRELESS_PATH, e
-                )
-            })
-            .ok();
-        let socket_count_metrics = self
-            .get_socket_count_metrics()
-            .inspect_err(|e| {
-                debug!(
-                    "unable to collect metrics from {}: {}",
-                    PROC_NET_SOCKSTAT_PATH, e
-                )
-            })
-            .ok();
-
-        let res = [network_metrics, net_wireless_metrics, socket_count_metrics]
-            .into_iter()
-            .while_some()
-            .flatten()
-            .collect::<Vec<KeyedMetricReading>>();
-
-        if res.is_empty() {
-            Err(eyre!(
-                "unable to collect network interface metrics. See previously emitted warnings"
-            ))
-        } else {
-            Ok(res)
-        }
+        self.collect()
     }
 }
 

@@ -7,7 +7,7 @@ software = {
             copy1: {
                 images: (
                     {
-                        filename = "base-image-__MACHINE.ext4.gz";
+                        filename = "base-image-__MACHINE.rootfs.ext4.gz";
                         type = "raw";
                         compressed = "zlib";
                         device = "/dev/__OTA_PARTITION_A";
@@ -24,7 +24,7 @@ software = {
             copy2: {
                 images: (
                     {
-                        filename = "base-image-__MACHINE.ext4.gz";
+                        filename = "base-image-__MACHINE.rootfs.ext4.gz";
                         type = "raw";
                         compressed = "zlib";
                         device = "/dev/__OTA_PARTITION_B";

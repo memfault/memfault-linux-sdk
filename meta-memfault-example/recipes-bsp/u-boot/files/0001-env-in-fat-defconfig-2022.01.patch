@@ -1,3 +1,5 @@
+Upstream-Status: Inappropriate [board-specific defconfig change for the Memfault Linux SDK's example integration]
+
 diff -Naur a/configs/qemu_arm64_defconfig b/configs/qemu_arm64_defconfig
 --- a/configs/qemu_arm64_defconfig	2022-03-29 13:53:40.086225070 +0100
 +++ b/configs/qemu_arm64_defconfig	2022-03-29 14:09:48.213001877 +0100

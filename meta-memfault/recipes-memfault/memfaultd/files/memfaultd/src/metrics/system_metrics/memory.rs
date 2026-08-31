@@ -248,6 +248,14 @@ where
     }
 }
 
+pub fn get_total_memory() -> Result<f64> {
+    let mem_info_parser = MemInfoParserImpl::new();
+    let mut stats = mem_info_parser.get_meminfo_stats()?;
+    stats
+        .remove("MemTotal")
+        .ok_or_else(|| eyre!("Couldn't get MemTotal"))
+}
+
 #[cfg(test)]
 mod test {
 
@@ -336,9 +344,10 @@ CmaFree:           16000 kB",
             .times(1)
             .returning(move || Ok(MemInfoParserImpl::parse_meminfo_stats(&meminfo)));
         let memory_metrics_collector = MemoryMetricsCollector::new(mock_meminfo_parser);
+        let metrics = memory_metrics_collector.get_memory_metrics().unwrap();
         with_settings!({sort_maps => true}, {
         assert_json_snapshot!(
-                              memory_metrics_collector.get_memory_metrics().unwrap(),
+                              metrics,
                               {"[].value.**.timestamp" => "[timestamp]", "[].value.**.value" => rounded_redaction(5)})
         });
     }
@@ -485,9 +494,10 @@ CmaFree:           16000 kB",
             .times(1)
             .returning(move || Ok(MemInfoParserImpl::parse_meminfo_stats(&meminfo)));
         let memory_metrics_collector = MemoryMetricsCollector::new(mock_meminfo_parser);
+        let metrics = memory_metrics_collector.get_memory_metrics().unwrap();
         with_settings!({sort_maps => true}, {
         assert_json_snapshot!(
-                              memory_metrics_collector.get_memory_metrics().unwrap(),
+                              metrics,
                               {"[].value.**.timestamp" => "[timestamp]", "[].value.**.value" => rounded_redaction(5)})
         });
     }

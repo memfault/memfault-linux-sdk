@@ -25,6 +25,7 @@ use chrono::{Datelike, Local, TimeZone, Utc};
 use eyre::{eyre, Result};
 use futures::future::LocalBoxFuture;
 use ssf::{Service, TaskService};
+use std::net::SocketAddr;
 use syslog_loose::{parse_message_with_year_exact_tz, ProcId, SyslogSeverity};
 use tokio::net::UdpSocket;
 
@@ -38,6 +39,8 @@ use super::levels::{
     LOG_LEVEL_CODE_ERROR, LOG_LEVEL_CODE_INFO, LOG_LEVEL_CODE_NOTICE, LOG_LEVEL_CODE_WARN,
 };
 
+use log::debug;
+
 // From https://www.rfc-editor.org/rfc/rfc5426#section-3.2:
 // "All syslog receivers SHOULD be able to receive datagrams
 // with message sizes of up to and including 2048 octets."
@@ -45,7 +48,8 @@ const MAX_UDP_PACKET_SIZE: usize = 2048;
 
 pub struct SyslogServer {
     sender: LogEntrySender,
-    socket: UdpSocket,
+    bind_address: SocketAddr,
+    socket: Option<UdpSocket>,
 }
 
 impl Service for SyslogServer {
@@ -54,20 +58,42 @@ impl Service for SyslogServer {
     }
 }
 impl TaskService for SyslogServer {
+    fn init(&mut self) -> LocalBoxFuture<'_, Result<(), String>> {
+        Box::pin(async {
+            let socket = UdpSocket::bind(self.bind_address)
+                .await
+                .map_err(|e| format!("could not bind the syslog socket: {}", e))?;
+
+            debug!(
+                "SyslogServer listening on {}",
+                socket.local_addr().unwrap_or(self.bind_address)
+            );
+            self.socket = Some(socket);
+            Ok(())
+        })
+    }
     fn run_task(&mut self) -> LocalBoxFuture<'_, Result<(), String>> {
         Box::pin(async { self.run_once().await.map_err(|e| format!("{}", e)) })
     }
 }
 
 impl SyslogServer {
-    pub fn new(sender: LogEntrySender, socket: UdpSocket) -> Self {
-        Self { sender, socket }
+    pub fn new(sender: LogEntrySender, bind_address: SocketAddr) -> Self {
+        debug!("SyslogServer created for {}", bind_address);
+        Self {
+            sender,
+            bind_address,
+            socket: None,
+        }
     }
     pub async fn run_once(&mut self) -> Result<()> {
-        // From https://www.rfc-editor.org/rfc/rfc5426#section-3.1:
-        // "Each syslog UDP datagram MUST contain only one syslog message"
+        let socket = self
+            .socket
+            .as_ref()
+            .ok_or_else(|| eyre!("syslog socket is not bound"))?;
+
         let mut buf = [0; MAX_UDP_PACKET_SIZE];
-        match self.socket.recv(&mut buf).await {
+        match socket.recv(&mut buf).await {
             Ok(amt) => {
                 let message = String::from_utf8_lossy(&buf[..amt]);
                 match Self::parse_syslog_message(&message, Local) {

@@ -19,6 +19,7 @@ use crate::{
     metrics::{
         core_metrics::{CoreMetricKeys, METRIC_OPERATIONAL_CRASHES},
         hrt::HrtReport,
+        internal_metrics::INTERNAL_METRIC_HRT_READING_COUNT,
         metric_reading::KeyedMetricReading,
         metric_report::{CapturedMetrics, MetricsSet},
         MetricReport, MetricReportType, MetricStringKey, MetricValue, SessionEventMessage,
@@ -151,6 +152,16 @@ impl MetricReportManager {
         if let Some(hrt_report) = &mut self.hrt {
             hrt_report.add_metric(&m);
         }
+        self.add_metric_excluding_hrt(m)
+    }
+
+    /// Adds a metric reading to all ongoing metric reports that capture it,
+    /// but *not* to the HRT report.
+    ///
+    /// Used for metrics that describe the HRT report itself (e.g. its reading
+    /// count) which must never be added back into HRT, or they would inflate
+    /// the very count they measure on the next flush.
+    fn add_metric_excluding_hrt(&mut self, m: KeyedMetricReading) -> Result<()> {
         self.report_iter()
             .try_for_each(|report| report.add_metric(m.clone()))
     }
@@ -401,11 +412,34 @@ impl Handler<SessionEventMessage> for MetricReportManager {
 
 impl Handler<DumpHrtMessage> for MetricReportManager {
     fn deliver(&mut self, m: DumpHrtMessage) -> <DumpHrtMessage as ssf::Message>::Reply {
+        let mut reading_count = None;
         if let Some(hrt) = &mut self.hrt {
             // Replace the HRT report with a new one and write it to disk
             let hrt_report = replace(hrt, HrtReport::new(self.hrt_max_samples_per_min));
+            // Count the readings in the report being flushed before it is moved
+            // into write_report_to_disk. Emitted below, after the borrow of
+            // self.hrt ends.
+            reading_count = Some(
+                hrt_report
+                    .readings
+                    .values()
+                    .map(|data| data.readings.len())
+                    .sum::<usize>(),
+            );
             write_report_to_disk(hrt_report, m.network_config(), m.mar_config())?;
         }
+
+        // Record the number of readings in the just-flushed HRT report as a
+        // histogram sample on the heartbeat report(s) (and any session that
+        // captures it). Deliberately routed through add_metric_excluding_hrt so
+        // this reading is never added to the (now fresh) HRT report itself.
+        if let Some(count) = reading_count {
+            self.add_metric_excluding_hrt(KeyedMetricReading::new_histogram(
+                MetricStringKey::from(INTERNAL_METRIC_HRT_READING_COUNT),
+                count as f64,
+            ))?;
+        }
+
         Ok(())
     }
 }
@@ -510,6 +544,159 @@ mod tests {
                                   {".producer.version" => "[version]", ".start_time" => "[start_time]", ".rollups[].data[].t" => "[timestamp]", ".duration_ms" => "[duration]", ".boottime_duration_ms" => "[duration]"});
         });
     }
+    /// Builds a DumpHrtMessage backed by a real (temporary) staging dir so the
+    /// HRT report can actually be written to disk during the flush.
+    fn dump_hrt_message(tempdir: &TempDir) -> DumpHrtMessage {
+        DumpHrtMessage::new(
+            Arc::new(NetworkConfig::test_fixture()),
+            Arc::new(MarConfig::test_fixture(tempdir.path(), tempdir.path())),
+        )
+    }
+
+    /// The HRT reading-count metric reflects the number of readings actually
+    /// stored in the report (i.e. after rate limiting), not the number offered.
+    #[rstest]
+    fn test_hrt_reading_count_reflects_stored_readings() {
+        let mut metric_report_manager = MetricReportManager::new(
+            true,
+            NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN).unwrap(),
+            false,
+            MetricsSet::empty(),
+        );
+
+        // Offer more readings than the rate limit (750/min) allows.
+        for i in 0..1000 {
+            metric_report_manager
+                .add_metric(KeyedMetricReading::new_counter(
+                    MetricStringKey::from("test_counter"),
+                    i as f64,
+                ))
+                .expect("Failed to add metric reading");
+        }
+
+        let tempdir = TempDir::new().unwrap();
+        metric_report_manager
+            .deliver(dump_hrt_message(&tempdir))
+            .expect("HRT dump should succeed");
+
+        // 750 readings should have been stored and counted, not 1000.
+        let metrics = metric_report_manager.take_heartbeat_metrics();
+        assert_eq!(
+            metrics.get(&MetricStringKey::from(INTERNAL_METRIC_HRT_READING_COUNT)),
+            Some(&MetricValue::Number(750.0))
+        );
+    }
+
+    /// The reading-count metric must never be added to the HRT report itself,
+    /// otherwise it would count itself on the next flush.
+    #[rstest]
+    fn test_hrt_reading_count_excluded_from_hrt() {
+        let mut metric_report_manager = MetricReportManager::new(
+            true,
+            NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN).unwrap(),
+            false,
+            MetricsSet::empty(),
+        );
+
+        for i in 0..10 {
+            metric_report_manager
+                .add_metric(KeyedMetricReading::new_counter(
+                    MetricStringKey::from("test_counter"),
+                    i as f64,
+                ))
+                .expect("Failed to add metric reading");
+        }
+
+        let tempdir = TempDir::new().unwrap();
+        metric_report_manager
+            .deliver(dump_hrt_message(&tempdir))
+            .expect("HRT dump should succeed");
+
+        // The freshly-replaced HRT report must not contain the reading-count metric.
+        let hrt = metric_report_manager
+            .hrt
+            .as_ref()
+            .expect("HRT should be enabled");
+        assert!(!hrt
+            .readings
+            .contains_key(&MetricStringKey::from(INTERNAL_METRIC_HRT_READING_COUNT)));
+    }
+
+    /// The reading-count metric emitted on one flush must not inflate the count
+    /// reported on the next flush (the "infinite loop" / drift hazard)
+    #[rstest]
+    fn test_hrt_reading_count_does_not_self_inflate() {
+        let mut metric_report_manager = MetricReportManager::new(
+            true,
+            NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN).unwrap(),
+            false,
+            MetricsSet::empty(),
+        );
+        let tempdir = TempDir::new().unwrap();
+
+        // First period: 3 readings -> flush -> drain the heartbeat.
+        for i in 0..3 {
+            metric_report_manager
+                .add_metric(KeyedMetricReading::new_counter(
+                    MetricStringKey::from("test_counter"),
+                    i as f64,
+                ))
+                .expect("Failed to add metric reading");
+        }
+        metric_report_manager
+            .deliver(dump_hrt_message(&tempdir))
+            .expect("HRT dump should succeed");
+        metric_report_manager.take_heartbeat_metrics();
+
+        // Second period: exactly 5 readings -> flush.
+        for i in 0..5 {
+            metric_report_manager
+                .add_metric(KeyedMetricReading::new_counter(
+                    MetricStringKey::from("test_counter"),
+                    i as f64,
+                ))
+                .expect("Failed to add metric reading");
+        }
+        metric_report_manager
+            .deliver(dump_hrt_message(&tempdir))
+            .expect("HRT dump should succeed");
+
+        // The second flush should report exactly 5, not 6 (5 + a leaked count metric).
+        let metrics = metric_report_manager.take_heartbeat_metrics();
+        assert_eq!(
+            metrics.get(&MetricStringKey::from(INTERNAL_METRIC_HRT_READING_COUNT)),
+            Some(&MetricValue::Number(5.0))
+        );
+    }
+
+    /// When HRT is disabled, no reading-count metric is emitted at all.
+    #[rstest]
+    fn test_hrt_reading_count_absent_when_hrt_disabled() {
+        let mut metric_report_manager = MetricReportManager::new(
+            false,
+            NonZeroU32::new(1).unwrap(),
+            false,
+            MetricsSet::empty(),
+        );
+
+        for i in 0..5 {
+            metric_report_manager
+                .add_metric(KeyedMetricReading::new_counter(
+                    MetricStringKey::from("test_counter"),
+                    i as f64,
+                ))
+                .expect("Failed to add metric reading");
+        }
+
+        let tempdir = TempDir::new().unwrap();
+        metric_report_manager
+            .deliver(dump_hrt_message(&tempdir))
+            .expect("HRT dump should succeed");
+
+        let metrics = metric_report_manager.take_heartbeat_metrics();
+        assert!(!metrics.contains_key(&MetricStringKey::from(INTERNAL_METRIC_HRT_READING_COUNT)));
+    }
+
     #[rstest]
     fn test_unconfigured_session_name_fails() {
         let mut metric_report_manager = MetricReportManager::default();

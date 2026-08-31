@@ -7,7 +7,6 @@ SRC_URI = " \
     file://0001-add-soname-to-library.patch \
 "
 
-S = "${WORKDIR}/git"
 
 TARGET_CC_ARCH = "${LDFLAGS} ${TUNE_CCARGS}"
 

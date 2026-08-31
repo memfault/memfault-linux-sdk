@@ -8,7 +8,7 @@ PATCHRESOLVE = "noop"
 
 IMAGE_FSTYPES:append = " ext4.gz"
 
-EXTRA_IMAGE_FEATURES ?= "debug-tweaks"
+EXTRA_IMAGE_FEATURES ?= "empty-root-password allow-empty-password allow-root-login post-install-logging"
 
 # Licensing
 LICENSE_FLAGS_ACCEPTED = "commercial_memfaultd"
@@ -21,11 +21,15 @@ do_image_wic[depends] += "mtools-native:do_populate_sysroot dosfstools-native:do
 KERNEL_FEATURES:append = " cgl/features/pstore/pstore.scc cfg/debug/misc/debug-panic-oops.scc"
 
 # systemd system manager
-DISTRO_FEATURES:append = " systemd"
+DISTRO_FEATURES:append = " systemd usrmerge"
 DISTRO_FEATURES:remove = "sysvinit"
 VIRTUAL-RUNTIME_init_manager = "systemd"
-DISTRO_FEATURES_BACKFILL_CONSIDERED:append = "sysvinit"
+DISTRO_FEATURES_OPTED_OUT:append = "sysvinit"
 VIRTUAL-RUNTIME_initscripts = ""
+
+# wrynose added these to DISTRO_FEATURES_DEFAULTS. Nothing here uses them and
+# gobject-introspection-data pulls glib and shared-mime-info into the image.
+DISTRO_FEATURES_OPTED_OUT:append = " gobject-introspection-data pulseaudio"
 
 # (Optional) Disable syslog - memfaultd will persist the logs when wanted
 # https://docs.yoctoproject.org/dev-manual/init-manager.html?highlight=syslog#using-systemd-journald-without-a-traditional-syslog-daemon

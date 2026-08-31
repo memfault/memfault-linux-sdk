@@ -24,7 +24,7 @@ const MMC_CMD_ADTC: u32 = 1 << 5;
 
 const EXT_CSD_SIZE: usize = 512;
 
-pub trait Mmc {
+pub trait Mmc: Send + Sync {
     fn read_lifetime(&self) -> Result<Option<MmcLifeTime>>;
     fn product_name(&self) -> Result<String>;
     fn manufacturer_id(&self) -> Result<String>;
@@ -222,6 +222,7 @@ impl Mmc for MmcImpl {
     }
 }
 
+#[derive(Clone, Copy)]
 enum LifetimeSource {
     Sysfs,
     ExtCsd,

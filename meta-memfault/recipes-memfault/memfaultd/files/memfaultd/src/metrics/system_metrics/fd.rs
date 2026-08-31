@@ -29,11 +29,8 @@ use nom::{
     IResult,
 };
 
-use std::{
-    fs::File,
-    io::{BufReader, Read},
-    path::Path,
-};
+use std::fs::read_to_string;
+use std::path::Path;
 
 #[cfg(test)]
 use std::iter::zip;
@@ -71,11 +68,8 @@ impl FdMetricCollector {
 
     pub fn get_fd_metrics(&mut self) -> Result<Vec<KeyedMetricReading>> {
         let path = Path::new(FILE_NR_PATH);
-        let file = File::open(path)?;
-        let mut reader = BufReader::new(file);
 
-        let mut buf = String::new();
-        reader.read_to_string(&mut buf)?;
+        let buf = read_to_string(path)?;
 
         self.calculate_fd_metrics(&buf)
     }

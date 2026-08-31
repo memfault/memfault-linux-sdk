@@ -6,7 +6,7 @@ SRC_URI = " \
     file://statsd-sampleapp-python.py \
 "
 
-S = "${WORKDIR}"
+S = "${UNPACKDIR}"
 
 DEPENDS = " \
     python3-statsd \

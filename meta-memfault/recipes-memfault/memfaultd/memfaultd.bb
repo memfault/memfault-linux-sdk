@@ -16,9 +16,15 @@ SRC_URI = " \
     file://VERSION \
 "
 
-S = "${WORKDIR}"
+S = "${UNPACKDIR}"
 
-inherit cargo_bin update-rc.d systemd
+inherit cargo_bin update-rc.d systemd pkgconfig
+
+# rustc embeds the absolute build path in panic-location strings, which
+# -ffile-prefix-map doesn't cover; cosmetic only.
+INSANE_SKIP:${PN} += "buildpaths"
+INSANE_SKIP:${PN}-dbg += "buildpaths"
+INSANE_SKIP:${PN}-dev += "buildpaths"
 
 SYSTEMD_SERVICE:${PN} = "memfaultd.service"
 INITSCRIPT_NAME = "memfaultd"
@@ -28,7 +34,7 @@ INITSCRIPT_PARAMS = "defaults 15"
 
 DEPENDS = "zlib"
 
-PACKAGECONFIG ??= "coredump swupdate logging"
+PACKAGECONFIG ??= "coredump swupdate logging chunks-relay"
 PACKAGECONFIG[coredump] = ""
 PACKAGECONFIG[collectd] = ""
 PACKAGECONFIG[ebpf] = ""
@@ -36,6 +42,7 @@ PACKAGECONFIG[swupdate] = ""
 PACKAGECONFIG[logging] = ""
 PACKAGECONFIG[openssl-tls] = ""
 PACKAGECONFIG[syslog] = ""
+PACKAGECONFIG[chunks-relay] = ""
 
 # Tell Cargo to disable all features and only enable the ones we will use.
 EXTRA_CARGO_FLAGS = "--no-default-features"
@@ -126,16 +133,24 @@ DEPENDS:append = " \
     d)} \
 "
 
+# Chunks relay (write-chunks)
+CARGO_FEATURES:append = " \
+    ${@bb.utils.contains('PACKAGECONFIG', 'chunks-relay', \
+        'chunks-relay', \
+        '', \
+    d)} \
+"
+
 # Network access required to download Cargo dependencies
 do_compile[network] = "1"
 
 do_install:append() {
     # Start/Stop script for Systemd
     install -d ${D}/${systemd_unitdir}/system
-    install -m 0644 ${WORKDIR}/memfaultd.service ${D}/${systemd_unitdir}/system
+    install -m 0644 ${UNPACKDIR}/memfaultd.service ${D}/${systemd_unitdir}/system
     # Start/Stop script for SysVInit
     install -d ${D}${sysconfdir}/init.d
-    install -m 755 ${WORKDIR}/memfaultd.init ${D}${sysconfdir}/init.d/memfaultd
+    install -m 755 ${UNPACKDIR}/memfaultd.init ${D}${sysconfdir}/init.d/memfaultd
 
     # Cargo will build two binaries but we know they are the same.
     # To save space we replace memfaultctl with a symbolic link to memfaultd.

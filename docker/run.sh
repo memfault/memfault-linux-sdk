@@ -2,7 +2,7 @@
 
 # NB: YOCTO_RELEASE is searched and replaced by linux_sdk_release.py during archival.
 # Treat is as generated code, or update linux_sdk_release.py accordingly.
-YOCTO_RELEASE="kirkstone"
+YOCTO_RELEASE="wrynose"
 
 command=""
 extramounts=""

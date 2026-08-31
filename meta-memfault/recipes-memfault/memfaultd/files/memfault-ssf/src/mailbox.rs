@@ -7,7 +7,7 @@ use std::{
     sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender, TrySendError},
 };
 
-use crate::{Envelope, Handler, Message, Service};
+use crate::{AsyncEnvelope, AsyncHandler, Envelope, Handler, Message, Service, TaskEnvelope};
 
 use tokio::sync::mpsc as tokio_mpsc;
 
@@ -119,11 +119,11 @@ impl<S: Service> Clone for BoundedMailbox<S> {
 }
 
 pub struct BoundedTaskMailbox<S: Service> {
-    sender: tokio_mpsc::Sender<Envelope<S>>,
+    sender: tokio_mpsc::Sender<TaskEnvelope<S>>,
 }
 
 impl<S: Service> BoundedTaskMailbox<S> {
-    pub fn create(channel_size: usize) -> (Self, tokio_mpsc::Receiver<Envelope<S>>) {
+    pub fn create(channel_size: usize) -> (Self, tokio_mpsc::Receiver<TaskEnvelope<S>>) {
         let (sender, receiver) = tokio_mpsc::channel(channel_size);
         (BoundedTaskMailbox { sender }, receiver)
     }
@@ -134,7 +134,7 @@ impl<S: Service> BoundedTaskMailbox<S> {
         S: Handler<M>,
     {
         self.sender
-            .try_send(Envelope::wrap(message))
+            .try_send(Envelope::wrap(message).into())
             .map_err(|e| match e {
                 tokio_mpsc::error::TrySendError::Full(_) => MailboxError::SendChannelFull,
                 tokio_mpsc::error::TrySendError::Closed(_) => MailboxError::SendChannelClosed,
@@ -148,12 +148,75 @@ impl<S: Service> BoundedTaskMailbox<S> {
     {
         let (envelope, ack_receiver) = Envelope::wrap_with_reply(message);
 
-        self.sender.try_send(envelope).map_err(|e| match e {
+        self.sender.try_send(envelope.into()).map_err(|e| match e {
             tokio_mpsc::error::TrySendError::Full(_) => MailboxError::SendChannelFull,
             tokio_mpsc::error::TrySendError::Closed(_) => MailboxError::SendChannelClosed,
         })?;
 
         ack_receiver.recv().map_err(|_e| MailboxError::NoResponse)
+    }
+
+    pub fn try_send_and_forget_async<M>(&self, message: M) -> Result<(), MailboxError>
+    where
+        M: Message,
+        S: AsyncHandler<M>,
+    {
+        self.sender
+            .try_send(AsyncEnvelope::wrap(message).into())
+            .map_err(|e| match e {
+                tokio_mpsc::error::TrySendError::Full(_) => MailboxError::SendChannelFull,
+                tokio_mpsc::error::TrySendError::Closed(_) => MailboxError::SendChannelClosed,
+            })
+    }
+
+    /// Panics if called from a runtime context.
+    pub fn blocking_send_and_wait_for_reply_async<M>(
+        &self,
+        message: M,
+    ) -> Result<M::Reply, MailboxError>
+    where
+        M: Message,
+        S: AsyncHandler<M>,
+    {
+        let (envelope, ack_receiver) = AsyncEnvelope::wrap_with_reply(message);
+
+        self.sender.try_send(envelope.into()).map_err(|e| match e {
+            tokio_mpsc::error::TrySendError::Full(_) => MailboxError::SendChannelFull,
+            tokio_mpsc::error::TrySendError::Closed(_) => MailboxError::SendChannelClosed,
+        })?;
+
+        ack_receiver
+            .blocking_recv()
+            .map_err(|_e| MailboxError::NoResponse)
+    }
+
+    pub async fn send_and_forget_async<M>(&self, message: M) -> Result<(), MailboxError>
+    where
+        M: Message,
+        S: AsyncHandler<M>,
+    {
+        self.sender
+            .send(AsyncEnvelope::wrap(message).into())
+            .await
+            .map_err(|_e| MailboxError::SendChannelClosed)
+    }
+
+    pub async fn send_and_wait_for_reply_async<M>(
+        &self,
+        message: M,
+    ) -> Result<M::Reply, MailboxError>
+    where
+        M: Message,
+        S: AsyncHandler<M>,
+    {
+        let (envelope, ack_receiver) = AsyncEnvelope::wrap_with_reply(message);
+
+        self.sender
+            .send(envelope.into())
+            .await
+            .map_err(|_e| MailboxError::SendChannelClosed)?;
+
+        ack_receiver.await.map_err(|_e| MailboxError::NoResponse)
     }
 }
 
@@ -162,5 +225,59 @@ impl<S: Service> Clone for BoundedTaskMailbox<S> {
         BoundedTaskMailbox {
             sender: self.sender.clone(),
         }
+    }
+}
+
+impl<S: Service> BoundedTaskMailbox<S> {
+    /// A view of this mailbox that resolves to `AsyncHandler` instead of
+    /// `Handler` when erased into a `MsgMailbox`.
+    pub fn for_async(&self) -> AsyncBoundedTaskMailbox<S> {
+        AsyncBoundedTaskMailbox(self.clone())
+    }
+}
+
+pub struct AsyncBoundedTaskMailbox<S: Service>(pub(crate) BoundedTaskMailbox<S>);
+
+impl<S: Service> AsyncBoundedTaskMailbox<S> {
+    pub fn send_and_forget<M>(&self, message: M) -> Result<(), MailboxError>
+    where
+        M: Message,
+        S: AsyncHandler<M>,
+    {
+        self.0.try_send_and_forget_async(message)
+    }
+
+    /// Panics if called from a runtime context.
+    pub fn send_and_wait_for_reply<M>(&self, message: M) -> Result<M::Reply, MailboxError>
+    where
+        M: Message,
+        S: AsyncHandler<M>,
+    {
+        self.0.blocking_send_and_wait_for_reply_async(message)
+    }
+
+    pub async fn send_and_forget_async<M>(&self, message: M) -> Result<(), MailboxError>
+    where
+        M: Message,
+        S: AsyncHandler<M>,
+    {
+        self.0.send_and_forget_async(message).await
+    }
+
+    pub async fn send_and_wait_for_reply_async<M>(
+        &self,
+        message: M,
+    ) -> Result<M::Reply, MailboxError>
+    where
+        M: Message,
+        S: AsyncHandler<M>,
+    {
+        self.0.send_and_wait_for_reply_async(message).await
+    }
+}
+
+impl<S: Service> Clone for AsyncBoundedTaskMailbox<S> {
+    fn clone(&self) -> Self {
+        AsyncBoundedTaskMailbox(self.0.clone())
     }
 }

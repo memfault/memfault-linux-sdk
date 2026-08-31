@@ -14,7 +14,8 @@ from .qemu import QEMU
 # If you want to see the crashes on the server, remember to upload the symbols:
 # qemu$ memfault --org $MEMFAULT_E2E_ORGANIZATION_SLUG --org-token $MEMFAULT_E2E_ORG_TOKEN \
 #   --project $MEMFAULT_E2E_PROJECT_SLUG upload-yocto-symbols
-#   --image tmp/deploy/images/qemuarm64/base-image-qemuarm64.tar.bz2
+#   --image tmp/deploy/images/qemuarm64/base-image-qemuarm64.rootfs.tar.bz2
+#   --dbg-image tmp/deploy/images/qemuarm64/base-image-qemuarm64.rootfs-dbg.tar.bz2
 def test(qemu: QEMU, memfault_service_tester: MemfaultServiceTester, qemu_device_id: str) -> None:
     # Stream memfaultd's log and wait for memfaultd to start
     qemu.exec_cmd("journalctl --follow --unit=memfaultd.service &")

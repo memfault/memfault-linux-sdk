@@ -34,7 +34,7 @@
 //!   sent to the mock.
 //!
 
-use std::any::Any;
+use std::{any::Any, future::pending};
 
 mod envelope;
 mod mailbox;
@@ -75,7 +75,9 @@ pub trait TaskService: Service {
     fn init(&mut self) -> LocalBoxFuture<'_, Result<(), String>> {
         Box::pin(async { Ok(()) })
     }
-    fn run_task(&mut self) -> LocalBoxFuture<'_, Result<(), String>>;
+    fn run_task(&mut self) -> LocalBoxFuture<'_, Result<(), String>> {
+        Box::pin(pending())
+    }
 }
 
 /// Any type that will be sent between services needs to implement this trait.
@@ -94,6 +96,10 @@ pub trait Handler<M: Message> {
     fn deliver(&mut self, m: M) -> M::Reply;
 }
 
+pub trait AsyncHandler<M: Message> {
+    fn deliver_async(&mut self, m: M) -> impl std::future::Future<Output = M::Reply> + '_;
+}
+
 /// Blanket implementation of Message for any Vec<M>. You lose the return value.
 impl<M: Message> Message for Vec<M> {
     type Reply = ();
@@ -104,6 +110,15 @@ impl<M: Message, S: Handler<M>> Handler<Vec<M>> for S {
     fn deliver(&mut self, messages: Vec<M>) {
         for m in messages {
             self.deliver(m);
+        }
+    }
+}
+
+/// Blanket implementation of delivering a `Vec<Message>` to an `AsyncHandler<Message>`.
+impl<M: Message, S: AsyncHandler<M>> AsyncHandler<Vec<M>> for S {
+    async fn deliver_async(&mut self, messages: Vec<M>) {
+        for m in messages {
+            self.deliver_async(m).await;
         }
     }
 }

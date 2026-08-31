@@ -5,7 +5,8 @@ include conf/machine/include/soc-family.inc
 
 EXTRA_IMAGEDEPENDS:append = " virtual/bootloader"
 PREFERRED_PROVIDER_virtual/bootloader = "u-boot"
-IMAGE_BOOT_FILES = "u-boot.bin boot.scr"
+# "boot.scr" was dropped; nothing ever generated it.
+IMAGE_BOOT_FILES = "u-boot.bin ${KERNEL_IMAGETYPE} u-boot-initial-env.bin;uboot.env"
 
 # Support runqemu script
 QB_DEFAULT_FSTYPE = "wic"

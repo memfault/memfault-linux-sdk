@@ -8,7 +8,7 @@ SRC_URI = " \
     file://memfault-attribute-setter.service \
 "
 
-S = "${WORKDIR}"
+S = "${UNPACKDIR}"
 
 RDEPENDS:${PN} = " \
     memfaultd \
@@ -22,10 +22,10 @@ do_install () {
     install -d ${D}/${systemd_unitdir}/system/memfaultd.service.d 
     
     # Install systemd unit file
-    install -m 0644 ${WORKDIR}/memfault-attribute-setter.service ${D}/${systemd_unitdir}/system/
+    install -m 0644 ${UNPACKDIR}/memfault-attribute-setter.service ${D}/${systemd_unitdir}/system/
 
     # Install drop-in file that establishes that memfaultd wants memfault-attribute-setter     
-    install -m 0644 ${WORKDIR}/10-memfault-attribute-setter.conf ${D}/${systemd_unitdir}/system/memfaultd.service.d     
+    install -m 0644 ${UNPACKDIR}/10-memfault-attribute-setter.conf ${D}/${systemd_unitdir}/system/memfaultd.service.d     
     
 
 }

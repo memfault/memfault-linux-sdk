@@ -11,7 +11,7 @@ DEPENDS = " \
     statsd-c-client \
 "
 
-S = "${WORKDIR}"
+S = "${UNPACKDIR}"
 
 TARGET_CC_ARCH = "${LDFLAGS} ${TUNE_CCARGS}"
 

@@ -1,7 +1,7 @@
 DESCRIPTION = "memfault-device-info application"
 LICENSE = "CLOSED"
 
-S = "${WORKDIR}"
+S = "${UNPACKDIR}"
 
 do_compile() {
     echo "#!/bin/sh" > ${S}/memfault-device-info

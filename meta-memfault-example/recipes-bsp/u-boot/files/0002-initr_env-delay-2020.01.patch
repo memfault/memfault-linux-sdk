@@ -1,3 +1,5 @@
+Upstream-Status: Inappropriate [delays env init until after block devices are up, needed for the Memfault Linux SDK's FAT-based env on qemuarm/qemuarm64]
+
 diff -Naur a/common/board_r.c b/common/board_r.c
 --- a/common/board_r.c	2022-08-31 12:10:07.169978844 +0100
 +++ b/common/board_r.c	2022-08-31 12:15:33.922686994 +0100

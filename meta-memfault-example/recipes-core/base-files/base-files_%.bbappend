@@ -6,6 +6,6 @@ SRC_URI += " \
 "
 
 do_install:append () {
-    cat ${WORKDIR}/fstab.append >> ${D}${sysconfdir}/fstab
-    cat ${WORKDIR}/hosts.append >> ${D}${sysconfdir}/hosts
+    cat ${UNPACKDIR}/fstab.append >> ${D}${sysconfdir}/fstab
+    cat ${UNPACKDIR}/hosts.append >> ${D}${sysconfdir}/hosts
 }

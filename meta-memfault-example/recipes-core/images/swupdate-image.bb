@@ -16,17 +16,17 @@ IMAGE_DEPENDS = "base-image"
 SWUPDATE_IMAGES = "base-image-${MACHINE}"
 
 python() {
-  d.appendVarFlag("SWUPDATE_IMAGES_FSTYPES", f"base-image-{d.getVar('MACHINE')}", ".ext4.gz")
+  d.appendVarFlag("SWUPDATE_IMAGES_FSTYPES", f"base-image-{d.getVar('MACHINE')}", ".rootfs.ext4.gz")
 }
 
 do_swupdate_update_swdescription() {
     # Yocto dependency checking can be broken if we modify the source file
     # directly during the build process, create a 'output' file to modify
-    cp ${WORKDIR}/sw-description.in ${WORKDIR}/sw-description
-    sed -i -e "s%__MEMFAULT_SOFTWARE_VERSION%${MEMFAULT_SOFTWARE_VERSION}%" ${WORKDIR}/sw-description
-    sed -i -e "s%__MEMFAULT_HARDWARE_VERSION%${MEMFAULT_HARDWARE_VERSION}%" ${WORKDIR}/sw-description
-    sed -i -e "s%__OTA_PARTITION_A%${OTA_PARTITION_A}%" ${WORKDIR}/sw-description
-    sed -i -e "s%__OTA_PARTITION_B%${OTA_PARTITION_B}%" ${WORKDIR}/sw-description
-    sed -i -e "s%__MACHINE%${MACHINE}%" ${WORKDIR}/sw-description
+    cp ${UNPACKDIR}/sw-description.in ${UNPACKDIR}/sw-description
+    sed -i -e "s%__MEMFAULT_SOFTWARE_VERSION%${MEMFAULT_SOFTWARE_VERSION}%" ${UNPACKDIR}/sw-description
+    sed -i -e "s%__MEMFAULT_HARDWARE_VERSION%${MEMFAULT_HARDWARE_VERSION}%" ${UNPACKDIR}/sw-description
+    sed -i -e "s%__OTA_PARTITION_A%${OTA_PARTITION_A}%" ${UNPACKDIR}/sw-description
+    sed -i -e "s%__OTA_PARTITION_B%${OTA_PARTITION_B}%" ${UNPACKDIR}/sw-description
+    sed -i -e "s%__MACHINE%${MACHINE}%" ${UNPACKDIR}/sw-description
 }
 addtask do_swupdate_update_swdescription before do_swuimage after do_unpack do_prepare_recipe_sysroot

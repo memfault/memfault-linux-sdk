@@ -41,7 +41,7 @@ RUN echo " \
     alias cc='rm -rf /home/build/yocto/build/conf'\n\
     alias ct='rm -rf /home/build/yocto/build/tmp'\n\
     alias build-memfault-cli-local='pip3 install /home/build/memfault-cli-dist/memfault-cli-*.tar.gz'\n\
-    alias upload-yocto-symbols='memfault --org \$MEMFAULT_E2E_ORGANIZATION_SLUG --org-token \$MEMFAULT_E2E_ORG_TOKEN --project \$MEMFAULT_E2E_PROJECT_SLUG upload-yocto-symbols --image tmp/deploy/images/qemuarm64/base-image-qemuarm64.tar.bz2 --dbg-image tmp/deploy/images/qemuarm64/base-image-qemuarm64-dbg.tar.bz2'\n\
+    alias upload-yocto-symbols='memfault --org \$MEMFAULT_E2E_ORGANIZATION_SLUG --org-token \$MEMFAULT_E2E_ORG_TOKEN --project \$MEMFAULT_E2E_PROJECT_SLUG upload-yocto-symbols --image tmp/deploy/images/qemuarm64/base-image-qemuarm64.rootfs.tar.bz2 --dbg-image tmp/deploy/images/qemuarm64/base-image-qemuarm64.rootfs-dbg.tar.bz2'\n\
     alias upload-ota-payload='memfault --org \$MEMFAULT_E2E_ORGANIZATION_SLUG --org-token \$MEMFAULT_E2E_ORG_TOKEN --project \$MEMFAULT_E2E_PROJECT_SLUG upload-ota-payload --hardware-version \${MEMFAULT_HARDWARE_VERSION} --software-type \${MEMFAULT_SOFTWARE_TYPE} --software-version 0.0.2 tmp/deploy/images/qemuarm64/swupdate-image-qemuarm64.swu' \n\
     " >> /home/build/.bashrc
 

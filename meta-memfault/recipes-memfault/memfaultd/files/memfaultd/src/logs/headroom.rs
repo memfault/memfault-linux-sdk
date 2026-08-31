@@ -373,11 +373,11 @@ mod tests {
     }
 
     impl LogFile for FakeLogFileControl {
-        fn write_json_line(&mut self, json: LogEntry) -> Result<()> {
+        fn write_json_line(&mut self, json: &LogEntry) -> Result<()> {
             if self.write_should_fail {
                 Err(eyre!("Write failed"))
             } else {
-                self.logs_written.push(serde_json::to_string(&json)?);
+                self.logs_written.push(serde_json::to_string(json)?);
                 Ok(())
             }
         }

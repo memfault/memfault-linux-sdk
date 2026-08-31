@@ -12,7 +12,7 @@ use eyre::{eyre, Context};
 use log::{debug, error, info, trace, warn};
 use rand::{thread_rng, Rng};
 
-use ssf::{BroadcastMsgMailbox, MsgMailbox, Scheduler, ServiceManager};
+use ssf::{BroadcastMsgMailbox, MsgMailbox, Scheduler, ServiceManagerSync};
 
 #[cfg(feature = "chunks-relay")]
 use crate::chunk_relay::{
@@ -146,7 +146,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         )
     })?;
 
-    let mut system = ServiceManager::default();
+    let mut system = ServiceManagerSync::default();
 
     // Metric store
     let extra_histo_min_max =
@@ -324,18 +324,22 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
         }
     }
 
-    // Start statsd server
     if config.statsd_server_enabled() && config.config_file.enable_data_collection {
         if let Ok(bind_address) = config.statsd_server_address() {
             let legacy_gauge_aggregation = config.statsd_server_legacy_gauge_aggregation_enabled();
             let legacy_key_names = config.statsd_server_legacy_key_names_enabled();
             let metrics_mailbox = metrics_mbox.clone().into();
+
             spawn(move || {
-                let statsd_server =
-                    StatsDServer::new(legacy_gauge_aggregation, legacy_key_names, metrics_mailbox);
-                if let Err(e) = statsd_server.run(bind_address) {
+                let mut statsd_server = StatsDServer::new(
+                    legacy_gauge_aggregation,
+                    legacy_key_names,
+                    metrics_mailbox,
+                    bind_address,
+                );
+                if let Err(e) = statsd_server.run() {
                     warn!("Couldn't start StatsD server: {}", e);
-                };
+                }
             });
         }
     }
@@ -590,25 +594,17 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                 }
                 #[cfg(feature = "syslog")]
                 LogSource::Syslog(syslog_config) => {
-                    use crate::logs::{
-                        log_collector::LogEntrySender,
-                        syslog::SyslogServer
-                    };
-                    use tokio::net::UdpSocket;
+                    use crate::logs::{log_collector::LogEntrySender, syslog::SyslogServer};
 
                     let log_mbox = log_collector_mbox.clone();
                     let sender = LogEntrySender::new(log_mbox.into());
-                    match std::net::UdpSocket::bind(syslog_config.bind_address) {
-                        Ok(socket) => {
-                            match UdpSocket::from_std(socket) {
-                                Ok(socket) => {
-                                    system.spawn_bounded_service_thread(SyslogServer::new(sender, socket), 128);
-                                },
-                                Err(e) => warn!("could not create an unblocking tokio socket from a blocking std::net socket: {}", e),
-                            }
-                        }
-                        Err(e) => warn!("could not connect to the configured UDP bind address: {}", e)
-                    }
+                    let bind_address = syslog_config.bind_address;
+
+                    let spawn_fn = move || SyslogServer::new(sender, bind_address);
+
+                    debug!("Log source is syslog, spawning SyslogServer for {}", bind_address);
+                    system.spawn_bounded_task_service_thread_with_fn(spawn_fn, 128);
+                    debug!("SyslogServer service thread spawned");
                 }
                 #[cfg(not(feature = "syslog"))]
                 LogSource::Syslog(_) => warn!("logs.source configuration set to \"syslog\", but memfaultd was not compiled with the syslog feature. Logs will not be collected."),

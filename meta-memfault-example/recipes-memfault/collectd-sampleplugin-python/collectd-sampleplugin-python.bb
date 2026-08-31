@@ -6,11 +6,13 @@ SRC_URI = " \
     file://sampleplugin.py \
 "
 
-RDEPENDS:${PN} = "collectd python3"
+# python3 is an alias for python3-modules, which recommends every stdlib
+# subpackage; the plugin only needs builtins.
+RDEPENDS:${PN} = "collectd python3-core"
 
 do_install () {
     install -d ${D}/${libdir}/collectd
-    install -m 0755 ${WORKDIR}/sampleplugin.py ${D}/${libdir}/collectd
+    install -m 0755 ${UNPACKDIR}/sampleplugin.py ${D}/${libdir}/collectd
 }
 
 FILES:${PN} = "${libdir}/collectd/*"

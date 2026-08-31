@@ -1,0 +1,24 @@
+Upstream-Status: Inappropriate [board-specific defconfig change for the Memfault Linux SDK's example integration]
+
+# Replaces bootstd's default `bootflow scan`, which boots extlinux.conf's
+# static root=. Can't be a bootcmd= line in the board .env: CONFIG_USE_BOOTCOMMAND
+# already puts one in default_environment[] and the first match wins.
+
+diff -Naur a/configs/qemu_arm64_defconfig b/configs/qemu_arm64_defconfig
+--- a/configs/qemu_arm64_defconfig
++++ b/configs/qemu_arm64_defconfig
+@@ -80,3 +80,5 @@
+ CONFIG_GENERATE_SMBIOS_TABLE_VERBOSE=y
+ CONFIG_UTHREAD=y
+ CONFIG_UNIT_TEST=y
++CONFIG_USE_BOOTCOMMAND=y
++CONFIG_BOOTCOMMAND="run memfault_boot"
+diff -Naur a/configs/qemu_arm_defconfig b/configs/qemu_arm_defconfig
+--- a/configs/qemu_arm_defconfig
++++ b/configs/qemu_arm_defconfig
+@@ -72,3 +72,5 @@
+ CONFIG_TPM=y
+ CONFIG_UTHREAD=y
+ CONFIG_UNIT_TEST=y
++CONFIG_USE_BOOTCOMMAND=y
++CONFIG_BOOTCOMMAND="run memfault_boot"

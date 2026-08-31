@@ -21,9 +21,9 @@ SRC_URI:append = " file://fluent-bit.service file://fluent-bit.conf"
 
 do_install:append() {
   install -d ${D}/${systemd_unitdir}/system
-  install -m 0644 ${WORKDIR}/${PN}.service ${D}${systemd_unitdir}/system
+  install -m 0644 ${UNPACKDIR}/${PN}.service ${D}${systemd_unitdir}/system
 
   # Remove default config file and install our own in place
   rm ${D}/${sysconfdir}/${PN}/*
-  install -m 0644 ${WORKDIR}/${PN}.conf ${D}${sysconfdir}/${PN}
+  install -m 0644 ${UNPACKDIR}/${PN}.conf ${D}${sysconfdir}/${PN}
 }

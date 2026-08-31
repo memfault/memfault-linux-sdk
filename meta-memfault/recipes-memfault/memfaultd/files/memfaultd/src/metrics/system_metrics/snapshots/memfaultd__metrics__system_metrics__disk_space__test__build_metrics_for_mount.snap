@@ -1,0 +1,25 @@
+---
+source: memfaultd/src/metrics/system_metrics/disk_space.rs
+assertion_line: 455
+expression: metrics
+---
+[
+  {
+    "name": "disk_space/mmcblk0p2/free_bytes",
+    "value": {
+      "Histogram": {
+        "value": 262144.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "disk_space/mmcblk0p2/used_bytes",
+    "value": {
+      "Histogram": {
+        "value": 786432.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  }
+]

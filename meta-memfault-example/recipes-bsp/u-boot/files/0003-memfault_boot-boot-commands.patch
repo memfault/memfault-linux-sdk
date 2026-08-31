@@ -1,3 +1,5 @@
+Upstream-Status: Inappropriate [adds a Memfault-specific boot target, not applicable upstream]
+
 # Add memfault_boot boot command to u-boot environment, run as the first boot command
 # Kernel command line enables the pstore/ramoops functionality with:
 #   mem=384M : restrict usable memory in kernel to first 384MB

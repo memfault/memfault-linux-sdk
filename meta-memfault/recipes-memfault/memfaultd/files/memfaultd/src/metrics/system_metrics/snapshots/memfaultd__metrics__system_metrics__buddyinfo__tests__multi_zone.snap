@@ -1,0 +1,105 @@
+---
+source: memfaultd/src/metrics/system_metrics/buddyinfo.rs
+expression: readings
+---
+[
+  {
+    "name": "memory/buddyinfo/order_0",
+    "value": {
+      "Histogram": {
+        "value": 1259.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/buddyinfo/order_1",
+    "value": {
+      "Histogram": {
+        "value": 1088.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/buddyinfo/order_2",
+    "value": {
+      "Histogram": {
+        "value": 753.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/buddyinfo/order_3",
+    "value": {
+      "Histogram": {
+        "value": 470.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/buddyinfo/order_4",
+    "value": {
+      "Histogram": {
+        "value": 289.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/buddyinfo/order_5",
+    "value": {
+      "Histogram": {
+        "value": 150.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/buddyinfo/order_6",
+    "value": {
+      "Histogram": {
+        "value": 82.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/buddyinfo/order_7",
+    "value": {
+      "Histogram": {
+        "value": 38.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/buddyinfo/order_8",
+    "value": {
+      "Histogram": {
+        "value": 18.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/buddyinfo/order_9",
+    "value": {
+      "Histogram": {
+        "value": 9.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "memory/buddyinfo/order_10",
+    "value": {
+      "Histogram": {
+        "value": 124.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  }
+]

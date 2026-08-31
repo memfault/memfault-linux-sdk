@@ -1,0 +1,14 @@
+{
+  "coredump": {
+    "attributes": [
+      { "key": "channel", "value": "beta" },
+      { "key": "empty_string", "value": "" },
+      { "key": "positive_int", "value": 42 },
+      { "key": "negative_int", "value": -7 },
+      { "key": "zero", "value": 0 },
+      { "key": "float_value", "value": 2.5 },
+      { "key": "dev_mode_on", "value": true },
+      { "key": "dev_mode_off", "value": false }
+    ]
+  }
+}
