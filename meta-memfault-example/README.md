@@ -79,9 +79,9 @@ This example includes a [`Dockerfile`](/docker/Dockerfile) and a
 [`run.sh` script](/docker/run.sh) to create a container.
 
 ```shell
-$ cd /path/to/memfault-linux-sdk/docker
-$ MEMFAULT_PROJECT_KEY=<YOUR_PROJECT_KEY> ./run.sh -b
-$ bitbake memfault-image
+cd /path/to/memfault-linux-sdk/docker
+MEMFAULT_PROJECT_KEY=<YOUR_PROJECT_KEY> ./run.sh -b
+bitbake memfault-image
 ```
 
 Note that building the image for the first time will take around two hours.
@@ -122,7 +122,7 @@ few core files:
 - `u-boot.bin` - This is the DAS U-Boot binary, it is outside the Yocto
   filesystem due to limitations in the standard libvirt QEMU virtual machine.
   More usually this file would be in the first partition of the disk image
-- `base-image-qemuarm64.wic` - This is the main disk image, it contains 3
+- `base-image-qemuarm64.rootfs.wic` - This is the main disk image, it contains 3
   partitions:
   - `/dev/vda1`, vfat, contains the u-boot runtime configuration
   - `/dev/vda2`, ext4, the rootfs image
@@ -141,8 +141,8 @@ installed in the host Docker container. We provide a convenient wrapper script
 around QEMU in [`test_scripts/runqemu.py`](/test_scripts/runqemu.py). You can
 run that script directly or invoke it using our alias:
 
-```
-$ q
+```shell
+q
 ```
 
 Note that the Yocto built-in `runqemu` is not compatible with our example

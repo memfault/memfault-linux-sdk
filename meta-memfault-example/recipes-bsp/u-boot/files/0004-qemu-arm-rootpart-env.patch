@@ -1,0 +1,16 @@
+Upstream-Status: Inappropriate [board-specific default env for the Memfault Linux SDK's example integration]
+
+# swupdate flips `rootpart`, so boot reads it back to pick the slot, kernel
+# included. Both vars go in the compiled-in default env because bootstd never
+# runs saveenv: with no seeded `rootpart`, libubootenv has nothing to fall back
+# to and fw_printenv/fw_setenv fail with "Cannot initialize environment".
+
+diff -Naur a/board/emulation/qemu-arm/qemu-arm.env b/board/emulation/qemu-arm/qemu-arm.env
+--- a/board/emulation/qemu-arm/qemu-arm.env
++++ b/board/emulation/qemu-arm/qemu-arm.env
+@@ -13,3 +13,5 @@
+ kernel_addr_r=0x40400000
+ ramdisk_addr_r=0x44000000
+ boot_targets=qfw usb scsi virtio nvme dhcp
++rootpart=2
++memfault_boot=virtio scan; env exists rootpart || setenv rootpart 2; echo Booting rootfs from /dev/vda${rootpart}; setenv bootargs "root=/dev/vda${rootpart} rootwait mem=384M ramoops.mem_address=0x58000000 ramoops.mem_size=0x20000"; if test -e virtio 0:${rootpart} /boot/Image; then load virtio 0:${rootpart} ${kernel_addr_r} /boot/Image; booti ${kernel_addr_r} - ${fdt_addr}; else load virtio 0:${rootpart} ${kernel_addr_r} /boot/zImage; bootz ${kernel_addr_r} - ${fdt_addr}; fi

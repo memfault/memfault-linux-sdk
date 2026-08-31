@@ -121,10 +121,7 @@ where
         let reading_time = T::now();
 
         let mut cpu_metric_readings = vec![];
-        for line in reader.lines() {
-            // Discard errors - the assumption here is that we are only parsing
-            // lines that follow the specified format and expect other lines in the file to error
-            let line = line?;
+        for line in reader.lines().map_while(Result::ok) {
             let line = line.trim();
             if let Ok(cpu_stats) = Self::parse_proc_stat_line_cpu(line) {
                 no_parseable_lines = false;
@@ -184,7 +181,7 @@ where
     ///
     /// The 7 floats represent how much time since boot the cpu has
     /// spent in the "user", "nice", "system", "idle", "iowait", "irq",
-    /// "softirq", in that order    
+    /// "softirq", in that order
     ///
     /// Example of a valid parse-able line:
     ///
@@ -334,7 +331,7 @@ mod test {
     #[case("cpu 1000 5 0 0 2 0 0", "test_basic_line")]
     fn test_process_valid_cpu_proc_stat_line(#[case] cpu_stat_line: &str, #[case] test_name: &str) {
         assert_json_snapshot!(test_name,
-                              CpuMetricCollector::<TestInstant>::parse_proc_stat_line_cpu(cpu_stat_line).unwrap(), 
+                              CpuMetricCollector::<TestInstant>::parse_proc_stat_line_cpu(cpu_stat_line).unwrap(),
                               {"[].value.**.timestamp" => "[timestamp]", "[].value.**.value" => rounded_redaction(5)})
     }
 

@@ -26,7 +26,10 @@ use super::{
         METRIC_CPU_USAGE_PROCESS_PCT_SUFFIX, METRIC_MEMORY_PCT, METRIC_MEMORY_PROCESS_PCT_PREFIX,
         METRIC_MEMORY_PROCESS_PCT_SUFFIX,
     },
-    internal_metrics::{INTERNAL_METRIC_MAR_CLEANER_DURATION, INTERNAL_METRIC_MAR_ENTRY_COUNT},
+    internal_metrics::{
+        INTERNAL_METRIC_HRT_READING_COUNT, INTERNAL_METRIC_MAR_CLEANER_DURATION,
+        INTERNAL_METRIC_MAR_ENTRY_COUNT,
+    },
     system_metrics::{
         FD_METRIC_NAMESPACE, METRIC_INTERFACE_BYTES_PER_SECOND_RX_SUFFIX,
         METRIC_INTERFACE_BYTES_PER_SECOND_TX_SUFFIX, METRIC_INTERFACE_NET_SOCKETS_PREFIX,
@@ -57,6 +60,7 @@ fn histo_min_max_keys() -> MetricsSet {
             MetricStringKey::from(METRIC_MEMORY_PCT),
             MetricStringKey::from(INTERNAL_METRIC_MAR_CLEANER_DURATION),
             MetricStringKey::from(INTERNAL_METRIC_MAR_ENTRY_COUNT),
+            MetricStringKey::from(INTERNAL_METRIC_HRT_READING_COUNT),
         ]),
         wildcard_metric_keys: vec![
             // cpu_usage_*_pct

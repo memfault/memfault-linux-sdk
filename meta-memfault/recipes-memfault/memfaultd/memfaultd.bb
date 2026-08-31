@@ -18,7 +18,13 @@ SRC_URI = " \
 
 S = "${WORKDIR}"
 
-inherit cargo_bin update-rc.d systemd
+inherit cargo_bin update-rc.d systemd pkgconfig
+
+# rustc embeds the absolute build path in panic-location strings, which
+# -ffile-prefix-map doesn't cover; cosmetic only.
+INSANE_SKIP:${PN} += "buildpaths"
+INSANE_SKIP:${PN}-dbg += "buildpaths"
+INSANE_SKIP:${PN}-dev += "buildpaths"
 
 SYSTEMD_SERVICE:${PN} = "memfaultd.service"
 INITSCRIPT_NAME = "memfaultd"
@@ -28,7 +34,7 @@ INITSCRIPT_PARAMS = "defaults 15"
 
 DEPENDS = "zlib"
 
-PACKAGECONFIG ??= "coredump swupdate logging"
+PACKAGECONFIG ??= "coredump swupdate logging chunks-relay"
 PACKAGECONFIG[coredump] = ""
 PACKAGECONFIG[collectd] = ""
 PACKAGECONFIG[ebpf] = ""
@@ -36,6 +42,7 @@ PACKAGECONFIG[swupdate] = ""
 PACKAGECONFIG[logging] = ""
 PACKAGECONFIG[openssl-tls] = ""
 PACKAGECONFIG[syslog] = ""
+PACKAGECONFIG[chunks-relay] = ""
 
 # Tell Cargo to disable all features and only enable the ones we will use.
 EXTRA_CARGO_FLAGS = "--no-default-features"
@@ -122,6 +129,14 @@ CARGO_FEATURES:append = " \
 DEPENDS:append = " \
     ${@bb.utils.contains('PACKAGECONFIG', 'ebpf', \
         'libbpf', \
+        '', \
+    d)} \
+"
+
+# Chunks relay (write-chunks)
+CARGO_FEATURES:append = " \
+    ${@bb.utils.contains('PACKAGECONFIG', 'chunks-relay', \
+        'chunks-relay', \
         '', \
     d)} \
 "

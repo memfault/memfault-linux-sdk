@@ -3,6 +3,8 @@
 // See License.txt for details
 use std::path::Path;
 
+use serde_json::Value;
+
 use crate::util::patterns::{
     alphanum_slug_dots_colon_is_valid, alphanum_slug_dots_colon_spaces_parens_slash_is_valid,
     alphanum_slug_is_valid,
@@ -36,10 +38,35 @@ pub fn filter_path_is_valid(path_str: &str) -> eyre::Result<()> {
     Ok(())
 }
 
+/// Custom coredump attribute values must be a single scalar (string, number, or
+/// boolean) and non-null so they can be stored as a per-trace attribute. Nested
+/// values and nulls are rejected.
+pub fn coredump_attribute_value_is_valid(value: &Value) -> eyre::Result<()> {
+    match value {
+        Value::String(_) | Value::Number(_) | Value::Bool(_) => Ok(()),
+        Value::Null => Err(eyre::eyre!("value must not be null")),
+        Value::Array(_) | Value::Object(_) => {
+            Err(eyre::eyre!("value must be a string, number, or boolean"))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rstest::rstest;
+    use serde_json::json;
+
+    #[rstest]
+    #[case(json!("beta"), true)]
+    #[case(json!(42), true)]
+    #[case(json!(true), true)]
+    #[case(json!(null), false)]
+    #[case(json!(["a", "b"]), false)]
+    #[case(json!({"nested": 1}), false)]
+    fn coredump_attribute_value_is_valid_works(#[case] value: Value, #[case] expected: bool) {
+        assert_eq!(coredump_attribute_value_is_valid(&value).is_ok(), expected);
+    }
 
     #[rstest]
     // Minimum 1 character

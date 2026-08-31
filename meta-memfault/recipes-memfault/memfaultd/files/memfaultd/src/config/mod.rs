@@ -25,7 +25,7 @@ use crate::{
 use crate::util::disk_size::DiskSize;
 
 #[cfg(test)]
-pub use self::config_file::ConnectionCheckProtocol;
+pub use self::config_file::{ConnectionCheckProtocol, CoredumpAttribute};
 
 #[cfg(target_os = "linux")]
 pub use self::config_file::{CoredumpCaptureStrategy, CoredumpCompression};
@@ -58,6 +58,7 @@ pub use device_config::{DeviceConfigLogging, DeviceConfigLoggingFilters};
 mod device_info;
 mod messages;
 mod utils;
+pub use utils::coredump_attribute_value_is_valid;
 
 pub use messages::DeviceConfigUpdateMessage;
 

@@ -6,6 +6,56 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.28.0] - 2026-08-28
+
+This release graduates the chunk relay feature out of experimental status: it
+now supports multiple chunk encodings and forwards data end-to-end to chunks
+ingress, and is enabled by default. It also adds memory fragmentation metrics
+sourced from `/proc/buddyinfo`, the ability to capture custom attributes into
+coredumps at the moment of a crash, and support for the `wrynose` Yocto release.
+`enable_data_collection` is now enabled by default out of the box.
+
+### Added
+
+- Added memory fragmentation metrics parsed from `/proc/buddyinfo`. One metric
+  per buddy-allocator order, `memory/buddyinfo/order_0` through
+  `memory/buddyinfo/order_<N>`, reports the raw count of free blocks of `2^k`
+  contiguous pages summed across every NUMA node and memory zone. The order
+  columns are parsed dynamically so the metric works regardless of the kernel's
+  `MAX_ORDER`/`MAX_PAGE_ORDER`. Collection is best-effort: a missing or
+  unparsable file simply skips the family for that collection tick.
+- `memfaultd` can now capture custom attributes into a coredump at the time of
+  the crash. Attributes configured under `coredump.attributes` (and optionally
+  `coredump.attributes_file`, default `/run/memfault-coredump-attributes.json`)
+  are a static, flat map of JSON values copied into the trace record and shown
+  in memfault. Unlike device attributes, these are an immutable snapshot of the
+  value when the crash happened. These values must be scalar and non-null -
+  string, number, and bool only.
+- `memfaultctl write-chunks` now takes an explicit `--encoding` flag (`hex`,
+  `base64`, `bin`, `sdk_data_export`), matching the encodings supported by the
+  `memfault` CLI's `post-chunk` command. Relayed chunks are now forwarded
+  end-to-end to chunks ingress for processing; the chunk relay feature is no
+  longer experimental.
+- Added support for the `wrynose` (6.0) Yocto release. Several of the distro
+  features `wrynose` enables by default (Python, systemd, and collectd extras)
+  are trimmed back in the example image to keep its size in check.
+
+### Changed
+
+- Built-in configuration option `enable_data_collection` is now set enabled by
+  default. Users who wish to continue to have `enable_data_collection` as
+  `false` must update their `/etc/memfaultd.conf`.
+- The chunk relay feature is now enabled by default in `meta-memfault`
+  (previously required explicitly enabling the `chunks-relay` build feature). It
+  can still be disabled on devices where the extra on-disk storage isn't wanted.
+- Reworked log queue internals to share incoming log entries via `Arc` instead
+  of deep-cloning them for every log layer, cutting peak heap usage in the log
+  collector by roughly a third (~525KB → ~360KB, measured with heaptrack).
+
+### Fixed
+
+- Fixed a crash in `memfaultd` when binding to a configured syslog log source.
+
 ## [1.27.0] - 2026-07-13
 
 This release adds several new system metrics: CMA usage, context switch/fork
@@ -1684,3 +1734,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.26.1-kirkstone
 [1.27.0]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.27.0-kirkstone
+[1.28.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.28.0-wrynose

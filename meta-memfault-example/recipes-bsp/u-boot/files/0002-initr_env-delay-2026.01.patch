@@ -1,0 +1,21 @@
+Upstream-Status: Inappropriate [delays env init until after block devices are up, needed for the Memfault Linux SDK's FAT-based env on qemuarm/qemuarm64]
+
+diff -Naur a/common/board_r.c b/common/board_r.c
+--- a/common/board_r.c	2026-07-09 08:29:37.738553716 -0400
++++ b/common/board_r.c	2026-07-09 08:29:37.756226402 -0400
+@@ -715,7 +715,6 @@
+ #if CONFIG_IS_ENABLED(PVBLOCK)
+ 	INITCALL(initr_pvblock);
+ #endif
+-	INITCALL(initr_env);
+ #if CONFIG_IS_ENABLED(SYS_MALLOC_BOOTPARAMS)
+ 	INITCALL(initr_malloc_bootparams);
+ #endif
+@@ -780,6 +779,7 @@
+ 	INITCALL(initr_mem);
+ #endif
+ 	INITCALL(initr_boot_led_on);
++	INITCALL(initr_env);
+ 	INITCALL(run_main_loop);
+ }
+ 

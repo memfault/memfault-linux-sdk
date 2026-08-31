@@ -220,7 +220,7 @@ struct Inner<H: HeadroomCheck> {
     log_file_control: LogFileControlImpl,
     headroom_limiter: H,
     log_filter: LogFilter,
-    log_queue: CircularQueue<LogEntry>,
+    log_queue: CircularQueue<Arc<LogEntry>>,
     storage_config: StorageConfig,
     level_mapper: Option<LogLevelMapper>,
     device_config: Arc<DeviceConfig>,
@@ -240,6 +240,7 @@ impl<H: HeadroomCheck> Inner<H> {
             .log_filter
             .apply_rules(log, self.device_config.logging.as_ref())
         {
+            let log = Arc::new(log);
             if !self
                 .headroom_limiter
                 .check(&log.ts, &mut self.log_file_control)?
@@ -267,7 +268,7 @@ impl<H: HeadroomCheck> Inner<H> {
                             format!("Memfaultd rate limited {} messages.", limited.count),
                         )?;
                     }
-                    logfile.write_json_line(log)?;
+                    logfile.write_json_line(log.as_ref())?;
                     Ok(())
                 })?;
 
@@ -286,7 +287,7 @@ impl<H: HeadroomCheck> Inner<H> {
         let logs = self
             .log_queue
             .iter()
-            .map(serde_json::to_string)
+            .map(|log| serde_json::to_string(log.as_ref()))
             .collect::<Result<Vec<String>, _>>()?;
 
         Ok(logs)
@@ -1056,7 +1057,7 @@ mod tests {
             self.on_log_completion_receiver.try_iter().count()
         }
 
-        fn get_log_queue(&mut self) -> CircularQueue<LogEntry> {
+        fn get_log_queue(&mut self) -> CircularQueue<Arc<LogEntry>> {
             self.collector
                 .lock()
                 .unwrap()

@@ -1,14 +1,42 @@
 ---
 source: memfaultd/src/metrics/system_metrics/disk_space.rs
-expression: disk_space_collector.mounts
+expression: metrics
 ---
 [
   {
-    "device": "/dev/sda1",
-    "mount_point": "/"
+    "name": "disk_space/sda1/free_bytes",
+    "value": {
+      "Histogram": {
+        "value": 1171456.0,
+        "timestamp": "[timestamp]"
+      }
+    }
   },
   {
-    "device": "/dev/sda2",
-    "mount_point": "/media"
+    "name": "disk_space/sda1/used_bytes",
+    "value": {
+      "Histogram": {
+        "value": 3022848.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "disk_space/sda2/free_bytes",
+    "value": {
+      "Histogram": {
+        "value": 1171456.0,
+        "timestamp": "[timestamp]"
+      }
+    }
+  },
+  {
+    "name": "disk_space/sda2/used_bytes",
+    "value": {
+      "Histogram": {
+        "value": 3022848.0,
+        "timestamp": "[timestamp]"
+      }
+    }
   }
 ]

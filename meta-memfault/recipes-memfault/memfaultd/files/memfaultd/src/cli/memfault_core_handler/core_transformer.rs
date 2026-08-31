@@ -426,6 +426,7 @@ mod test {
             captured_time_epoch_s: 1234,
             cmd_line: "binary -a -b -c".to_string(),
             capture_strategy,
+            custom_attributes: std::collections::BTreeMap::new(),
             app_logs: None,
         };
 
