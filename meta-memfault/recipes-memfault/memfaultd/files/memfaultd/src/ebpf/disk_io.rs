@@ -141,7 +141,7 @@ impl<P: ProcessNameMapper> DiskIo<P> {
         self.proc_name_cache.retain(&seen_tgids);
 
         if !readings.is_empty() {
-            self.metrics_mbox.send_and_forget(readings)?;
+            self.metrics_mbox.send_and_forget_async(readings).await?;
         }
 
         Ok(())

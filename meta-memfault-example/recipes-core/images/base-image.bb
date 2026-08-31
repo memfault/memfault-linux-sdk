@@ -20,10 +20,15 @@ IMAGE_INSTALL:append = " \
     u-boot-fw-utils \
 "
 
+# glib and systemd only RRECOMMEND these; nothing here reads the MIME database.
+# BAD_RECOMMENDATIONS is ipk/rpm-only and this image builds with package_deb, so
+# the exclude has to be a package pin instead.
+PACKAGE_EXCLUDE += "shared-mime-info shared-mime-info-data systemd-mime"
+
 # Create a copy of the .wic image. This is used as the "pristine" image by the E2E test scripts.
 do_copy_wic_image() {
-    if [ -f ${IMGDEPLOYDIR}/${PN}-${MACHINE}.wic ]; then
-        cp -f ${IMGDEPLOYDIR}/${PN}-${MACHINE}.wic ${DEPLOY_DIR_IMAGE}/ci-test-image.wic
+    if [ -f ${IMGDEPLOYDIR}/${IMAGE_LINK_NAME}.wic ]; then
+        cp -f ${IMGDEPLOYDIR}/${IMAGE_LINK_NAME}.wic ${DEPLOY_DIR_IMAGE}/ci-test-image.wic
     fi
 }
 addtask copy_wic_image after do_image_wic before do_image_complete
@@ -34,4 +39,10 @@ IMAGE_POSTPROCESS_COMMAND:append = " buildhistory_get_imageinfo;"
 DEPENDS:append = " elfutils-native"
 IMAGE_GEN_DEBUGFS = "1"
 # IMAGE_FSTYPES_DEBUGFS must match IMAGE_FSTYPES
+IMAGE_FSTYPES:append = " tar.bz2"
 IMAGE_FSTYPES_DEBUGFS = "tar.bz2"
+
+# swupdate writes this rootfs raw into a 256 MiB A/B slot (see the .wks files),
+# so a rootfs that outgrows one is otherwise only discovered on the device,
+# part-way through an install.
+IMAGE_ROOTFS_MAXSIZE = "262144"

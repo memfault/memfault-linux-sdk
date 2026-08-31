@@ -24,7 +24,13 @@ SystemdState = Literal[
 class QEMU:
     def __init__(self, image_wic_path: pathlib.Path) -> None:
         command, *args = runqemu.qemu_build_command(image_wic_path)
-        self.pid = pexpect.spawn(command, args, timeout=120, logfile=sys.stdout.buffer)
+        self.pid = pexpect.spawn(
+            command,
+            args,
+            timeout=120,
+            logfile=sys.stdout.buffer,
+            env=runqemu.qemu_build_env(),
+        )
         self.login()
 
     def __del__(self) -> None:

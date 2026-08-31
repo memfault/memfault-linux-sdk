@@ -16,8 +16,6 @@ def data_collection_enabled() -> bool:
 
 
 def test_start(qemu: QEMU) -> None:
-    qemu.exec_cmd("memfaultctl enable-data-collection")
-    qemu.child().expect("Enabling data collection")
     qemu.systemd_wait_for_service_state("memfaultd.service", "active")
 
     qemu.exec_cmd("memfaultctl enable-data-collection")
@@ -57,8 +55,6 @@ def test_start(qemu: QEMU) -> None:
 
 
 def test_via_memfaultctl(qemu: QEMU) -> None:
-    qemu.exec_cmd("memfaultctl enable-data-collection")
-    qemu.child().expect("Enabling data collection.")
     qemu.systemd_wait_for_service_state("memfaultd.service", "active")
 
     qemu.exec_cmd("memfaultctl enable-data-collection")

@@ -16,10 +16,10 @@
 //! can be found at:
 //! https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html
 use std::{
-    collections::HashMap,
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs::{read_dir, read_to_string},
     marker::PhantomData,
+    sync::Arc,
 };
 
 use eyre::{eyre, Result};
@@ -34,7 +34,10 @@ use nom::{
     IResult,
 };
 
-use crate::metrics::{system_metrics::SystemMetricFamilyCollector, KeyedMetricReading};
+use crate::metrics::{
+    system_metrics::{memory::get_total_memory, SystemMetricFamilyCollector},
+    KeyedMetricReading,
+};
 use crate::util::{
     math::counter_delta_with_overflow, system::ProcessNameMapper, time_measure::TimeMeasure,
 };
@@ -63,11 +66,11 @@ struct ProcessReading<T: TimeMeasure> {
 }
 
 pub struct ProcessMetricsCollector<T: TimeMeasure, P: ProcessNameMapper> {
-    config: ProcessMetricsConfig,
+    config: Arc<ProcessMetricsConfig>,
     processes: HashMap<u64, ProcessReading<T>>,
     clock_ticks_per_ms: f64,
     bytes_per_page: f64,
-    mem_total: f64,
+    mem_total: Option<f64>,
     _marker: PhantomData<P>,
 }
 
@@ -76,24 +79,20 @@ where
     T: TimeMeasure + Copy + Send + Sync + 'static,
     P: ProcessNameMapper + Copy + Send + Sync,
 {
-    pub fn new(
-        config: ProcessMetricsConfig,
-        clock_ticks_per_ms: f64,
-        bytes_per_page: f64,
-        mem_total: f64,
-    ) -> Self {
+    pub fn new(config: ProcessMetricsConfig, clock_ticks_per_ms: f64, bytes_per_page: f64) -> Self {
+        let config = Arc::new(config);
         Self {
             config,
             processes: HashMap::new(),
             clock_ticks_per_ms,
             bytes_per_page,
-            mem_total,
+            mem_total: None,
             _marker: PhantomData,
         }
     }
 
-    fn process_is_monitored(&self, process_name: &str) -> bool {
-        match &self.config {
+    fn process_is_monitored(process_name: &str, config: &ProcessMetricsConfig) -> bool {
+        match config {
             ProcessMetricsConfig::Auto => process_name == "memfaultd",
             ProcessMetricsConfig::Processes(ps) => ps.contains(process_name),
         }
@@ -174,7 +173,12 @@ where
     ///
     /// If the process name is not in the set of configured processes to monitor, this
     /// function will stop parsing and return Ok(None) to avoid doing unnecessary work.
-    fn parse_process_stat(&self, proc_pid_stat_line: &str) -> Result<Option<ProcessReading<T>>> {
+    fn parse_process_stat(
+        proc_pid_stat_line: &str,
+        config: &ProcessMetricsConfig,
+        bytes_per_page: f64,
+        reading_time: T,
+    ) -> Result<Option<ProcessReading<T>>> {
         let (after_pid, pid) = Self::parse_pid(proc_pid_stat_line)
             .map_err(|_e| eyre!("Failed to parse PID for process"))?;
         let (after_comm, _comm) = Self::parse_comm(after_pid)
@@ -183,7 +187,7 @@ where
         let name = P::get_process_name(pid as u32)?;
 
         // Don't bother continuing to parse processes that aren't monitored
-        if self.process_is_monitored(&name) {
+        if Self::process_is_monitored(&name, config) {
             let (after_state, _) = Self::parse_state(after_comm)
                 .map_err(|_e| eyre!("Failed to parse process state for {}", name))?;
             let (_, stats) = Self::parse_stats(after_state)
@@ -205,7 +209,7 @@ where
 
             // RSS is provided as the number of pages used by the process, we need
             // to multiply by the system-specific bytes per page to get a value in bytes
-            let rss = *stats.get(20).ok_or(eyre!("Failed to read rss"))? * self.bytes_per_page;
+            let rss = *stats.get(20).ok_or(eyre!("Failed to read rss"))? * bytes_per_page;
 
             Ok(Some(ProcessReading {
                 pid,
@@ -217,7 +221,7 @@ where
                 pagefaults_major,
                 pagefaults_minor,
                 vm,
-                reading_time: T::now(),
+                reading_time,
             }))
         } else {
             Ok(None)
@@ -225,7 +229,7 @@ where
     }
 
     fn calculate_metric_readings(
-        &self,
+        &mut self,
         previous: ProcessReading<T>,
         current: ProcessReading<T>,
     ) -> Result<Vec<KeyedMetricReading>> {
@@ -318,7 +322,7 @@ where
         );
 
         let _cpu_usage_process_pct = cputime_sys_pct + cputime_user_pct;
-        let _memory_process_pct = current.rss / self.mem_total;
+        let _memory_process_pct = current.rss / self.total_memory()?;
 
         Ok(vec![
             rss_reading,
@@ -332,22 +336,16 @@ where
     }
 
     // To facilitate unit testing, make the process directory path an arg
-    fn read_process_metrics_from_dir(&mut self, proc_dir: &str) -> Result<Vec<KeyedMetricReading>> {
-        let process_readings: Vec<_> = read_dir(proc_dir)?
-            .filter_map(|entry| entry.map(|e| e.path()).ok())
-            // Filter out non-numeric directories (since these won't be PIDs)
-            .filter(|path| match path.file_name() {
-                Some(p) => p.to_string_lossy().chars().all(|c| c.is_numeric()),
-                None => false,
-            })
-            // Append "/stat" to the path since this is the file we want to read
-            // for a given PID's directory
-            .filter_map(|path| read_to_string(path.join("stat")).ok())
-            .filter_map(|proc_pid_stat_contents| {
-                self.parse_process_stat(&proc_pid_stat_contents).ok()
-            })
-            .flatten()
-            .collect();
+    fn read_process_metrics_from_dir(
+        &mut self,
+        proc_dir: impl ToString,
+    ) -> Result<Vec<KeyedMetricReading>> {
+        let config = self.config.clone();
+        let proc_dir = proc_dir.to_string();
+        let bytes_per_page = self.bytes_per_page;
+        let reading_time = T::now();
+        let process_readings =
+            Self::read_process_metrics(&proc_dir, config, bytes_per_page, reading_time)?;
 
         let mut process_metric_readings = vec![];
         for current_reading in process_readings {
@@ -374,6 +372,55 @@ where
         }
 
         Ok(process_metric_readings)
+    }
+
+    /// Helper function that can be moved across threads
+    ///
+    /// This is a wrapper that groups all file operations together so we can move
+    /// them to the blocking thread pool. We break our convention a little bit and
+    /// include some processing work here. This is necessary, as we don't want
+    /// to keep a ton of `stat` files in memory, vs the conpact parsed form.`
+    fn read_process_metrics(
+        proc_dir: &str,
+        config: Arc<ProcessMetricsConfig>,
+        bytes_per_page: f64,
+        reading_time: T,
+    ) -> Result<Vec<ProcessReading<T>>> {
+        let readings = read_dir(proc_dir)?
+            .filter_map(|entry| entry.map(|e| e.path()).ok())
+            // Filter out non-numeric directories (since these won't be PIDs)
+            .filter(|path| match path.file_name() {
+                Some(p) => p.to_string_lossy().chars().all(|c| c.is_numeric()),
+                None => false,
+            })
+            // Append "/stat" to the path since this is the file we want to read
+            // for a given PID's directory
+            .filter_map(|path| read_to_string(path.join("stat")).ok())
+            .filter_map(|proc_pid_stat_contents| {
+                Self::parse_process_stat(
+                    &proc_pid_stat_contents,
+                    &config,
+                    bytes_per_page,
+                    reading_time,
+                )
+                .ok()
+            })
+            .flatten()
+            .collect();
+
+        Ok(readings)
+    }
+
+    fn total_memory(&mut self) -> Result<f64> {
+        match self.mem_total {
+            Some(mem_total) => Ok(mem_total),
+            None => {
+                let mem_total = get_total_memory()?;
+                self.mem_total = Some(mem_total);
+
+                Ok(mem_total)
+            }
+        }
     }
 
     pub fn get_process_metrics(&mut self) -> Result<Vec<KeyedMetricReading>> {
@@ -422,19 +469,23 @@ mod tests {
         }
     }
 
+    const TEST_MEM_TOTAL_BYTES: f64 = 374697984.0;
+
     #[rstest]
     fn test_parse_single_line() {
         let collector = ProcessMetricsCollector::<TestInstant, MockProcessNameMapper>::new(
             ProcessMetricsConfig::Processes(HashSet::from_iter(["memfaultd".to_string()])),
             100.0,
             4096.0,
-            1000000000.0,
         );
 
         let line = "55270 (memfaultd) S 1 55270 55270 0 -1 4194368 825 0 0 0 155 102 0 0 20 0 19 0 18548522 1411293184 4397 18446744073709551615 1 1 0 0 0 0 0 4096 17987 0 0 0 17 7 0 0 0 0 0 0 0 0 0 0 0 0 0";
         assert!(
             ProcessMetricsCollector::<TestInstant, MockProcessNameMapper>::parse_process_stat(
-                &collector, line
+                line,
+                &collector.config,
+                collector.bytes_per_page,
+                TestInstant::now(),
             )
             .is_ok()
         );
@@ -447,16 +498,19 @@ mod tests {
         "simple_cpu_delta",
     )]
     fn test_collect_metrics(#[case] line1: &str, #[case] line2: &str, #[case] test_name: &str) {
-        let collector = ProcessMetricsCollector::<TestInstant, MockProcessNameMapper>::new(
+        let mut collector = ProcessMetricsCollector::<TestInstant, MockProcessNameMapper>::new(
             ProcessMetricsConfig::Processes(HashSet::from_iter(["memfaultd".to_string()])),
             100.0,
             4096.0,
-            1000000000.0,
         );
+        collector.mem_total = Some(TEST_MEM_TOTAL_BYTES);
 
         let first_reading =
             ProcessMetricsCollector::<TestInstant, MockProcessNameMapper>::parse_process_stat(
-                &collector, line1,
+                line1,
+                &collector.config,
+                collector.bytes_per_page,
+                TestInstant::now(),
             )
             .unwrap()
             .unwrap();
@@ -465,7 +519,10 @@ mod tests {
 
         let second_reading =
             ProcessMetricsCollector::<TestInstant, MockProcessNameMapper>::parse_process_stat(
-                &collector, line2,
+                line2,
+                &collector.config,
+                collector.bytes_per_page,
+                TestInstant::now(),
             )
             .unwrap()
             .unwrap();
@@ -506,7 +563,6 @@ mod tests {
                 ProcessMetricsConfig::Auto,
                 100.0,
                 4096.0,
-                1000000000.0,
             )
         } else {
             // If auto is not used, the configuration should capture metrics from both processes
@@ -517,9 +573,9 @@ mod tests {
                 ])),
                 100.0,
                 4096.0,
-                1000000000.0,
             )
         };
+        collector.mem_total = Some(TEST_MEM_TOTAL_BYTES);
 
         // Create a temporary directory.
         let dir = tempdir().unwrap();

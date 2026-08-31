@@ -1,3 +1,5 @@
+Upstream-Status: Inappropriate [not submitted; packaging change specific to the Memfault Linux SDK's example integration]
+
 --- a/Makefile	2022-05-05 16:29:08.473607751 +0100
 +++ b/Makefile	2022-05-05 16:42:23.075536000 +0100
 @@ -22,7 +22,7 @@

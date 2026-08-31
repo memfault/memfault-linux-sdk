@@ -15,8 +15,12 @@ mod session;
 mod sync;
 mod trace;
 mod write_attributes;
-mod write_chunks;
 mod write_metrics;
+
+#[cfg(feature = "chunks-relay")]
+mod write_chunks;
+#[cfg(feature = "chunks-relay")]
+use write_chunks::{write_chunks, ChunksEncoding};
 
 use crate::{
     cli::version::format_version,
@@ -24,7 +28,6 @@ use crate::{
     metrics::{KeyedMetricReading, SessionName},
     reboot::{write_reboot_reason_and_reboot, RebootReason},
     service_manager::get_service_manager,
-    util::patterns::check_base64_encoding,
 };
 use crate::{mar::MarEntryBuilder, util::output_arg::OutputArg};
 
@@ -35,12 +38,11 @@ use crate::cli::memfaultctl::coredump::{trigger_coredump, ErrorStrategy};
 use crate::cli::memfaultctl::export::export;
 use crate::cli::memfaultctl::report_sync::report_sync;
 use crate::cli::memfaultctl::sync::sync;
-use crate::cli::memfaultctl::write_chunks::write_chunks;
 use crate::cli::show_settings::show_settings;
 use crate::config::Config;
 use crate::network::NetworkConfig;
 use eyre::{eyre, Context, Result};
-use log::{warn, LevelFilter};
+use log::LevelFilter;
 
 use self::session::{end_session, start_session};
 
@@ -115,6 +117,7 @@ enum MemfaultctlCommand {
     StartSession(StartSessionArgs),
     EndSession(EndSessionArgs),
     AddCustomDataRecording(AddCustomDataRecordingArgs),
+    #[cfg(feature = "chunks-relay")]
     WriteChunks(WriteChunksArgs),
     WriteMetrics(WriteMetricsArgs),
     SaveTrace(SaveTraceArgs),
@@ -208,6 +211,7 @@ struct WriteAttributesArgs {
 #[derive(FromArgs)]
 /// write chunks to memfaultd
 #[argh(subcommand, name = "write-chunks")]
+#[cfg(feature = "chunks-relay")]
 struct WriteChunksArgs {
     /// the key for the project to relay these chunks to
     #[argh(option)]
@@ -217,7 +221,11 @@ struct WriteChunksArgs {
     #[argh(option)]
     device_serial: Option<String>,
 
-    /// base64 encoded chunks
+    /// explicitly set the encoding of these chunks
+    #[argh(option)]
+    encoding: ChunksEncoding,
+
+    /// chunks encoded according to --encoding
     #[argh(positional, greedy)]
     chunks: Vec<String>,
 
@@ -456,9 +464,11 @@ pub fn main() -> Result<()> {
                 .save(&network_config, &mar_config)
                 .map(|_entry| ())
         }
+        #[cfg(feature = "chunks-relay")]
         MemfaultctlCommand::WriteChunks(WriteChunksArgs {
             project_key,
             device_serial,
+            encoding,
             chunks,
             no_serial,
         }) => {
@@ -466,7 +476,7 @@ pub fn main() -> Result<()> {
 
             if chunks.is_empty() {
                 return Err(eyre!(
-                    "No chunks provided. Please specify one or more base64 chunks as positional arguments."
+                    "No chunks provided. Please specify one or more {}-formatted chunks as positional arguments.", encoding
                 ));
             }
 
@@ -480,11 +490,17 @@ pub fn main() -> Result<()> {
                 ));
             }
 
-            for chunk in &chunks {
-                if let Err(errmsg) = check_base64_encoding(chunk) {
-                    warn!("{}", errmsg);
-                }
-            }
+            let chunks = chunks
+                .iter()
+                .map(|chunk| encoding.to_base64(chunk))
+                // collect into a `Result` so we catch errors earlier
+                // this is a `Vec<Vec<_>>` to accommodate for `ChunksEncoding::SdkDataExport`,
+                // which can contain multiple chunks in a single file
+                .collect::<Result<Vec<Vec<_>>>>()?
+                .into_iter()
+                .flatten()
+                .collect();
+
             write_chunks(&config, project_key, device_serial, chunks)
         }
         MemfaultctlCommand::WriteMetrics(WriteMetricsArgs { metrics }) => {

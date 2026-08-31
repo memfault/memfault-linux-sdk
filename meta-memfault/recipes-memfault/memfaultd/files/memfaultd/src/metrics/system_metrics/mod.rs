@@ -4,7 +4,7 @@
 use std::{path::PathBuf, time::Instant};
 
 use disk::{get_tracked_disks, DiskMetricsCollector};
-use eyre::{eyre, Result};
+use eyre::Result;
 use log::{debug, error};
 use ssf::{Handler, Message, Service};
 
@@ -33,6 +33,9 @@ use crate::metrics::system_metrics::memory::MemoryMetricsCollector;
 pub use crate::metrics::system_metrics::memory::MEMORY_METRIC_NAMESPACE;
 
 mod vm;
+
+mod buddyinfo;
+use buddyinfo::BuddyInfoMetricsCollector;
 
 mod network_interfaces;
 use network_interfaces::{NetworkInterfaceMetricCollector, NetworkInterfaceMetricsConfig};
@@ -65,10 +68,7 @@ mod oui_parse;
 mod oui;
 use oui::OuiMetricsCollector;
 
-use self::{
-    memory::{MemInfoParser, MemInfoParserImpl},
-    vm::VmMetricsCollector,
-};
+use self::{memory::MemInfoParserImpl, vm::VmMetricsCollector};
 use super::MetricsMBox;
 
 pub trait SystemMetricFamilyCollector: Send {
@@ -105,6 +105,7 @@ impl SystemMetricsCollector {
                 MemInfoParserImpl::new(),
             )));
             metric_family_collectors.push(Box::new(VmMetricsCollector::<Instant>::new()));
+            metric_family_collectors.push(Box::new(BuddyInfoMetricsCollector::new()));
         }
 
         if config.thermal_metrics_enabled() {
@@ -125,19 +126,14 @@ impl SystemMetricsCollector {
             ProcessMetricsConfig::Processes(processes) if processes.is_empty() => {}
             // In all other cases we can just directly pass the config to ProcessMetricsCollector
             process_metrics_config => {
-                // We need the total memory for the system to calculate the
-                // percent used by each individual process
-                if let Ok(mem_total) = Self::get_total_memory() {
-                    metric_family_collectors.push(Box::new(ProcessMetricsCollector::<
-                        Instant,
-                        ProcfsProcessNameMapper,
-                    >::new(
-                        process_metrics_config,
-                        clock_ticks_per_second() as f64 / 1000.0,
-                        bytes_per_page() as f64,
-                        mem_total,
-                    )))
-                }
+                metric_family_collectors.push(Box::new(ProcessMetricsCollector::<
+                    Instant,
+                    ProcfsProcessNameMapper,
+                >::new(
+                    process_metrics_config,
+                    clock_ticks_per_second() as f64 / 1000.0,
+                    bytes_per_page() as f64,
+                )))
             }
         };
 
@@ -146,7 +142,7 @@ impl SystemMetricsCollector {
             // Monitoring no disks means this collector is disabled
             DiskSpaceMetricsConfig::Disks(disks) if disks.is_empty() => {}
             disk_space_metrics_config => metric_family_collectors.push(Box::new(
-                DiskSpaceMetricCollector::new(NixStatvfs::new(), disk_space_metrics_config),
+                DiskSpaceMetricCollector::<NixStatvfs>::new(disk_space_metrics_config),
             )),
         };
 
@@ -201,14 +197,6 @@ impl SystemMetricsCollector {
             metric_family_collectors,
             metrics_mbox,
         }
-    }
-
-    fn get_total_memory() -> Result<f64> {
-        let mem_info_parser = MemInfoParserImpl::new();
-        let mut stats = mem_info_parser.get_meminfo_stats()?;
-        stats
-            .remove("MemTotal")
-            .ok_or_else(|| eyre!("Couldn't get MemTotal"))
     }
 
     /// Poll every metric family collector once and forward their readings to

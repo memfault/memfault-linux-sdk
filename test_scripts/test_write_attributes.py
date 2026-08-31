@@ -43,7 +43,10 @@ def test(qemu: QEMU, memfault_service_tester: MemfaultServiceTester, qemu_device
     memfault_service_tester.poll_until_not_raising(_check, poll_interval_seconds=1)
 
 
-@pytest.mark.parametrize("data_collection_enabled", [False])
+@pytest.mark.parametrize("data_collection_enabled", [True])
 def test_fails_with_data_collection_disabled(qemu: QEMU, data_collection_enabled: bool) -> None:
+    if data_collection_enabled:
+        qemu.exec_cmd("memfaultctl disable-data-collection")
+
     qemu.exec_cmd("memfaultctl write-attributes foo=bar")
     qemu.child().expect("Cannot write attributes because data collection is disabled")

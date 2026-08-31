@@ -1,6 +1,7 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::str::FromStr;
@@ -22,27 +23,71 @@ where
         .is_some_and(|value: T| value == expected)
 }
 
-pub fn get_active_wireless_local_ouis() -> Option<Vec<(String, String)>> {
+/// Everything the OUI readings need from sysfs and procfs, gathered in one pass
+/// so that deriving the readings afterwards touches no files.
+pub struct WirelessSnapshot {
+    interfaces: HashMap<String, Option<String>>,
+    arp_table: Option<String>,
+}
+
+impl WirelessSnapshot {
     // https://www.man7.org/linux/man-pages/man5/sysfs.5.html
-    let sys_net_path = Path::new(SYS_CLASS_NET);
-    let mut ouis = Vec::new();
-
-    let entries = fs::read_dir(sys_net_path).ok()?;
-
-    for entry in entries.flatten() {
-        let adapter_name = entry.file_name().to_string_lossy().to_string();
-        let adapter_path = sys_net_path.join(&adapter_name);
-
-        if is_wireless_adapter(&adapter_path) && is_adapter_active(&adapter_path) {
-            if let Some(oui) =
-                read_file_content(&adapter_path.join("address")).and_then(|mac| extract_oui(&mac))
-            {
-                ouis.push((adapter_name, oui));
-            }
-        }
+    // https://www.man7.org/linux/man-pages/man5/proc_net.5.html
+    pub fn read() -> Option<Self> {
+        Self::read_from(Path::new(SYS_CLASS_NET), Path::new(PROC_NET_ARP))
     }
 
-    Some(ouis)
+    // To facilitate unit testing, make the paths read from args
+    fn read_from(sys_net_path: &Path, arp_path: &Path) -> Option<Self> {
+        let interfaces = fs::read_dir(sys_net_path)
+            .ok()?
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .filter_map(|name| {
+                let adapter_path = sys_net_path.join(&name);
+                is_wireless_adapter(&adapter_path).then(|| {
+                    // Only active adapters report a local OUI, so inactive ones
+                    // don't need their address read
+                    let mac_address = is_adapter_active(&adapter_path)
+                        .then(|| read_file_content(&adapter_path.join("address")))
+                        .flatten();
+                    (name, mac_address)
+                })
+            })
+            .collect();
+
+        Some(Self {
+            interfaces,
+            arp_table: read_file_content(arp_path),
+        })
+    }
+
+    pub fn local_ouis(&self) -> Vec<(String, String)> {
+        self.interfaces
+            .iter()
+            .filter_map(|(name, mac_address)| {
+                extract_oui(mac_address.as_deref()?).map(|oui| (name.clone(), oui))
+            })
+            .collect()
+    }
+
+    // eg:
+    // $ cat /proc/net/arp
+    // IP address       HW type     Flags       HW address            Mask     Device
+    // 192.168.128.1    0x1         0x2         XX:XX:XX:XX:XX:XX     *        wlp0s20f3
+    // 172.18.0.2       0x1         0x2         XX:XX:XX:XX:XX:XX     *        br-7bd4974c1fae
+    pub fn ap_ouis(&self) -> Vec<(String, String)> {
+        let Some(arp_table) = &self.arp_table else {
+            return Vec::new();
+        };
+
+        arp_table
+            .lines()
+            .skip(1)
+            .filter_map(parse_arp_entry)
+            .filter(|(device, _oui)| self.interfaces.contains_key(device))
+            .collect()
+    }
 }
 
 /// Is adapter for wireless connections (ie, not loopback/local)?
@@ -71,28 +116,6 @@ fn extract_oui(mac_address: &str) -> Option<String> {
             .iter()
             .all(|part| part.len() == 2 && part.chars().all(|c| c.is_ascii_hexdigit())))
     .then(|| mac_parts[0..3].join(":").to_uppercase())
-}
-
-pub fn get_active_wireless_ap_ouis() -> Option<Vec<(String, String)>> {
-    // https://www.man7.org/linux/man-pages/man5/proc_net.5.html
-    // eg:
-    // $ cat /proc/net/arp
-    // IP address       HW type     Flags       HW address            Mask     Device
-    // 192.168.128.1    0x1         0x2         XX:XX:XX:XX:XX:XX     *        wlp0s20f3
-    // 172.18.0.2       0x1         0x2         XX:XX:XX:XX:XX:XX     *        br-7bd4974c1fae
-    let arp_content = read_file_content(Path::new(PROC_NET_ARP))?;
-    let mut ap_ouis = Vec::new();
-
-    for line in arp_content.lines().skip(1) {
-        if let Some((device, oui)) = parse_arp_entry(line) {
-            // Go off and read /sys/class/net/$DEVICE
-            if is_wireless_adapter(&Path::new(SYS_CLASS_NET).join(&device)) {
-                ap_ouis.push((device, oui));
-            }
-        }
-    }
-
-    Some(ap_ouis)
 }
 
 fn parse_arp_entry(line: &str) -> Option<(String, String)> {
@@ -159,25 +182,11 @@ mod tests {
         assert_eq!(extract_oui("aa:bb:gg:dd:ee:ff"), None);
     }
 
+    const NO_ARP_TABLE: &str = "/nonexistent/proc/net/arp";
+
     fn get_wireless_local_ouis_with_path(sys_net_path: &Path) -> Option<Vec<(String, String)>> {
-        let mut ouis = Vec::new();
-
-        let entries = fs::read_dir(sys_net_path).ok()?;
-
-        for entry in entries.flatten() {
-            let adapter_name = entry.file_name().to_string_lossy().to_string();
-            let adapter_path = sys_net_path.join(&adapter_name);
-
-            if is_wireless_adapter(&adapter_path) && is_adapter_active(&adapter_path) {
-                if let Some(oui) = read_file_content(&adapter_path.join("address"))
-                    .and_then(|mac| extract_oui(&mac))
-                {
-                    ouis.push((adapter_name, oui));
-                }
-            }
-        }
-
-        Some(ouis)
+        let snapshot = WirelessSnapshot::read_from(sys_net_path, Path::new(NO_ARP_TABLE))?;
+        Some(snapshot.local_ouis())
     }
 
     #[test]
@@ -259,18 +268,112 @@ mod tests {
         arp_content: &str,
         sys_net_path: &Path,
     ) -> Option<Vec<(String, String)>> {
-        let mut ap_ouis = Vec::new();
+        let mut snapshot = WirelessSnapshot::read_from(sys_net_path, Path::new(NO_ARP_TABLE))?;
+        snapshot.arp_table = Some(arp_content.to_string());
+        Some(snapshot.ap_ouis())
+    }
 
-        for line in arp_content.lines().skip(1) {
-            if let Some((device, oui)) = parse_arp_entry(line) {
-                let sys_device_path = sys_net_path.join(&device);
-                if is_wireless_adapter(&sys_device_path) {
-                    ap_ouis.push((device, oui));
-                }
-            }
-        }
+    #[test]
+    fn test_snapshot_interfaces() -> io::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let mock_sys_path = temp_dir.path();
 
-        Some(ap_ouis)
+        create_mock_adapter(mock_sys_path, "wlan0", "aa:bb:cc:dd:ee:ff", true, true)?;
+        // Wireless but inactive - still a wireless interface, but no MAC read
+        create_mock_adapter(mock_sys_path, "wlan1", "11:22:33:44:55:66", true, false)?;
+        create_mock_adapter(mock_sys_path, "eth0", "77:88:99:aa:bb:cc", false, true)?;
+
+        let snapshot = WirelessSnapshot::read_from(mock_sys_path, Path::new(NO_ARP_TABLE)).unwrap();
+
+        assert_eq!(
+            snapshot.interfaces.get("wlan0"),
+            Some(&Some("aa:bb:cc:dd:ee:ff".to_string()))
+        );
+        assert_eq!(snapshot.interfaces.get("wlan1"), Some(&None));
+        assert_eq!(snapshot.interfaces.get("eth0"), None);
+        assert_eq!(snapshot.interfaces.len(), 2);
+        assert_eq!(snapshot.arp_table, None);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_snapshot_missing_sys_net_dir() {
+        assert!(WirelessSnapshot::read_from(
+            Path::new("/nonexistent/sys/class/net"),
+            Path::new(NO_ARP_TABLE)
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn test_snapshot_reads_arp_table() -> io::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let mock_sys_path = temp_dir.path().join("net");
+        fs::create_dir_all(&mock_sys_path)?;
+
+        create_mock_adapter(&mock_sys_path, "wlan0", "aa:bb:cc:dd:ee:ff", true, true)?;
+
+        let arp_path = temp_dir.path().join("arp");
+        fs::write(&arp_path, create_mock_arp_content())?;
+
+        let snapshot = WirelessSnapshot::read_from(&mock_sys_path, &arp_path).unwrap();
+
+        assert_eq!(
+            snapshot.ap_ouis(),
+            vec![("wlan0".to_string(), "AA:BB:CC".to_string())]
+        );
+        assert_eq!(
+            snapshot.local_ouis(),
+            vec![("wlan0".to_string(), "AA:BB:CC".to_string())]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_repeated_arp_device_resolved_from_snapshot() -> io::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let mock_sys_path = temp_dir.path();
+
+        create_mock_adapter(mock_sys_path, "wlan0", "aa:bb:cc:dd:ee:ff", true, true)?;
+
+        // Several neighbors on one interface - each is a distinct AP OUI, and
+        // none of them re-probe sysfs for wlan0
+        let arp_content =
+            "IP address       HW type     Flags       HW address            Mask     Device
+10.0.0.1         0x1         0x2         ea:6f:b3:e4:19:15     *        wlan0
+10.0.0.2         0x1         0x2         bc:db:09:c2:4c:95     *        wlan0
+10.0.0.3         0x1         0x2         12:34:56:78:90:ab     *        wlan0";
+
+        let ap_ouis = get_wireless_ap_ouis_with_content(arp_content, mock_sys_path).unwrap();
+
+        assert_eq!(
+            ap_ouis,
+            vec![
+                ("wlan0".to_string(), "EA:6F:B3".to_string()),
+                ("wlan0".to_string(), "BC:DB:09".to_string()),
+                ("wlan0".to_string(), "12:34:56".to_string()),
+            ]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_arp_device_absent_from_sysfs_filtered() -> io::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let mock_sys_path = temp_dir.path();
+
+        create_mock_adapter(mock_sys_path, "wlan0", "aa:bb:cc:dd:ee:ff", true, true)?;
+
+        // wlp0s20f3 and eth0 appear in the ARP table but not in /sys/class/net
+        let arp_content = create_mock_arp_content();
+        let ap_ouis = get_wireless_ap_ouis_with_content(&arp_content, mock_sys_path).unwrap();
+
+        assert_eq!(ap_ouis, vec![("wlan0".to_string(), "AA:BB:CC".to_string())]);
+
+        Ok(())
     }
 
     #[test]

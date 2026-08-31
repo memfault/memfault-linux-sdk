@@ -1,0 +1,9 @@
+{
+  "coredump": {
+    "attributes": [
+      { "key": "developer_mode", "value": true },
+      { "key": "build_channel", "value": "beta" },
+      { "key": "boot_count", "value": 42 }
+    ]
+  }
+}
