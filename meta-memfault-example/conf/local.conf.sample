@@ -8,6 +8,19 @@ PATCHRESOLVE = "noop"
 
 IMAGE_FSTYPES:append = " ext4.gz"
 
+# zchunk delta OTA, needed by swupdate-delta-image: uncomment all of the below.
+# See DEVELOPMENT.md.
+# MEMFAULT_DELTA_OTA = "1"
+# IMAGE_ROOTFS_SIZE = "258048"
+# IMAGE_OVERHEAD_FACTOR = "1"
+# IMAGE_ROOTFS_MAXSIZE = "262144"
+# IMAGE_CLASSES:append = " image_types_zchunk"
+# IMAGE_FSTYPES:append = " ext4.zck ext4.zck.zckheader"
+
+# wrynose folds this into IMAGE_LINK_NAME, adding a .rootfs infix to every
+# artifact; SWUPDATE_IMAGES, the CLI uploads and the docs all omit it.
+IMAGE_NAME_SUFFIX = ""
+
 EXTRA_IMAGE_FEATURES ?= "debug-tweaks"
 
 # Licensing
@@ -51,5 +64,9 @@ MEMFAULT_HARDWARE_VERSION:pn-swupdate := "${@d.getVar('BB_ORIGENV', False).getVa
 # Used by swupdate-image to populate the sw-description.in template file:
 MEMFAULT_SOFTWARE_VERSION:pn-swupdate-image := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_SOFTWARE_VERSION')}"
 MEMFAULT_HARDWARE_VERSION:pn-swupdate-image := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_HARDWARE_VERSION')}"
+
+# Used by swupdate-delta-image to populate the sw-description-delta.in template file:
+MEMFAULT_SOFTWARE_VERSION:pn-swupdate-delta-image := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_SOFTWARE_VERSION')}"
+MEMFAULT_HARDWARE_VERSION:pn-swupdate-delta-image := "${@d.getVar('BB_ORIGENV', False).getVar('MEMFAULT_HARDWARE_VERSION')}"
 
 IMAGE_INSTALL:append = " curl "

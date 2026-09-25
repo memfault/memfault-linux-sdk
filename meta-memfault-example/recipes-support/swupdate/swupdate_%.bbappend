@@ -6,6 +6,8 @@ SRC_URI:append = " \
     file://defconfig \
 "
 
+SRC_URI:append = "${@bb.utils.contains('MEMFAULT_DELTA_OTA','1',' file://delta.cfg file://0001-delta_downloader-open-the-channel-once-for-all-reque.patch file://0002-zchunk_range-coalesce-adjacent-chunks-up-to-max-rang.patch','',d)}"
+
 do_swupdate_args_update() {
     # Yocto dependency checking can be broken if we modify the source file
     # directly during the build process, create a 'output' file to modify

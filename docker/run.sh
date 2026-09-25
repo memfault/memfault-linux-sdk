@@ -73,8 +73,20 @@ e2e_test_env_vars="
 --env MEMFAULT_E2E_PROJECT_SLUG
 --env MEMFAULT_E2E_ORG_TOKEN
 --env MEMFAULT_E2E_TIMEOUT_SECONDS
+--env MEMFAULT_DELTA_OTA_TARGET_VERSION
 --env-file env-test-scripts.list
 "
+
+# Wrap in a shell so redirects and other shell syntax work. A custom entrypoint
+# takes plain args; no command falls through to the image's CMD.
+if [ -n "${entrypoint}" ]; then
+  # shellcheck disable=SC2086
+  set -- ${command}
+elif [ -n "${command}" ]; then
+  set -- sh -c "${command}"
+else
+  set --
+fi
 
 # shellcheck disable=SC2086
 docker run \
@@ -91,4 +103,4 @@ docker run \
   --env YOCTO_RELEASE="${YOCTO_RELEASE}" \
   ${entrypoint} \
   yocto \
-  ${command}
+  "$@"
