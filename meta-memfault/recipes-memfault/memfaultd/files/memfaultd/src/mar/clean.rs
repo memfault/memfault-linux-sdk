@@ -66,7 +66,9 @@ impl MarStagingCleaner {
                     .max_total_size
                     .saturating_sub(required_space),
                 get_disk_space(&self.tmp_staging_config.path).unwrap_or(DiskSize::ZERO),
-                self.tmp_staging_config.min_headroom + required_space,
+                self.tmp_staging_config
+                    .min_headroom
+                    .saturating_add(required_space),
                 SystemTime::now(),
                 self.max_age,
                 self.max_count,
@@ -90,7 +92,7 @@ impl MarStagingCleaner {
                     &persist_config.path,
                     persist_config.max_total_size.saturating_sub(required_space),
                     get_disk_space(&persist_config.path).unwrap_or(DiskSize::ZERO),
-                    persist_config.min_headroom + required_space,
+                    persist_config.min_headroom.saturating_add(required_space),
                     SystemTime::now(),
                     self.max_age,
                     self.max_count,
@@ -106,7 +108,7 @@ impl MarStagingCleaner {
         .transpose()?
         .unwrap_or(DiskSize::ZERO);
 
-        Ok(tmp_cleaned + persist_cleaned)
+        Ok(tmp_cleaned.saturating_add(persist_cleaned))
     }
 }
 
@@ -207,7 +209,9 @@ fn clean_mar_staging(
 
     let remaining_quota =
         max_total_size.saturating_sub(total_space_used.saturating_sub(space_freed));
-    let usable_space = (available_space + space_freed).saturating_sub(min_space);
+    let usable_space = available_space
+        .saturating_add(space_freed)
+        .saturating_sub(min_space);
 
     let entries_deleted_counter = KeyedMetricReading::new_counter(
         MetricStringKey::from(INTERNAL_METRIC_MAR_ENTRIES_DELETED),
@@ -1573,6 +1577,56 @@ mod test {
             ".MemfaultSdkMetric_mar_clean_duration_seconds_max" => "<duration>",
             ".MemfaultSdkMetric_mar_clean_duration_seconds_min" => "<duration>"
         });
+    }
+
+    #[rstest]
+    #[case::inodes_untracked(u64::MAX, true)]
+    #[case::inodes_available(100, true)]
+    #[case::inodes_exhausted(5, false)]
+    fn test_mar_entry_clean_when_inodes_report_different_values(
+        #[case] available_inodes: u64,
+        #[case] expect_entry_kept: bool,
+        mut mar_fixture: MarCollectorFixture,
+        metrics_service: ServiceMock<Vec<KeyedMetricReading>>,
+    ) {
+        let now = SystemTime::now();
+        let max_total_size = DiskSize::new_capacity(6120);
+        let min_headroom = DiskSize {
+            bytes: 1024,
+            inodes: 10,
+        };
+
+        let required_space = DiskSize {
+            bytes: 4096,
+            inodes: 2,
+        };
+
+        let available_space = DiskSize {
+            bytes: max_total_size.bytes,
+            inodes: available_inodes,
+        };
+
+        let path = mar_fixture.create_logentry_with_size_and_age(1000, now, false);
+
+        let size_avail = clean_mar_staging(
+            &mar_fixture.tmp_mar_staging,
+            max_total_size.saturating_sub(required_space),
+            available_space,
+            min_headroom.saturating_add(required_space),
+            now,
+            Duration::from_secs(0),
+            0,
+            &metrics_service.mbox,
+        )
+        .unwrap();
+
+        assert_eq!(
+            path.exists(),
+            expect_entry_kept,
+            "entry existence did not match expectation for available inodes = {}",
+            available_inodes
+        );
+        assert!(size_avail.bytes > 0);
     }
 
     #[fixture]

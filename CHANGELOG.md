@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.29.0] - 2026-09-25
+
+This release adds an opt-in zchunk delta OTA example image and fixes several
+disk space and OTA issues.
+
+### Added
+
+- Added an opt-in zchunk delta OTA variant of the example image. Setting
+  `MEMFAULT_DELTA_OTA = "1"` in `conf/local.conf` enables everything needed to
+  test out the delta OTA feature. Additionally adds two `bbappends` for patches
+  to `swupdate` that we will eventually upstream.
+
+### Changed
+
+- Removed the `.rootfs` suffix from example image artifact names.
+
+### Fixed
+
+- Fixed the free disk space check to use available rather than total blocks.
+- Fixed premature MAR cleaning on filesystems that do not track inodes, such as
+  UBIFS.
+- Fixed A/B OTA failing after the first update on non-QEMU example machines.
+
 ## [1.28.0] - 2026-08-28
 
 This release graduates the chunk relay feature out of experimental status: it
@@ -1736,3 +1759,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.27.0-kirkstone
 [1.28.0]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.28.0-wrynose
+[1.29.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.29.0-wrynose

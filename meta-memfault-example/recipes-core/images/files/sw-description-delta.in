@@ -1,0 +1,58 @@
+software = {
+    version = "__MEMFAULT_SOFTWARE_VERSION";
+
+    __MEMFAULT_HARDWARE_VERSION = {
+        hardware-compatibility: [ "1.0" ];
+        stable: {
+            copy1: {
+                images: (
+                    {
+                        filename = "__ZCK_HEADER_FILE";
+                        type = "delta";
+                        device = "/dev/__OTA_PARTITION_A";
+                        properties: {
+                            url = "dynamic";
+                            zckfile = "__ZCK_FILE";
+                            chain = "raw";
+                            source = "/dev/__OTA_PARTITION_B";
+                            source-size = "detect";
+                            max-ranges = "1";
+                            zckloglevel = "warn";
+                        };
+                    }
+                );
+                uboot: (
+                    {
+                        name = "rootpart";
+                        value = "2";
+                    }
+                );
+            }
+
+            copy2: {
+                images: (
+                    {
+                        filename = "__ZCK_HEADER_FILE";
+                        type = "delta";
+                        device = "/dev/__OTA_PARTITION_B";
+                        properties: {
+                            url = "dynamic";
+                            zckfile = "__ZCK_FILE";
+                            chain = "raw";
+                            source = "/dev/__OTA_PARTITION_A";
+                            source-size = "detect";
+                            max-ranges = "1";
+                            zckloglevel = "warn";
+                        };
+                    }
+                );
+                uboot: (
+                    {
+                        name = "rootpart";
+                        value = "3";
+                    }
+                );
+            }
+        }
+    }
+}

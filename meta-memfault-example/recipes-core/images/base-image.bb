@@ -46,3 +46,5 @@ IMAGE_FSTYPES_DEBUGFS = "tar.bz2"
 # so a rootfs that outgrows one is otherwise only discovered on the device,
 # part-way through an install.
 IMAGE_ROOTFS_MAXSIZE = "262144"
+# wrynose's machine conf archives the rootfs as zstd, which tarfile cannot read.
+IMAGE_FSTYPES_append = " tar.bz2"
