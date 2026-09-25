@@ -1,0 +1,108 @@
+From 5420d5f1dac397930047d8338acc88a775a7e515 Mon Sep 17 00:00:00 2001
+From: Matthew Esposito <matthew.esposito@nordicsemi.no>
+Date: Wed, 5 Aug 2026 16:54:47 -0400
+Subject: [PATCH] delta_downloader: open the channel once for all requests
+
+The downloader opens and closes the channel inside the loop serving the
+range requests. channel_open() calls curl_easy_init() and
+channel_close() calls curl_easy_cleanup(), and the connection cache, the
+DNS cache and the TLS session cache all belong to the easy handle. The
+handle is thrown away after each answer, and each range request makes a
+new TCP connection plus a full TLS handshake, even though all requests
+are sent to the very same URL.
+
+channel_get_file() already ends with curl_easy_reset(), that drops the
+options of the last transfer but keeps live connections, the session ID
+cache and the DNS cache. The same handle can then be used for the next
+range without any further change, the options are set for each transfer
+as before.
+
+Open the channel before entering the loop and drop the close. An error
+while opening is reported at start-up, as the other initialization
+errors in this function do.
+
+The overhead this saves is the reason why casync was not taken for delta
+update (see doc/source/delta-update.rst): a chunk based update should
+not re-instantiate a connection for each chunk, because the cost is high
+on small devices where SSL raises the CPU load, too.
+
+Signed-off-by: Matthew Esposito <matthew.esposito@nordicsemi.no>
+
+Upstream-Status: Pending [to be submitted to the swupdate mailing list]
+---
+diff --git a/corelib/channel_curl.c b/corelib/channel_curl.c
+index bae44d85..7e83c8c4 100644
+--- a/corelib/channel_curl.c
++++ b/corelib/channel_curl.c
+@@ -137,13 +137,15 @@ channel_op_res_t channel_close(channel_t *this)
+ 	    (channel_curl->proxy != USE_PROXY_ENV)) {
+ 		free(channel_curl->proxy);
+ 	}
+-	if (channel_curl->redirect_url)
+-		free(channel_curl->redirect_url);
+-	if (channel_curl->handle == NULL) {
+-		return CHANNEL_OK;
++	channel_curl->proxy = NULL;
++
++	free(channel_curl->redirect_url);
++	channel_curl->redirect_url = NULL;
++
++	if (channel_curl->handle != NULL) {
++		curl_easy_cleanup(channel_curl->handle);
++		channel_curl->handle = NULL;
+ 	}
+-	curl_easy_cleanup(channel_curl->handle);
+-	channel_curl->handle = NULL;
+ 
+ 	return CHANNEL_OK;
+ }
+diff --git a/handlers/delta_downloader.c b/handlers/delta_downloader.c
+index fb8493a6..50ee3f68 100644
+--- a/handlers/delta_downloader.c
++++ b/handlers/delta_downloader.c
+@@ -219,6 +219,15 @@ int start_delta_downloader(const char __attribute__ ((__unused__)) *fname,
+ 	channel_settoken("TargetToken", dwldata.targettoken, &channel_data);
+ 	channel_settoken("GatewayToken", dwldata.gatewaytoken, &channel_data);
+ 
++	/*
++	 * All ranges are retrieved from the same URL, so one channel lets curl
++	 * reuse the connection and the TLS session across requests.
++	 */
++	if (channel->open(channel, &channel_data) != CHANNEL_OK) {
++		ERROR("Cannot open channel for communication");
++		exit (EXIT_FAILURE);
++	}
++
+ 	for (;;) {
+ 		ret = read(sw_sockfd, req, sizeof(range_request_t));
+ 		if (ret < 0) {
+@@ -248,12 +257,7 @@ int start_delta_downloader(const char __attribute__ ((__unused__)) *fname,
+ 		} else
+ 			channel_data_defaults.debug = false;
+ 
+-		if (channel->open(channel, &channel_data) == CHANNEL_OK) {
+-			result = channel->get_file(channel, (void *)&channel_data);
+-		} else {
+-			ERROR("Cannot open channel for communication");
+-			result = CHANNEL_EINIT;
+-		}
++		result = channel->get_file(channel, (void *)&channel_data);
+ 
+ 		answer->id = req->id;
+ 		answer->type = (result == CHANNEL_OK) ? RANGE_COMPLETED : RANGE_ERROR;
+@@ -262,7 +266,14 @@ int start_delta_downloader(const char __attribute__ ((__unused__)) *fname,
+ 			ERROR("Answer cannot be sent back, maybe deadlock !!");
+ 		}
+ 
+-		(void)channel->close(channel);
++		if (result != CHANNEL_OK) {
++			WARN("Transfer failed, reopening channel");
++			channel->close(channel);
++			if (channel->open(channel, &channel_data) != CHANNEL_OK) {
++				ERROR("Cannot reopen channel for communication");
++				exit (EXIT_FAILURE);
++			}
++		}
+ 	}
+ 
+ 	exit (EXIT_SUCCESS);
