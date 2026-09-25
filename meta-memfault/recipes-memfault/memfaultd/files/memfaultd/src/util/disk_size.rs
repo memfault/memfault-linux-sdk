@@ -60,6 +60,13 @@ impl DiskSize {
             inodes: self.inodes.saturating_sub(other.inodes),
         }
     }
+
+    pub fn saturating_add(self, other: Self) -> Self {
+        Self {
+            bytes: self.bytes.saturating_add(other.bytes),
+            inodes: self.inodes.saturating_add(other.inodes),
+        }
+    }
 }
 
 impl Add for DiskSize {
@@ -97,15 +104,18 @@ pub fn get_disk_space(path: &Path) -> Result<DiskSize> {
         Err(eyre!("Unable to call statvfs"))
     } else {
         let f_frsize: u64 = stat.f_frsize as _;
-        let f_blocks: u64 = stat.f_blocks as _;
-        let bytes = f_frsize * f_blocks;
+        let f_bavail: u64 = stat.f_bavail as _;
         Ok(DiskSize {
             // Note that we use f_bavail/f_favail instead of f_bfree/f_bavail.
             // f_bfree is the number of free blocks available to the
             // superuser, but we want to stop before getting to that
             // point. [bf]avail is what is available to normal users.
-            bytes,
-            inodes: stat.f_favail as _,
+            bytes: f_frsize * f_bavail,
+            inodes: if stat.f_files == 0 {
+                u64::MAX
+            } else {
+                stat.f_favail as _
+            },
         })
     }
 }
@@ -146,7 +156,27 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::RngCore;
     use rstest::rstest;
+    use std::{fs::File, io::Write};
+    use tempfile::tempdir;
+
+    #[rstest]
+    fn test_get_disk_space_shrinks_when_disk_is_consumed() {
+        let dir = tempdir().unwrap();
+        let before = get_disk_space(dir.path()).unwrap();
+
+        const BALLAST_SIZE: usize = 8 * 1024 * 1024;
+        let mut ballast = vec![0u8; BALLAST_SIZE];
+        rand::thread_rng().fill_bytes(&mut ballast);
+        let mut file = File::create(dir.path().join("ballast")).unwrap();
+        file.write_all(&ballast).unwrap();
+        file.sync_all().unwrap();
+
+        let after = get_disk_space(dir.path()).unwrap();
+
+        assert!(after.bytes < before.bytes);
+    }
 
     #[rstest]
     #[case(0, 0, 0, 0, false)]

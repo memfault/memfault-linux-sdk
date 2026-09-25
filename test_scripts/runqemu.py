@@ -48,8 +48,12 @@ def get_base_image_wic_path() -> pathlib.Path:
     return qemu_get_image_wic_path(f"{match['value']}.wic")
 
 
+def get_deploy_dir() -> pathlib.Path:
+    return get_build_dir() / "tmp" / "deploy" / "images" / get_machine()
+
+
 def qemu_get_image_wic_path(filename: str) -> pathlib.Path:
-    return get_build_dir() / "tmp" / "deploy" / "images" / get_machine() / filename
+    return get_deploy_dir() / filename
 
 
 def qemu_get_system_partition_a_index() -> int:

@@ -8,6 +8,8 @@ PATCHRESOLVE = "noop"
 
 IMAGE_FSTYPES_append = " ext4.gz"
 
+IMAGE_NAME_SUFFIX = ""
+
 EXTRA_IMAGE_FEATURES ?= "debug-tweaks"
 
 # Licensing

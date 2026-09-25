@@ -122,7 +122,7 @@ few core files:
 - `u-boot.bin` - This is the DAS U-Boot binary, it is outside the Yocto
   filesystem due to limitations in the standard libvirt QEMU virtual machine.
   More usually this file would be in the first partition of the disk image
-- `base-image-qemuarm64.rootfs.wic` - This is the main disk image, it contains 3
+- `base-image-qemuarm64.wic` - This is the main disk image, it contains 3
   partitions:
   - `/dev/vda1`, vfat, contains the u-boot runtime configuration
   - `/dev/vda2`, ext4, the rootfs image

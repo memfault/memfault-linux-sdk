@@ -7,8 +7,9 @@ SRC_URI:append:qemuall = " \
     file://0002-initr_env-delay-${PV}.patch \
     file://0004-qemu-arm-rootpart-env.patch \
     file://0005-memfault-bootcmd-defconfig-${PV}.patch \
-    file://fw_env.config \
 "
+
+SRC_URI:append = " file://fw_env.config"
 
 # Build the default env into a uboot.env image (see IMAGE_BOOT_FILES). Under
 # bootstd nothing runs saveenv, so without this there is no env file for
