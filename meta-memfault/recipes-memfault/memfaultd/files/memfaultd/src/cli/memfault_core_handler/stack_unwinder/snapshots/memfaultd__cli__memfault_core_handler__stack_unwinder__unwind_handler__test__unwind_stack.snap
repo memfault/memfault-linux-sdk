@@ -1,7 +1,6 @@
 ---
 source: memfaultd/src/cli/memfault_core_handler/stack_unwinder/unwind_handler.rs
 expression: stacktrace
-snapshot_kind: text
 ---
 {
   "version": "1",
@@ -47,5 +46,15 @@ snapshot_kind: text
     "Ranger",
     "Daisy",
     "Carlton"
-  ]
+  ],
+  "app_logs": {
+    "logs": [
+      "{\"MESSAGE\":\"Biscuit\"}",
+      "{\"MESSAGE\":\"Pepper\"}"
+    ],
+    "format": {
+      "id": "v1",
+      "serialization": "json-lines"
+    }
+  }
 }

@@ -24,7 +24,7 @@ use self::arch::{coredump_thread_filter_supported, stacktrace_supported};
 use self::core_reader::CoreReader;
 use self::log_wrapper::CoreHandlerLogWrapper;
 use self::log_wrapper::CAPTURE_LOG_CHANNEL_SIZE;
-use self::procfs::{proc_mem_stream, ProcMapsImpl};
+use self::procfs::{proc_mem_stream, read_thread_names, ProcMapsImpl};
 use self::{core_elf_memfault_note::CoredumpMetadata, core_transformer::CoreTransformerOptions};
 use self::{core_reader::CoreReaderImpl, core_transformer::CoreTransformerLogFetcher};
 use self::{core_writer::CoreWriterImpl, log_wrapper::CAPTURE_LOG_MAX_LEVEL};
@@ -47,6 +47,7 @@ use kernlog::KernelLog;
 use log::{debug, error, info, warn, LevelFilter, Log};
 use nix::sys::prctl::set_dumpable;
 use stack_unwinder::{EhFrameFinderImpl, UnwindHandler};
+use std::collections::BTreeMap;
 use std::io::BufWriter;
 use std::path::Path;
 use std::thread::scope;
@@ -265,7 +266,8 @@ pub fn process_corefile(
 
     match capture_strategy {
         CoredumpCaptureStrategy::Threads { .. } | CoredumpCaptureStrategy::KernelSelection => {
-            let metadata = CoredumpMetadata::new(config, cmd_line);
+            let mut metadata = CoredumpMetadata::new(config, cmd_line);
+            metadata.thread_names = read_thread_names_or_empty(pid);
             let output_file_name = generate_tmp_file_name(compression);
             let output_file_path = mar_builder.make_attachment_path_in_entry_dir(&output_file_name);
             let output_file = BufWriter::new(File::create(&output_file_path)?);
@@ -342,9 +344,10 @@ pub fn process_corefile(
                 eh_frame_finder,
                 &parsed_notes,
                 cmd_line,
-                log_fetcher.core_handler_logs_rx,
+                &log_fetcher,
                 tid,
                 signal,
+                &read_thread_names_or_empty(pid),
             ) {
                 Ok(()) => {
                     info!("Successfully captured stacktrace");
@@ -373,6 +376,13 @@ pub fn process_corefile(
             }
         }
     }
+}
+
+fn read_thread_names_or_empty(pid: i32) -> BTreeMap<u32, String> {
+    read_thread_names(pid).unwrap_or_else(|e| {
+        debug!("Thread names will not be included in the coredump: {}", e);
+        BTreeMap::new()
+    })
 }
 
 fn generate_tmp_file_name(compression: CoredumpCompression) -> String {

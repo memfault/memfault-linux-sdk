@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.30.0] - 2026-10-13
+
+This release adds logs to stacktrace coredumps, collects thread names for linux
+coredumps, and adds a flag to silence config prints on spawn/reload.
+
+### Added
+
+- Added application logs to linux stacktrace coredumps
+- Added collection of thread names
+- Added `--suppress-settings-print` flag to avoid printing the full settings on
+  each launch and reload.
+
+### Changed
+
+- Application logs are now included in stacktrace coredumps. Before this
+  release, only regular coredumps included them. The number of log lines is set
+  by `coredump.log_lines` in `/etc/memfaultd.conf` (default: 100). If logs must
+  not leave the device because they may contain PII, set `coredump.log_lines` to
+  `0` before upgrading. This also disables log capture in regular coredumps.
+
 ## [1.29.0] - 2026-09-25
 
 This release adds an opt-in zchunk delta OTA example image and fixes several
@@ -1761,3 +1781,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.28.0-wrynose
 [1.29.0]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.29.0-wrynose
+[1.30.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.30.0-wrynose
