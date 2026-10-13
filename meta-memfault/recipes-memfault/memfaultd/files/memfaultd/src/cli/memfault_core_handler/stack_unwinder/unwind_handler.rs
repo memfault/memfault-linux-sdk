@@ -4,13 +4,18 @@
 //! This module provides a high level interface for unwinding stack traces from a core file.
 
 use std::{
+    collections::BTreeMap,
     io::{Read, Seek, Write},
-    sync::mpsc::Receiver,
 };
 
-use crate::cli::memfault_core_handler::{
-    arch::get_program_counter,
-    core_elf_note::{ElfNote, ProcessStatusNote},
+use crate::{
+    cli::memfault_core_handler::{
+        arch::get_program_counter,
+        core_elf_memfault_note::MemfaultMetadataLogs,
+        core_elf_note::{ElfNote, ProcessStatusNote},
+        core_transformer::CoreTransformerLogFetcher,
+    },
+    mar::LinuxLogsFormat,
 };
 
 use eyre::{eyre, Result};
@@ -50,14 +55,16 @@ where
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn build_stacktrace<E: EhFrameFinder>(
         &mut self,
         mut eh_frame_finder: E,
         elf_notes: &[ElfNote],
         cmd_line: String,
-        core_handler_logs: Receiver<String>,
+        log_fetcher: &CoreTransformerLogFetcher,
         crashing_tid: i32,
         signal: i32,
+        thread_names: &BTreeMap<u32, String>,
     ) -> Result<()> {
         let mut unwinder = Unwinder::new(&mut eh_frame_finder);
 
@@ -88,17 +95,21 @@ where
             .map(|(tid, pcs)| {
                 let active = tid as i32 == crashing_tid;
                 println!("Thread {} active: {}", tid, active);
-                ThreadDescriptor::new(active, pcs)
+                ThreadDescriptor::new(active, pcs, thread_names.get(&tid).cloned())
             })
             .collect::<Vec<_>>();
         let symbol_descriptors = eh_frame_finder.get_symbol_file_descriptors()?;
-        let trace_logs = core_handler_logs.try_iter().collect();
+        let trace_logs = log_fetcher.get_capture_logs();
+        let app_logs = log_fetcher
+            .get_app_logs()
+            .map(|logs| MemfaultMetadataLogs::new(logs, LinuxLogsFormat::default()));
         let backtrace = StacktraceFormat::new(
             signal,
             cmd_line,
             symbol_descriptors,
             thread_descriptors,
             trace_logs,
+            app_logs,
         );
 
         to_writer(&mut self.output_stream, &backtrace)?;
@@ -126,7 +137,7 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::{fs::File, path::PathBuf, sync::mpsc::channel};
+    use std::{fs::File, path::PathBuf, sync::mpsc::sync_channel};
 
     use crate::cli::memfault_core_handler::{
         core_elf_note::iterate_elf_notes,
@@ -145,6 +156,30 @@ mod test {
 
     #[test]
     fn test_unwind_stack() {
+        let output_buf = build_stacktrace_output(&BTreeMap::new());
+
+        let stacktrace: StacktraceFormat = from_reader(&output_buf[..]).unwrap();
+        assert_json_snapshot!(stacktrace);
+    }
+
+    #[test]
+    fn test_unwind_stack_with_thread_names() {
+        let thread_names = BTreeMap::from([(CRASHING_TID as u32, "crasher".to_string())]);
+
+        let output_buf = build_stacktrace_output(&thread_names);
+
+        let output: serde_json::Value = from_reader(&output_buf[..]).unwrap();
+        let named: Vec<_> = output["threads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|t| t["name"] == "crasher")
+            .collect();
+        assert_eq!(named.len(), 1);
+        assert_eq!(named[0]["active"], true);
+    }
+
+    fn build_stacktrace_output(thread_names: &BTreeMap<u32, String>) -> Vec<u8> {
         let core_path = core_path();
         let core_file = File::open(core_path.clone()).unwrap();
         let mut core_reader = CoreReaderImpl::new(core_file).unwrap();
@@ -161,23 +196,30 @@ mod test {
 
         let mut output_buf: Vec<u8> = Vec::new();
         let mut unwind_handler = UnwindHandler::new(proc_mem, &mut output_buf);
-        let (tx, rx) = channel();
+        let (tx, rx) = sync_channel(3);
         tx.send("Ranger".to_string()).unwrap();
         tx.send("Daisy".to_string()).unwrap();
         tx.send("Carlton".to_string()).unwrap();
+        let (app_logs_tx, app_logs_rx) = sync_channel(1);
+        app_logs_tx
+            .send(Some(vec![
+                r#"{"MESSAGE":"Biscuit"}"#.to_string(),
+                r#"{"MESSAGE":"Pepper"}"#.to_string(),
+            ]))
+            .unwrap();
+        let log_fetcher = CoreTransformerLogFetcher::new(rx, app_logs_rx);
         unwind_handler
             .build_stacktrace(
                 eh_frame_finder,
                 &parsed_notes,
                 "simple_exe".to_string(),
-                rx,
+                &log_fetcher,
                 CRASHING_TID,
                 11,
+                thread_names,
             )
             .unwrap();
-
-        let stacktrace: StacktraceFormat = from_reader(&output_buf[..]).unwrap();
-        assert_json_snapshot!(stacktrace);
+        output_buf
     }
 
     struct SimpleEHFrameInfo {

@@ -33,6 +33,10 @@ struct MemfaultDArgs {
     /// show settings and exit immediately
     show_settings: bool,
 
+    #[argh(switch)]
+    /// do not show settings when starting
+    suppress_settings_print: bool,
+
     #[argh(switch, short = 'Z')]
     /// daemonize (fork to background)
     daemonize: bool,
@@ -73,12 +77,13 @@ pub fn main() -> Result<()> {
     mkdir_if_needed(&config.config_file.persist_dir)?;
     mkdir_if_needed(&config.tmp_dir())?;
 
-    // Always show settings when starting
-    show_settings(config_path)?;
-
     if args.show_settings {
-        // Already printed above. We're done.
+        show_settings(config_path)?;
         return Ok(());
+    }
+
+    if !args.suppress_settings_print {
+        show_settings(config_path)?;
     }
 
     if !args.daemonize && get_pid_from_file().is_ok() {
