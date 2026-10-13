@@ -22,10 +22,10 @@ use crate::util::path::AbsolutePath;
 use crate::{build_info::VERSION, mar::LinuxLogsFormat};
 
 use super::core_elf_note::build_elf_note;
-use ciborium::{cbor, into_writer};
+use ciborium::{cbor, into_writer, Value as CborValue};
 use eyre::{Result, WrapErr};
 use log::warn;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 const NOTE_NAME: &str = "Memfault\0";
@@ -49,9 +49,10 @@ enum MemfaultCoreElfMetadataKey {
     CaptureStrategy = 9,
     ApplicationLogs = 10,
     CustomAttributes = 11,
+    ThreadNames = 12,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MemfaultMetadataLogs {
     logs: Vec<String>,
     format: LinuxLogsFormat,
@@ -76,6 +77,8 @@ pub struct CoredumpMetadata {
     pub capture_strategy: CoredumpCaptureStrategy,
     pub app_logs: Option<MemfaultMetadataLogs>,
     pub custom_attributes: BTreeMap<String, Value>,
+    /// Thread names keyed by tid, as set with `pthread_setname_np`. Empty if unavailable.
+    pub thread_names: BTreeMap<u32, String>,
 }
 
 impl CoredumpMetadata {
@@ -94,6 +97,7 @@ impl CoredumpMetadata {
             capture_strategy: config.config_file.coredump.capture_strategy,
             app_logs: None,
             custom_attributes: Self::build_custom_attributes(config),
+            thread_names: BTreeMap::new(),
         }
     }
 
@@ -188,7 +192,7 @@ fn read_attributes_file(path: &AbsolutePath) -> Result<BTreeMap<String, Value>> 
 ///
 /// This CBOR map uses integer keys instead of strings to reduce the size of the note.
 pub fn serialize_metadata_as_map(metadata: &CoredumpMetadata) -> Result<Vec<u8>> {
-    let cbor_val = cbor!({
+    let mut cbor_val = cbor!({
         MemfaultCoreElfMetadataKey::SchemaVersion as u32 => MEMFAULT_CORE_ELF_METADATA_SCHEMA_VERSION_V1,
         MemfaultCoreElfMetadataKey::LinuxSdkVersion as u32 => metadata.sdk_version,
         MemfaultCoreElfMetadataKey::CapturedTime as u32 => metadata.captured_time_epoch_s,
@@ -201,6 +205,15 @@ pub fn serialize_metadata_as_map(metadata: &CoredumpMetadata) -> Result<Vec<u8>>
         MemfaultCoreElfMetadataKey::ApplicationLogs as u32 => metadata.app_logs,
         MemfaultCoreElfMetadataKey::CustomAttributes as u32 => metadata.custom_attributes,
     })?;
+
+    if !metadata.thread_names.is_empty() {
+        if let CborValue::Map(entries) = &mut cbor_val {
+            entries.push((
+                cbor!(MemfaultCoreElfMetadataKey::ThreadNames as u32)?,
+                cbor!(metadata.thread_names)?,
+            ));
+        }
+    }
 
     let mut buffer = Vec::new();
     into_writer(&cbor_val, &mut buffer)?;
@@ -287,6 +300,7 @@ mod test {
             capture_strategy,
             app_logs,
             custom_attributes: BTreeMap::new(),
+            thread_names: BTreeMap::new(),
         };
 
         let map = serialize_metadata_as_map(&metadata).unwrap();
@@ -316,6 +330,29 @@ mod test {
             capture_strategy: CoredumpCaptureStrategy::KernelSelection,
             app_logs: None,
             custom_attributes,
+            thread_names: BTreeMap::new(),
+        };
+
+        let map = serialize_metadata_as_map(&metadata).unwrap();
+        let deser_map: Value = from_reader(map.as_slice()).unwrap();
+
+        insta::assert_debug_snapshot!(deser_map);
+    }
+
+    #[test]
+    fn test_serialize_metadata_with_thread_names() {
+        let metadata = CoredumpMetadata {
+            device_id: "12345678".to_string(),
+            hardware_version: "evt".to_string(),
+            software_type: "main".to_string(),
+            software_version: "1.0.0".to_string(),
+            sdk_version: "SDK_VERSION".to_string(),
+            captured_time_epoch_s: 1234,
+            cmd_line: "binary -a -b -c".to_string(),
+            capture_strategy: CoredumpCaptureStrategy::KernelSelection,
+            app_logs: None,
+            custom_attributes: BTreeMap::new(),
+            thread_names: BTreeMap::from([(100, "main".to_string()), (101, "worker".to_string())]),
         };
 
         let map = serialize_metadata_as_map(&metadata).unwrap();

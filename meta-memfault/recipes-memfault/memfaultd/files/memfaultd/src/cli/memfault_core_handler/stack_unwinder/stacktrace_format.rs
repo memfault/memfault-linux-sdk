@@ -11,6 +11,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::cli::memfault_core_handler::core_elf_memfault_note::MemfaultMetadataLogs;
+
 const STACKTRACE_FORMAT_VERSION: &str = "1";
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -23,6 +25,8 @@ pub struct StacktraceFormat {
     threads: Vec<ThreadDescriptor>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     core_handler_logs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    app_logs: Option<MemfaultMetadataLogs>,
 }
 
 impl StacktraceFormat {
@@ -32,6 +36,7 @@ impl StacktraceFormat {
         symbols: Vec<SymbolFileDescriptor>,
         threads: Vec<ThreadDescriptor>,
         core_handler_logs: Vec<String>,
+        app_logs: Option<MemfaultMetadataLogs>,
     ) -> Self {
         Self {
             version: STACKTRACE_FORMAT_VERSION.to_string(),
@@ -40,6 +45,7 @@ impl StacktraceFormat {
             symbols,
             threads,
             core_handler_logs,
+            app_logs,
         }
     }
 }
@@ -90,11 +96,13 @@ pub struct PcRange {
 pub struct ThreadDescriptor {
     active: bool,
     pcs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
 }
 
 impl ThreadDescriptor {
-    pub fn new(active: bool, pcs: Vec<usize>) -> Self {
+    pub fn new(active: bool, pcs: Vec<usize>, name: Option<String>) -> Self {
         let pcs = pcs.into_iter().map(|pc| format!("{:#x}", pc)).collect();
-        Self { active, pcs }
+        Self { active, pcs, name }
     }
 }
