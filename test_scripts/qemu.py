@@ -120,6 +120,26 @@ class QEMU:
             ) from error
         assert index == 0, f"command exited non-zero on the device: {cmd}"
 
+    def exec_cmd_output(self, cmd: str, timeout: float = 30) -> str:
+        """Run a command and return what it printed.
+
+        printf keeps the marker apart from its suffix in the echoed command, so
+        the patterns match only the printed lines. The patterns carry no line
+        ending, because the serial console's line endings are not fixed.
+        """
+        marker = f"OUT{uuid.uuid4().hex[:8]}"
+        self.exec_cmd(f"printf '%s=begin\\n' {marker}; {cmd}; printf '%s=end\\n' {marker}")
+        for suffix in ("begin", "end"):
+            try:
+                self.pid.expect(f"{marker}={suffix}", timeout=cast("int", timeout))  # pyright: ignore[reportUnknownMemberType]
+            except (pexpect.TIMEOUT, pexpect.EOF) as error:
+                raise AssertionError(
+                    f"no {marker}={suffix} came back for: {cmd}\n\n"
+                    f"--- unmatched console bytes ---\n{self.console_tail()!r}"
+                ) from error
+        output = cast("bytes", self.pid.before or b"")  # pyright: ignore[reportUnknownMemberType]
+        return output.decode(errors="replace").replace("\r", "").removeprefix("\n")
+
     def terminate(self) -> None:
         """Stop QEMU without running anything on the guest.
 

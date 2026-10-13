@@ -307,7 +307,7 @@ where
 /// capture logs.
 #[derive(Debug)]
 pub struct CoreTransformerLogFetcher {
-    pub core_handler_logs_rx: Receiver<String>,
+    core_handler_logs_rx: Receiver<String>,
     app_logs_rx: Receiver<Option<Vec<String>>>,
 }
 
@@ -427,6 +427,7 @@ mod test {
             cmd_line: "binary -a -b -c".to_string(),
             capture_strategy,
             custom_attributes: std::collections::BTreeMap::new(),
+            thread_names: std::collections::BTreeMap::new(),
             app_logs: None,
         };
 
