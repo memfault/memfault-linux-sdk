@@ -8,7 +8,6 @@ import gzip
 import hashlib
 import pathlib
 import struct
-from typing import cast
 
 from scripts.delta_ota_local_server import Summary
 from test_scripts import runqemu
@@ -50,7 +49,7 @@ def _partition_bounds(wic: pathlib.Path, index: int) -> tuple[int, int]:
     offset = _MBR_TABLE_OFFSET + _MBR_ENTRY_SIZE * (index - 1)
     with wic.open("rb") as f:
         entry = f.read(_SECTOR_SIZE)[offset : offset + _MBR_ENTRY_SIZE]
-    first_lba, sectors = cast("tuple[int, int]", struct.unpack("<II", entry[8:16]))
+    first_lba, sectors = struct.unpack("<II", entry[8:16])
     assert sectors, f"partition {index} of {wic.name} is empty"
     return first_lba * _SECTOR_SIZE, sectors * _SECTOR_SIZE
 
