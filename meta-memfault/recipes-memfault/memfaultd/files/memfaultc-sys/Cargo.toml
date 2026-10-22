@@ -2,6 +2,7 @@
 name = "memfaultc-sys"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.80"
 autobins = false
 description = "Supporting crate for the Memfault memfaultd embedded Linux agent"
 homepage = "https://github.com/memfault/memfaultd"

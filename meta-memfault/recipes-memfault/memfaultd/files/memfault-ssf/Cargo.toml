@@ -2,6 +2,7 @@
 name = "memfault-ssf"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.80"
 description = "Supporting crate for the Memfault memfaultd embedded Linux agent"
 homepage = "https://github.com/memfault/memfaultd"
 documentation = "https://docs.memfault.com/"
@@ -13,7 +14,7 @@ repository = "https://github.com/memfault/memfaultd"
 futures = "0.3.31"
 log = "0.4"
 thiserror = "1.0.38"
-tokio = { version = "1.43.1", features = ["sync", "macros", "rt", "net", "time"] }
+tokio = { version = ">=1.43.1, <1.54", features = ["sync", "macros", "rt", "net", "time"] }
 
 [lints]
 workspace = true

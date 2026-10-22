@@ -20,6 +20,7 @@ from urllib.parse import urlparse
 
 import pexpect
 import pytest
+
 from scripts import delta_ota_local_server
 from test_scripts.qemu import QEMU
 
