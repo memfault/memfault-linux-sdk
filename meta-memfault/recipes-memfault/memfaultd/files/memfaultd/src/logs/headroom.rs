@@ -113,10 +113,7 @@ impl HeadroomCheck for HeadroomLimiter {
                 current_log.write_log(
                     *log_timestamp,
                     "INFO",
-                    format!(
-                        "Recovered from low disk space. Dropped {} logs.",
-                        num_dropped_logs
-                    ),
+                    format!("Recovered from low disk space. Dropped {num_dropped_logs} logs."),
                 )?;
                 Headroom::Ok
             }

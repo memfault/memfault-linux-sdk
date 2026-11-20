@@ -90,6 +90,46 @@ class QEMU:
             f"Timed out waiting for service {service} to get state {expected_state}. Last state: {states[last_state_idx]}"
         )
 
+    def systemd_service_properties(self, service: str, *properties: str) -> dict[str, str]:
+        flags = " ".join(f"--property={name}" for name in properties)
+        output = self.exec_cmd_output(f"systemctl show {flags} {service}")
+        values: dict[str, str] = {}
+        for line in output.splitlines():
+            name, sep, value = line.strip().partition("=")
+            if sep and name in properties:
+                values[name] = value
+        return values
+
+    def systemd_invocation_id(self, service: str) -> str:
+        invocation_id = self.systemd_service_properties(service, "InvocationID").get("InvocationID")
+        if not invocation_id:
+            raise AssertionError(f"no InvocationID for {service}")
+        return invocation_id
+
+    def systemd_wait_for_restart(
+        self,
+        service: str,
+        previous_invocation_id: str,
+        *,
+        timeout_seconds: float = 30.0,
+    ) -> None:
+        deadline = time.time() + timeout_seconds
+        properties: dict[str, str] = {}
+        while time.time() < deadline:
+            properties = self.systemd_service_properties(service, "ActiveState", "InvocationID")
+            invocation_id = properties.get("InvocationID", "")
+            if (
+                properties.get("ActiveState") == "active"
+                and invocation_id
+                and invocation_id != previous_invocation_id
+            ):
+                return
+            time.sleep(0.1)
+        raise TimeoutError(
+            f"Timed out waiting for service {service} to restart from invocation "
+            f"{previous_invocation_id}. Last properties: {properties}"
+        )
+
     def expect_journald_message(
         self, unit: str, message: str, timeout: float = 3, last_lines: int = 0
     ) -> None:

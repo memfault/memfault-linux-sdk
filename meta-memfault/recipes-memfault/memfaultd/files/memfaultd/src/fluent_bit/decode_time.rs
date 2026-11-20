@@ -125,8 +125,7 @@ impl<'de> Visitor<'de> for EventTimeVisitor {
         match (tag, buf) {
             (Some(FLUENTD_TIME_EXT_TYPE), Some(bytes)) => bytes_to_timestamp(bytes),
             (Some(tag), _) => Err(serde::de::Error::custom(format!(
-                "Invalid tag {} - expected 0.",
-                tag
+                "Invalid tag {tag} - expected 0."
             ))),
             _ => Err(serde::de::Error::custom("Invalid event tag.")),
         }

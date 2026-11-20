@@ -17,18 +17,14 @@ from .qemu import QEMU
 def test(qemu: QEMU, memfault_service_tester: MemfaultServiceTester, qemu_device_id: str) -> None:
     # config and send a 'device-config' mar entry to confirm the version.
 
-    qemu.exec_cmd("memfaultctl sync")
-
-    time.sleep(2)
-    qemu.exec_cmd("memfaultctl sync")
-
     # Make sure device has updated the reported config revision
     def _check() -> None:
+        qemu.exec_cmd_ok("memfaultctl sync")
         device = memfault_service_tester.get_device(device_serial=qemu_device_id)
         assert device
         assert device["reported_config_revision"] == device["assigned_config_revision"]
 
-    memfault_service_tester.poll_until_not_raising(_check, poll_interval_seconds=1)
+    memfault_service_tester.poll_until_not_raising(_check, poll_interval_seconds=10)
 
 
 @pytest.mark.parametrize("data_collection_enabled", [True])

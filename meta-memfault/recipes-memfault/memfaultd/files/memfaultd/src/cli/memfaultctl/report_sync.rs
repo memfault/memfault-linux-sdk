@@ -17,7 +17,7 @@ pub fn report_sync(config: &Config, success: bool) -> Result<()> {
 
     match client.report_sync(success) {
         Ok(()) => {
-            eprintln!("Reported a {} sync to memfaultd", status);
+            eprintln!("Reported a {status} sync to memfaultd");
             Ok(())
         }
         Err(e) => Err(eyre!("{} failed: {:#}", command_string, e)),

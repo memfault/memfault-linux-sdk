@@ -28,7 +28,7 @@ fn build_log_line(level: &str, message: &str) -> LogEntry {
 }
 
 fn build_regex_string(level: &str) -> String {
-    format!(r"\[.*\] \[{}\]:", level)
+    format!(r"\[.*\] \[{level}\]:")
 }
 
 fn build_log_mapper() -> LogLevelMapper {

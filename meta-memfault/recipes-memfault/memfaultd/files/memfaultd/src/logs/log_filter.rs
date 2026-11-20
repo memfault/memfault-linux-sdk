@@ -54,7 +54,7 @@ fn level_str_from_priority(priority: &str) -> &'static str {
         "6" => LOG_LEVEL_INFO,
         "7" => LOG_LEVEL_DEBUG,
         _ => {
-            warn!("LogToMetrics rule has invalid priority: {}", priority);
+            warn!("LogToMetrics rule has invalid priority: {priority}");
             "UNKNOWN"
         }
     }
@@ -243,7 +243,7 @@ impl LogFilter {
                     if let Err(e) = metrics_mbox
                         .send_and_forget(vec![KeyedMetricReading::increment_counter(counter_key)])
                     {
-                        warn!("Failed to increment logs to metrics counter {}", e);
+                        warn!("Failed to increment logs to metrics counter {e}");
                     };
                     rule.action
                         .as_ref()
@@ -255,10 +255,7 @@ impl LogFilter {
                     .map_or_else(|| LogRuleResult::from(default_action), LogRuleResult::from),
                 Ok(MessageMatchResult::NonMatch) => LogRuleResult::NonMatch,
                 Err(e) => {
-                    warn!(
-                        "Failed to match log message {:?} with pattern {:?}: {}",
-                        log_entry, rule, e
-                    );
+                    warn!("Failed to match log message {log_entry:?} with pattern {rule:?}: {e}");
                     LogRuleResult::NonMatch
                 }
             }
@@ -389,7 +386,7 @@ impl LogFilter {
         for (i, capture) in captures.iter().enumerate() {
             if let Some(capture) = capture {
                 metric_name_with_captures =
-                    metric_name_with_captures.replace(&format!("${}", i), capture.as_str());
+                    metric_name_with_captures.replace(&format!("${i}"), capture.as_str());
             }
         }
         metric_name_with_captures
@@ -608,7 +605,7 @@ mod tests {
         );
 
         assert_json_snapshot!(
-            format!("{}-metrics", test_name).as_str(),
+            format!("{test_name}-metrics").as_str(),
             service.take_metrics().unwrap()
         );
     }
@@ -716,7 +713,7 @@ mod tests {
         );
 
         assert_json_snapshot!(
-            format!("{}-metrics", test_name).as_str(),
+            format!("{test_name}-metrics").as_str(),
             service.take_metrics().unwrap()
         );
     }
@@ -759,7 +756,7 @@ mod tests {
         );
 
         assert_json_snapshot!(
-            format!("{}-metrics", test_name).as_str(),
+            format!("{test_name}-metrics").as_str(),
             service.take_metrics().unwrap()
         );
     }

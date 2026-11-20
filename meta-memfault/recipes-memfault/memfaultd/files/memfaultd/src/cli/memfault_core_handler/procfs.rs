@@ -18,7 +18,7 @@ use crate::cli::memfault_core_handler::ElfPtrSize;
 
 /// Opens /proc/<pid>/mem for reading.
 pub fn proc_mem_stream(pid: i32) -> Result<File> {
-    let proc_mem_stream = File::open(format!("/proc/{}/mem", pid))?;
+    let proc_mem_stream = File::open(format!("/proc/{pid}/mem"))?;
     Ok(proc_mem_stream)
 }
 
@@ -39,7 +39,7 @@ pub fn read_proc_mem<P: Read + Seek>(
 /// Names are read from /proc/<pid>/task/<tid>/comm, which is where `pthread_setname_np` and
 /// `prctl(PR_SET_NAME)` store them. Threads whose name cannot be read are omitted.
 pub fn read_thread_names(pid: i32) -> Result<BTreeMap<u32, String>> {
-    read_thread_names_from(Path::new(&format!("/proc/{}/task", pid)))
+    read_thread_names_from(Path::new(&format!("/proc/{pid}/task")))
 }
 
 fn read_thread_names_from(task_dir: &Path) -> Result<BTreeMap<u32, String>> {
@@ -62,7 +62,7 @@ fn read_thread_names_from(task_dir: &Path) -> Result<BTreeMap<u32, String>> {
                     names.insert(tid, name.to_string());
                 }
             }
-            Err(e) => debug!("Failed to read name of thread {}: {}", tid, e),
+            Err(e) => debug!("Failed to read name of thread {tid}: {e}"),
         }
     }
     Ok(names)

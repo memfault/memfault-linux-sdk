@@ -167,7 +167,7 @@ impl ProcessNameMapper for ProcfsProcessNameMapper {
 // string while running whereas cmdline is static.
 #[cfg(target_os = "linux")]
 pub fn get_process_name(pid: u32) -> Result<String> {
-    let cmd_line_file_name = format!("/proc/{}/cmdline", pid);
+    let cmd_line_file_name = format!("/proc/{pid}/cmdline");
     let mut cmd_line_file = File::open(cmd_line_file_name)?;
     let cmd_line = read_proc_cmdline(&mut cmd_line_file)?;
 
@@ -178,7 +178,7 @@ pub fn get_process_name(pid: u32) -> Result<String> {
 pub fn get_process_path(pid: u32) -> Result<PathBuf> {
     use std::path::Path;
 
-    let exe_file_name = format!("/proc/{}/exe", pid);
+    let exe_file_name = format!("/proc/{pid}/exe");
     let exe_file = Path::new(&exe_file_name);
     Ok(read_link(exe_file)?)
 }
@@ -229,7 +229,6 @@ fn process_name_from_cmdline(cmd_line: String) -> Result<String> {
 }
 
 /// Provide some mock implementations for non-Linux systems. Designed for development. Not actual use.
-
 #[cfg(not(target_os = "linux"))]
 pub fn read_system_boot_id() -> Result<Uuid> {
     use once_cell::sync::Lazy;

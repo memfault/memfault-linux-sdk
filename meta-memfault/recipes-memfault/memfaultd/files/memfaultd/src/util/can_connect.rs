@@ -49,14 +49,14 @@ mod tests {
 
         // Need a TCP listener to be running on the port
         // TcpConnectionChecker will try to create a connection with
-        let listener = TcpListener::bind(format!("{}:{}", ip_str, port))
+        let listener = TcpListener::bind(format!("{ip_str}:{port}"))
             .expect("Could not create TcpListener for testing!");
 
         let connection_checker = TcpConnectionChecker::new(Duration::from_secs(10));
         assert!(connection_checker
             .can_connect(
                 &IpAddr::from_str(ip_str)
-                    .unwrap_or_else(|_| panic!("{} should be parseable to an IP Address", ip_str)),
+                    .unwrap_or_else(|_| panic!("{ip_str} should be parseable to an IP Address")),
                 port
             )
             .is_ok());
@@ -70,7 +70,7 @@ mod tests {
         assert!(connection_checker
             .can_connect(
                 &IpAddr::from_str(ip_str)
-                    .unwrap_or_else(|_| panic!("{} should be parseable to an IP Address", ip_str)),
+                    .unwrap_or_else(|_| panic!("{ip_str} should be parseable to an IP Address")),
                 443
             )
             .is_err());

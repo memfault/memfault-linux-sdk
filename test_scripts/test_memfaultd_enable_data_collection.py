@@ -1,7 +1,6 @@
 #
 # Copyright (c) Memfault, Inc.
 # See License.txt for details
-import time
 from typing import cast
 
 import pexpect
@@ -25,14 +24,10 @@ def test_start(qemu: QEMU) -> None:
     # memfaultd will try to read the config while the CLI is still writing to it.
     qemu.wait_for_memfaultd_start()
 
+    invocation_id = qemu.systemd_invocation_id("memfaultd.service")
     qemu.exec_cmd("memfaultctl disable-data-collection")
     qemu.child().expect("Disabling data collection.")
-
-    # Work-around for checking the state in the next line before memfaultd has even restarted:
-    # TODO: track the journal logs instead of using `systemctl is-active`
-    time.sleep(0.5)
-
-    qemu.systemd_wait_for_service_state("memfaultd.service", "active")
+    qemu.systemd_wait_for_restart("memfaultd.service", invocation_id)
 
     qemu.exec_cmd("memfaultctl disable-data-collection")
     qemu.child().expect("Data collection is already disabled.")
@@ -64,10 +59,10 @@ def test_via_memfaultctl(qemu: QEMU) -> None:
     # memfaultd will try to read the config while the CLI is still writing to it.
     qemu.wait_for_memfaultd_start()
 
+    invocation_id = qemu.systemd_invocation_id("memfaultd.service")
     qemu.exec_cmd("memfaultctl disable-data-collection")
     qemu.child().expect("Disabling data collection.")
-
-    qemu.wait_for_memfaultd_start()
+    qemu.systemd_wait_for_restart("memfaultd.service", invocation_id)
 
     qemu.exec_cmd("memfaultctl disable-data-collection")
     qemu.child().expect("Data collection is already disabled.")

@@ -18,7 +18,7 @@ pub fn start_session(
     if config.config_file.enable_data_collection {
         match client.start_session(session_name.clone(), metric_readings) {
             Ok(()) => {
-                eprintln!("Started new {} session", session_name);
+                eprintln!("Started new {session_name} session");
                 Ok(())
             }
             Err(e) => Err(eyre!("start-session failed: {:?}", e)),
@@ -40,7 +40,7 @@ pub fn end_session(
     if config.config_file.enable_data_collection {
         match client.end_session(session_name.clone(), readings) {
             Ok(()) => {
-                eprintln!("Ended ongoing {} session", session_name);
+                eprintln!("Ended ongoing {session_name} session");
                 Ok(())
             }
             Err(e) => Err(eyre!("end-session failed: {:?}", e)),

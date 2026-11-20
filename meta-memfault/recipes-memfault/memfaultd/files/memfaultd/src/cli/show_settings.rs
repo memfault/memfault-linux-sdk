@@ -22,7 +22,7 @@ fn dump_config(
         .map(Path::display)
         .map(|d| Cow::Owned(d.to_string()))
         .unwrap_or_else(|| Cow::Borrowed(Config::DEFAULT_CONFIG_PATH));
-    writeln!(writer, "Base configuration ({}):", path_str)?;
+    writeln!(writer, "Base configuration ({path_str}):")?;
     writeln!(writer, "{}", serde_json::to_string_pretty(&configs.base)?)?;
     writeln!(writer)?;
     writeln!(writer, "Runtime configuration:")?;
@@ -46,10 +46,10 @@ fn dump_device_info(writer: &mut impl Write, device: &Device) -> Result<()> {
         device_info.hardware_version
     )?;
     if let Some(sw_version) = device_info.software_version.as_ref() {
-        writeln!(writer, "  MEMFAULT_SOFTWARE_VERSION={}", sw_version)?;
+        writeln!(writer, "  MEMFAULT_SOFTWARE_VERSION={sw_version}")?;
     }
     if let Some(sw_type) = device_info.software_type.as_ref() {
-        writeln!(writer, "  MEMFAULT_SOFTWARE_TYPE={}", sw_type)?;
+        writeln!(writer, "  MEMFAULT_SOFTWARE_TYPE={sw_type}")?;
     }
 
     Ok(())
@@ -72,7 +72,7 @@ fn dump_version(writer: &mut impl Write, versions: &Versions) -> Result<()> {
 fn dump_features(writer: &mut impl Write, features: &[&str]) -> Result<()> {
     writeln!(writer, "Features enabled:")?;
     for feature in features {
-        writeln!(writer, "  {}", feature)?;
+        writeln!(writer, "  {feature}")?;
     }
     Ok(())
 }

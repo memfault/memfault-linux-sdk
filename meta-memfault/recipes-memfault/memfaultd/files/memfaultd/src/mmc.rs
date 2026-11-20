@@ -116,10 +116,7 @@ impl MmcImpl {
         current_kernel_version.is_ok_and(|current| {
             let supported = current >= sysfs_lifetime_kernel_version;
             if !supported {
-                info!(
-                    "sysfs lifetime reads not supported by kernel version: {:?}",
-                    current
-                );
+                info!("sysfs lifetime reads not supported by kernel version: {current:?}");
             }
 
             supported
@@ -439,7 +436,7 @@ mod test {
         match (&actual, &expected) {
             (Ok(actual), Ok(expected)) => assert_eq!(actual, expected),
             (Ok(actual), Err(_)) => {
-                panic!("Expected error, but conversion succeeded: {:?}", actual)
+                panic!("Expected error, but conversion succeeded: {actual:?}")
             }
             (Err(_), Ok(_)) => panic!("Expected success, but conversion failed"),
             (Err(_), Err(_)) => {}

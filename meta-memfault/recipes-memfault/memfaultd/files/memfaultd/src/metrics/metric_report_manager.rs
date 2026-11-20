@@ -14,7 +14,7 @@ use std::{
 };
 
 use crate::{
-    config::SessionConfig,
+    config::{DeviceConfig, DeviceConfigUpdateMessage, SessionConfig},
     mar::{MarConfig, MarEntryBuilder, Metadata},
     metrics::{
         core_metrics::{CoreMetricKeys, METRIC_OPERATIONAL_CRASHES},
@@ -40,6 +40,7 @@ pub struct MetricReportManager {
     core_metrics: CoreMetricKeys,
     hrt_max_samples_per_min: NonZeroU32,
     extra_histo_min_max: MetricsSet,
+    device_config: Arc<DeviceConfig>,
 }
 
 impl MetricReportManager {
@@ -50,6 +51,7 @@ impl MetricReportManager {
         hrt_max_samples_per_min: NonZeroU32,
         daily_heartbeats_enabled: bool,
         extra_histo_min_max: MetricsSet,
+        device_config: Arc<DeviceConfig>,
     ) -> Self {
         Self::new_with_session_configs(
             hrt_enabled,
@@ -57,6 +59,7 @@ impl MetricReportManager {
             &[],
             daily_heartbeats_enabled,
             extra_histo_min_max,
+            device_config,
         )
     }
 
@@ -66,6 +69,7 @@ impl MetricReportManager {
         session_configs: &[SessionConfig],
         daily_heartbeats_enabled: bool,
         extra_histo_min_max: MetricsSet,
+        device_config: Arc<DeviceConfig>,
     ) -> Self {
         Self {
             heartbeat: MetricReport::new(
@@ -86,6 +90,7 @@ impl MetricReportManager {
             core_metrics: CoreMetricKeys::get_session_core_metrics(),
             hrt_max_samples_per_min,
             extra_histo_min_max,
+            device_config,
         }
     }
 
@@ -149,8 +154,10 @@ impl MetricReportManager {
     /// Adds a metric reading to all ongoing metric reports
     /// that capture that metric
     pub fn add_metric(&mut self, m: KeyedMetricReading) -> Result<()> {
-        if let Some(hrt_report) = &mut self.hrt {
-            hrt_report.add_metric(&m);
+        if self.device_config.capture_sampling().debugging_enabled() {
+            if let Some(hrt_report) = &mut self.hrt {
+                hrt_report.add_metric(&m);
+            }
         }
         self.add_metric_excluding_hrt(m)
     }
@@ -255,6 +262,18 @@ impl MetricReportManager {
             },
         };
 
+        if !self
+            .device_config
+            .capture_sampling()
+            .metric_report_enabled(report_type)
+        {
+            debug!(
+                "Dropping {} report: monitoring resolution too low",
+                report_type.as_str()
+            );
+            return Ok(());
+        }
+
         if let Some(mar_builder) = mar_builder {
             let mar_entry = mar_builder
                 .save(network_config, mar_config)
@@ -276,9 +295,17 @@ impl MetricReportManager {
         &mut self,
         mar_staging_area: &Path,
     ) -> Vec<MarEntryBuilder<Metadata>> {
+        let device_config = self.device_config.clone();
         self.report_iter()
             .filter_map(|report| {
-                if let Ok(builder) = report.prepare_metric_report(mar_staging_area) {
+                let prepared = report.prepare_metric_report(mar_staging_area);
+                if !device_config
+                    .capture_sampling()
+                    .metric_report_enabled(report.report_type())
+                {
+                    return None;
+                }
+                if let Ok(builder) = prepared {
                     builder.or_else(|| {
                         debug!(
                             "Skipping generating metrics entry. No metrics in store for: {}",
@@ -319,7 +346,7 @@ impl MetricReportManager {
                     "Generated MAR entry from metrics: {}",
                     mar_entry.path.display()
                 ),
-                Err(e) => error!("Error building MAR entry: {}", e),
+                Err(e) => error!("Error building MAR entry: {e}"),
             }
         }
 
@@ -335,6 +362,7 @@ impl Default for MetricReportManager {
                 .expect("Default HRT rate limit should be nonzero"),
             true,
             MetricsSet::empty(),
+            Arc::new(DeviceConfig::default()),
         )
     }
 }
@@ -361,7 +389,7 @@ impl Handler<DumpMetricReportMessage> for MetricReportManager {
                 if let Err(e) =
                     self.dump_report_to_mar_entry(network_config, report_type, mar_config)
                 {
-                    warn!("Failed to dump {:?} metric report: {}", report_type, e)
+                    warn!("Failed to dump {report_type:?} metric report: {e}")
                 }
             }
             ReportsToDump::All => {
@@ -372,7 +400,7 @@ impl Handler<DumpMetricReportMessage> for MetricReportManager {
                             "Generated MAR entry from metrics: {}",
                             mar_entry.path.display()
                         ),
-                        Err(e) => warn!("Error building MAR entry: {}", e),
+                        Err(e) => warn!("Error building MAR entry: {e}"),
                     }
                 }
             }
@@ -416,6 +444,9 @@ impl Handler<DumpHrtMessage> for MetricReportManager {
         if let Some(hrt) = &mut self.hrt {
             // Replace the HRT report with a new one and write it to disk
             let hrt_report = replace(hrt, HrtReport::new(self.hrt_max_samples_per_min));
+            if !self.device_config.capture_sampling().debugging_enabled() {
+                return Ok(());
+            }
             // Count the readings in the report being flushed before it is moved
             // into write_report_to_disk. Emitted below, after the borrow of
             // self.hrt ends.
@@ -444,6 +475,15 @@ impl Handler<DumpHrtMessage> for MetricReportManager {
     }
 }
 
+impl Handler<DeviceConfigUpdateMessage> for MetricReportManager {
+    fn deliver(
+        &mut self,
+        m: DeviceConfigUpdateMessage,
+    ) -> <DeviceConfigUpdateMessage as ssf::Message>::Reply {
+        self.device_config = m.config;
+    }
+}
+
 /// A trait to make it easier to verify (in unit tests) all the code that pushes metrics.
 ///
 /// The implementation should implement some logic to coalesce multiple metrics
@@ -457,6 +497,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+    use crate::config::{Resolution, Sampling};
     use crate::{metrics::hrt::HighResTelemetryV1, test_utils::in_histograms};
     use insta::{assert_json_snapshot, rounded_redaction, with_settings};
     use rstest::rstest;
@@ -509,6 +550,7 @@ mod tests {
             NonZeroU32::new(1).unwrap(),
             true,
             MetricsSet::empty(),
+            Arc::new(DeviceConfig::default()),
         );
         for m in metrics {
             metric_report_manager
@@ -528,6 +570,7 @@ mod tests {
                 .expect("Default HRT rate limit should be nonzero"),
             true,
             MetricsSet::empty(),
+            Arc::new(DeviceConfig::default()),
         );
         for m in metrics {
             metric_report_manager
@@ -562,6 +605,7 @@ mod tests {
             NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN).unwrap(),
             false,
             MetricsSet::empty(),
+            Arc::new(DeviceConfig::default()),
         );
 
         // Offer more readings than the rate limit (750/min) allows.
@@ -596,6 +640,7 @@ mod tests {
             NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN).unwrap(),
             false,
             MetricsSet::empty(),
+            Arc::new(DeviceConfig::default()),
         );
 
         for i in 0..10 {
@@ -631,6 +676,7 @@ mod tests {
             NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN).unwrap(),
             false,
             MetricsSet::empty(),
+            Arc::new(DeviceConfig::default()),
         );
         let tempdir = TempDir::new().unwrap();
 
@@ -669,6 +715,41 @@ mod tests {
         );
     }
 
+    #[rstest]
+    #[case::fetched_off(Resolution::Off, false)]
+    #[case::fetched_normal(Resolution::Normal, true)]
+    fn test_hrt_written_by_debugging_resolution(
+        #[case] debugging_resolution: Resolution,
+        #[case] expect_written: bool,
+    ) {
+        let device_config = DeviceConfig {
+            revision: Some(1),
+            sampling: Sampling {
+                debugging_resolution,
+                ..DeviceConfig::default().sampling
+            },
+            ..DeviceConfig::default()
+        };
+        let mut manager = MetricReportManager::new(
+            true,
+            NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN).unwrap(),
+            false,
+            MetricsSet::empty(),
+            Arc::new(device_config),
+        );
+        for m in in_histograms(vec![("foo", 1.0)]) {
+            manager.add_metric(m).unwrap();
+        }
+
+        let tempdir = TempDir::new().unwrap();
+        let message = dump_hrt_message(&tempdir);
+        let staging = message.mar_config().tmp_staging_path();
+        manager.deliver(message).unwrap();
+
+        let written = staging.exists() && std::fs::read_dir(&staging).unwrap().count() > 0;
+        assert_eq!(written, expect_written);
+    }
+
     /// When HRT is disabled, no reading-count metric is emitted at all.
     #[rstest]
     fn test_hrt_reading_count_absent_when_hrt_disabled() {
@@ -677,6 +758,7 @@ mod tests {
             NonZeroU32::new(1).unwrap(),
             false,
             MetricsSet::empty(),
+            Arc::new(DeviceConfig::default()),
         );
 
         for i in 0..5 {
@@ -742,6 +824,7 @@ mod tests {
             &session_configs,
             true,
             MetricsSet::empty(),
+            Arc::new(DeviceConfig::default()),
         );
 
         assert!(metric_report_manager.start_session(session_a_name).is_ok());
@@ -771,7 +854,7 @@ mod tests {
         );
 
         for (session_name, mut metric_report) in metric_report_manager.sessions {
-            let snapshot_name = format!("{}.{}", test_name, session_name);
+            let snapshot_name = format!("{test_name}.{session_name}");
             assert_report_snapshot(&mut metric_report, &snapshot_name, &tempdir);
         }
     }
@@ -799,6 +882,7 @@ mod tests {
             &session_configs,
             true,
             MetricsSet::empty(),
+            Arc::new(DeviceConfig::default()),
         );
 
         assert!(metric_report_manager
@@ -842,6 +926,7 @@ mod tests {
             &session_configs,
             true,
             MetricsSet::empty(),
+            Arc::new(DeviceConfig::default()),
         );
 
         let metrics_a = in_histograms(vec![("foo", 1.0), ("bar", 2.0)]);
@@ -896,6 +981,7 @@ mod tests {
             &session_configs,
             true,
             MetricsSet::empty(),
+            Arc::new(DeviceConfig::default()),
         );
 
         let metrics = in_histograms(vec![("foo", 5.0), ("bar", 3.5)]);
@@ -924,6 +1010,70 @@ mod tests {
         }
     }
 
+    #[rstest]
+    #[case::not_fetched_off(None, Resolution::Off, false, true, true, true)]
+    #[case::fetched_off(Some(1), Resolution::Off, false, false, false, false)]
+    #[case::fetched_low(Some(1), Resolution::Low, false, false, true, false)]
+    #[case::fetched_normal(Some(1), Resolution::Normal, false, true, true, true)]
+    #[case::fetched_high(Some(1), Resolution::High, false, true, true, true)]
+    #[case::dev_mode_on(Some(1), Resolution::Off, true, true, true, true)]
+    fn test_reports_gated_by_monitoring_resolution(
+        #[case] revision: Option<crate::network::DeviceConfigRevision>,
+        #[case] monitoring_resolution: Resolution,
+        #[case] enable_dev_mode: bool,
+        #[case] expect_heartbeat: bool,
+        #[case] expect_daily: bool,
+        #[case] expect_session: bool,
+    ) {
+        let session_name = SessionName::from_str("test-session").unwrap();
+        let session_configs = vec![SessionConfig {
+            name: session_name.clone(),
+            captured_metrics: HashSet::from_iter([MetricStringKey::from_str("foo").unwrap()]),
+        }];
+        let mut manager = MetricReportManager::new_with_session_configs(
+            false,
+            NonZeroU32::new(HRT_DEFAULT_MAX_SAMPLES_PER_MIN).unwrap(),
+            &session_configs,
+            true,
+            MetricsSet::empty(),
+            Arc::new(DeviceConfig::default()),
+        );
+
+        let mut device_config = DeviceConfig {
+            revision,
+            sampling: Sampling {
+                monitoring_resolution,
+                ..DeviceConfig::default().sampling
+            },
+            ..DeviceConfig::default()
+        };
+        if enable_dev_mode {
+            device_config.sampling = Sampling::development();
+        }
+        manager.deliver(DeviceConfigUpdateMessage {
+            config: Arc::new(device_config),
+        });
+
+        manager.start_session(session_name).unwrap();
+        for m in in_histograms(vec![("foo", 1.0)]) {
+            manager.add_metric(m).unwrap();
+        }
+
+        let tempdir = TempDir::new().unwrap();
+        let saved: Vec<String> = manager
+            .prepare_all_metric_reports(tempdir.path())
+            .iter()
+            .map(|b| match b.get_metadata() {
+                Metadata::LinuxMetricReport { report_type, .. } => report_type.as_str().to_string(),
+                _ => panic!("Invalid MAR builder"),
+            })
+            .collect();
+
+        assert_eq!(saved.contains(&"heartbeat".to_string()), expect_heartbeat);
+        assert_eq!(saved.contains(&"daily-heartbeat".to_string()), expect_daily);
+        assert_eq!(saved.contains(&"test-session".to_string()), expect_session);
+    }
+
     #[test]
     fn test_no_daily_heartbeats_when_disabled() {
         let metric_report_manager = MetricReportManager::new(
@@ -932,6 +1082,7 @@ mod tests {
                 .expect("Zero value passed to non-zero constructor"),
             false,
             MetricsSet::empty(),
+            Arc::new(DeviceConfig::default()),
         );
 
         assert!(metric_report_manager.daily_heartbeat.is_none());

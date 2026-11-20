@@ -111,30 +111,15 @@ where
     fn collect(&mut self) -> Result<Vec<KeyedMetricReading>> {
         let network_metrics = self
             .get_network_interface_metrics()
-            .inspect_err(|e| {
-                debug!(
-                    "unable to collect metrics from {}: {}",
-                    PROC_NET_DEV_PATH, e
-                )
-            })
+            .inspect_err(|e| debug!("unable to collect metrics from {PROC_NET_DEV_PATH}: {e}"))
             .ok();
         let net_wireless_metrics = self
             .get_wireless_interface_metrics()
-            .inspect_err(|e| {
-                debug!(
-                    "unable to collect metrics from {}: {}",
-                    PROC_NET_WIRELESS_PATH, e
-                )
-            })
+            .inspect_err(|e| debug!("unable to collect metrics from {PROC_NET_WIRELESS_PATH}: {e}"))
             .ok();
         let socket_count_metrics = self
             .get_socket_count_metrics()
-            .inspect_err(|e| {
-                debug!(
-                    "unable to collect metrics from {}: {}",
-                    PROC_NET_SOCKSTAT_PATH, e
-                )
-            })
+            .inspect_err(|e| debug!("unable to collect metrics from {PROC_NET_SOCKSTAT_PATH}: {e}"))
             .ok();
 
         let res = [network_metrics, net_wireless_metrics, socket_count_metrics]
@@ -186,7 +171,7 @@ where
                         .get(1)
                         .ok_or(eyre!("Missing level for {}", interface_id))?;
                     let rssi_key = MetricStringKey::from_str(
-                        format!("interfaces/{}/rssi", interface_id).as_str(),
+                        format!("interfaces/{interface_id}/rssi").as_str(),
                     )
                     .map_err(|e| {
                         eyre!("Couldn't build link metric key for {}: {}", interface_id, e)
@@ -441,15 +426,13 @@ where
                 .ok_or(eyre!("Previous reading is missing bytes sent value"))?;
             let interface_bytes_tx = curr_interface_bytes_tx.checked_sub(*prev_interface_bytes_tx);
 
-            let interface_rx_key = MetricStringKey::from_str(
-                format!("interface/{}/total_bytes/rx", interface).as_str(),
-            )
-            .map_err(|e| eyre!("Couldn't construct metric key: {}", e))?;
+            let interface_rx_key =
+                MetricStringKey::from_str(format!("interface/{interface}/total_bytes/rx").as_str())
+                    .map_err(|e| eyre!("Couldn't construct metric key: {}", e))?;
 
-            let interface_tx_key = MetricStringKey::from_str(
-                format!("interface/{}/total_bytes/tx", interface).as_str(),
-            )
-            .map_err(|e| eyre!("Couldn't construct metric key: {}", e))?;
+            let interface_tx_key =
+                MetricStringKey::from_str(format!("interface/{interface}/total_bytes/tx").as_str())
+                    .map_err(|e| eyre!("Couldn't construct metric key: {}", e))?;
 
             let mut interface_counter_readings = [
                 (interface_tx_key, interface_bytes_tx),
@@ -516,8 +499,7 @@ where
                 .map(|(key, value)| -> Result<KeyedMetricReading, ErrReport> {
                     Ok(KeyedMetricReading::new(
                         MetricStringKey::from_str(&format!(
-                            "{}/{}/{}",
-                            NETWORK_INTERFACE_METRIC_NAMESPACE, interface, key
+                            "{NETWORK_INTERFACE_METRIC_NAMESPACE}/{interface}/{key}"
                         ))
                         .map_err(|e| eyre!(e))?,
                         MetricReading::Histogram {
@@ -829,10 +811,7 @@ mod test {
                     assert_eq!(res_no, expected_no);
                     assert_eq!(remainder, expected_remainder);
                 }
-                Err(e) => panic!(
-                    "failed parsing sockstat sockets line when expected success: {}",
-                    e
-                ),
+                Err(e) => panic!("failed parsing sockstat sockets line when expected success: {e}"),
             },
         }
     }
@@ -857,7 +836,7 @@ mod test {
                     assert_eq!(res_no, expected_no);
                     assert_eq!(remainder, expected_remainder);
                 }
-                Err(e) => panic!("failed parsing sockstat line when expected success: {}", e),
+                Err(e) => panic!("failed parsing sockstat line when expected success: {e}"),
             },
         }
     }

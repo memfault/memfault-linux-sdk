@@ -4,8 +4,5 @@
 use crate::build_info::{BUILD_ID, GIT_COMMIT, VERSION};
 
 pub fn format_version() -> String {
-    format!(
-        "VERSION={}\nGIT COMMIT={}\nBUILD ID={}",
-        VERSION, GIT_COMMIT, BUILD_ID
-    )
+    format!("VERSION={VERSION}\nGIT COMMIT={GIT_COMMIT}\nBUILD ID={BUILD_ID}")
 }

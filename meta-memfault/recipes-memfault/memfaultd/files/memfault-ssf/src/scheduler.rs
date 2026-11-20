@@ -11,6 +11,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use log::debug;
+
 use crate::{Handler, Mailbox, MailboxError, Message, Service};
 
 /// The `Scheduler` is a tool to schedule sending specific messages at a given
@@ -48,20 +50,22 @@ impl Scheduler {
     /// `on_error` will be called when one of the messages cannot be delivered to the service.
     pub fn run(mut self, on_error: Box<dyn Fn(MailboxError) + Send>) -> JoinHandle<()> {
         spawn(move || loop {
-            if let Some(job) = self.schedule.pop() {
-                while Instant::now() < job.next_run {
-                    sleep(job.next_run - Instant::now());
-                }
-                if let Err(e) = job.task.execute() {
-                    on_error(e);
-                }
-
-                self.schedule.push(Job {
-                    next_run: job.next_run + job.period,
-                    period: job.period,
-                    task: job.task,
-                })
+            let Some(job) = self.schedule.pop() else {
+                debug!("Scheduler has no jobs, exiting scheduler thread");
+                return;
+            };
+            while Instant::now() < job.next_run {
+                sleep(job.next_run - Instant::now());
             }
+            if let Err(e) = job.task.execute() {
+                on_error(e);
+            }
+
+            self.schedule.push(Job {
+                next_run: job.next_run + job.period,
+                period: job.period,
+                task: job.task,
+            })
         })
     }
 }
@@ -106,5 +110,21 @@ where
     fn execute(&self) -> Result<(), MailboxError> {
         self.mailbox.send_and_wait_for_reply(self.message.clone())?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_without_jobs_exits() {
+        let handle = Scheduler::new().run(Box::new(|_| {}));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !handle.is_finished() && Instant::now() < deadline {
+            sleep(Duration::from_millis(10));
+        }
+        assert!(handle.is_finished());
+        handle.join().unwrap();
     }
 }

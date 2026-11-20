@@ -5,16 +5,17 @@ use std::{
     fs::File,
     io::{BufReader, BufWriter, Read, Write},
     path::PathBuf,
+    sync::{Arc, RwLock},
     time::Instant,
 };
 
 use eyre::{eyre, Result};
 use flate2::read::{GzEncoder, ZlibEncoder};
-use log::{error, warn};
+use log::{error, info, warn};
 use ssf::MsgMailbox;
 use tiny_http::{Method, Request, Response};
 
-use crate::config::Config;
+use crate::config::{Config, DeviceConfig};
 use crate::{
     config::{LinuxCustomTraceConfig, LinuxCustomTraceLogCompression},
     http_server::{HttpHandler, HttpHandlerResult, TraceRequest},
@@ -23,7 +24,7 @@ use crate::{
     network::NetworkConfig,
     util::{
         fs::DEFAULT_GZIP_COMPRESSION_LEVEL, persistent_rate_limiter::PersistentRateLimiter,
-        time_measure::TimeMeasure,
+        time_measure::TimeMeasure, DiskBacked, UnwrapOrDie,
     },
 };
 
@@ -37,6 +38,8 @@ pub struct SaveTraceHandler {
     crash_free_interval_mbox: MsgMailbox<CrashInfoMessage<Instant>>,
     trace_config: LinuxCustomTraceConfig,
     rate_limiter_path: PathBuf,
+    cached_device_config: Arc<RwLock<DiskBacked<DeviceConfig>>>,
+    capture_all: bool,
     #[cfg(feature = "logging")]
     get_queued_logs_mbox: Option<MsgMailbox<GetQueuedLogsMsg>>,
 }
@@ -61,6 +64,8 @@ impl SaveTraceHandler {
             crash_free_interval_mbox,
             trace_config,
             rate_limiter_path,
+            cached_device_config: config.cached_device_config.clone(),
+            capture_all: config.capture_all(),
             get_queued_logs_mbox,
         }
     }
@@ -83,7 +88,20 @@ impl SaveTraceHandler {
             crash_free_interval_mbox,
             trace_config,
             rate_limiter_path,
+            cached_device_config: config.cached_device_config.clone(),
+            capture_all: config.capture_all(),
         }
+    }
+
+    fn debugging_capture_enabled(&self) -> bool {
+        self.cached_device_config
+            .read()
+            .unwrap_or_die()
+            .get()
+            .clone()
+            .with_dev_mode(self.capture_all)
+            .capture_sampling()
+            .debugging_enabled()
     }
 
     fn log_compression_config(&self) -> LinuxCustomTraceLogCompression {
@@ -122,19 +140,31 @@ impl SaveTraceHandler {
     fn handle_save_trace(&self, request: &mut Request) -> HttpHandlerResult {
         let mut body = String::new();
         if let Err(e) = request.as_reader().read_to_string(&mut body) {
-            return HttpHandlerResult::Error(format!("Failed to read request body: {}", e));
+            return HttpHandlerResult::Error(format!("Failed to read request body: {e}"));
         }
 
         #[allow(unused_mut)]
         let mut request: TraceRequest = match serde_json::from_str(&body) {
             Ok(args) => args,
             Err(e) => {
-                return HttpHandlerResult::Error(format!("Failed to parse request body: {}", e));
+                return HttpHandlerResult::Error(format!("Failed to parse request body: {e}"));
             }
         };
 
         if request.crash {
             send_crash_info(&self.crash_free_interval_mbox, request.program.clone());
+        }
+
+        if !self.debugging_capture_enabled() {
+            info!("Debugging resolution below Normal, not saving trace");
+            return HttpHandlerResult::Response(Response::empty(200).boxed());
+        }
+
+        // Rate limit after the gate so dropped traces don't consume quota.
+        match self.check_rate_limits() {
+            Ok(true) => return HttpHandlerResult::Error("Trace rate limited".to_string()),
+            Ok(false) => (),
+            Err(e) => return HttpHandlerResult::Error(format!("Failed to check rate limits: {e}")),
         }
 
         let mut mar_entry_builder = match MarEntryBuilder::new(&self.mar_staging_area) {
@@ -185,7 +215,9 @@ impl SaveTraceHandler {
                     }
                 };
 
-                filename = Some(final_log_path.to_string_lossy().to_string());
+                filename = final_log_path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string());
 
                 let Ok(add_attachment) = mar_entry_builder.add_attachment(final_log_path) else {
                     error!("Failed to add log file attachment");
@@ -282,12 +314,6 @@ impl HttpHandler for SaveTraceHandler {
             return HttpHandlerResult::NotHandled;
         }
 
-        match self.check_rate_limits() {
-            Ok(true) => return HttpHandlerResult::Error("Trace rate limited".to_string()),
-            Ok(false) => (),
-            Err(e) => return HttpHandlerResult::Error(format!("Failed to check rate limits: {e}")),
-        }
-
         self.handle_save_trace(request)
     }
 }
@@ -300,19 +326,21 @@ where
         process_name,
         timestamp: T::now(),
     }) {
-        warn!("Failed to send crash info: {}", e);
+        warn!("Failed to send crash info: {e}");
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Config, LinuxCustomTraceConfig};
+    use crate::config::{Config, LinuxCustomTraceConfig, Resolution, Sampling};
+    use rstest::rstest;
     use ssf::ServiceMock;
-    use std::fs::create_dir_all;
+    use std::fs::{create_dir_all, read_dir};
     use std::io::Cursor;
     use std::time::Duration;
     use tempfile::TempDir;
+    use tiny_http::TestRequest;
 
     fn create_test_handler(
         config: Config,
@@ -402,8 +430,7 @@ mod tests {
         let mut log_content = String::new();
         for i in 0..1000 {
             log_content.push_str(&format!(
-                "This is log line number {} with repeated content\n",
-                i
+                "This is log line number {i} with repeated content\n"
             ));
         }
         let cursor = Cursor::new(log_content.as_bytes());
@@ -536,6 +563,83 @@ mod tests {
         assert!(!handler.check_rate_limits().unwrap());
         assert!(!handler.check_rate_limits().unwrap());
         assert!(handler.check_rate_limits().unwrap());
+    }
+
+    fn set_device_config(
+        config: &Config,
+        revision: Option<crate::network::DeviceConfigRevision>,
+        debugging_resolution: Resolution,
+    ) {
+        config
+            .cached_device_config
+            .write()
+            .unwrap()
+            .set(DeviceConfig {
+                revision,
+                sampling: Sampling {
+                    debugging_resolution,
+                    ..DeviceConfig::default().sampling
+                },
+                ..DeviceConfig::default()
+            })
+            .unwrap();
+    }
+
+    fn save_trace_request() -> Request {
+        TestRequest::new()
+            .with_method(Method::Post)
+            .with_path("/v1/trace/save")
+            .with_body(
+                r#"{"crash":true,"reason":"test","program":"test-app","source":"MEMFAULTCTL"}"#,
+            )
+            .into()
+    }
+
+    #[rstest]
+    #[case::not_fetched_off(None, Resolution::Off, false, false, true)]
+    #[case::fetched_off(Some(1), Resolution::Off, false, false, false)]
+    #[case::fetched_normal(Some(1), Resolution::Normal, false, false, true)]
+    #[case::dev_mode_fetched_off(Some(1), Resolution::Off, true, false, true)]
+    #[case::dev_mode_not_fetched(None, Resolution::Off, true, false, true)]
+    #[case::data_spooling_fetched_off(Some(1), Resolution::Off, false, true, true)]
+    fn test_trace_saved_by_device_config(
+        #[case] revision: Option<crate::network::DeviceConfigRevision>,
+        #[case] debugging_resolution: Resolution,
+        #[case] enable_dev_mode: bool,
+        #[case] enable_data_spooling: bool,
+        #[case] expected_saved: bool,
+    ) {
+        let temp_dir = TempDir::new().unwrap();
+        let mar_staging_area = temp_dir.path().join("mar");
+        create_dir_all(&mar_staging_area).unwrap();
+
+        let mut config = Config::test_fixture();
+        config.config_file.enable_dev_mode = enable_dev_mode;
+        config.config_file.enable_data_spooling = enable_data_spooling;
+        config.cached_device_config = Arc::new(RwLock::new(DiskBacked::from_path(
+            &temp_dir.path().join("device_config.json"),
+        )));
+        set_device_config(&config, revision, debugging_resolution);
+
+        let mut crash_mock: ServiceMock<CrashInfoMessage<Instant>> = ServiceMock::new();
+        let handler = SaveTraceHandler::new(
+            mar_staging_area.clone(),
+            &config,
+            crash_mock.mbox.clone(),
+            #[cfg(feature = "logging")]
+            None,
+            LinuxCustomTraceConfig::default(),
+            temp_dir.path().join("rate_limit_test"),
+        );
+
+        assert!(matches!(
+            handler.handle_request(&mut save_trace_request()),
+            HttpHandlerResult::Response(_)
+        ));
+
+        let saved = read_dir(&mar_staging_area).unwrap().count() > 0;
+        assert_eq!(saved, expected_saved);
+        assert_eq!(crash_mock.take_messages().len(), 1);
     }
 
     #[cfg(feature = "logging")]

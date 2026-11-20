@@ -71,6 +71,6 @@ impl Display for MetricValue {
                 })
             }
         };
-        write!(f, "{}", json_value)
+        write!(f, "{json_value}")
     }
 }

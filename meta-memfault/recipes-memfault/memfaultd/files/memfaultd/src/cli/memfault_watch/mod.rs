@@ -57,7 +57,7 @@ fn run_from_args(args: MemfaultWatchArgs) -> Result<i32> {
     })?;
 
     let config_path = args.config_file.as_ref().map(Path::new);
-    let warnings_handle_fn = |w: &_| warn!("{}", w);
+    let warnings_handle_fn = |w: &_| warn!("{w}");
     let config = Config::read_from_system(config_path, warnings_handle_fn)?;
 
     // Set up log files
@@ -73,7 +73,7 @@ fn run_from_args(args: MemfaultWatchArgs) -> Result<i32> {
         .split_first()
         .ok_or_else(|| eyre!("No command given!"))?;
 
-    trace!("Running command: {:?}", command);
+    trace!("Running command: {command:?}");
 
     let start = Instant::now();
 

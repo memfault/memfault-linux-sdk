@@ -221,7 +221,7 @@ where
                     &memory_maps_ranges,
                     &mut mem_ranges,
                 ) {
-                    warn!("Failed to collect dynamic linker ranges: {}", e);
+                    warn!("Failed to collect dynamic linker ranges: {e}");
                 }
             }
             _ => {
@@ -343,7 +343,7 @@ impl CoreTransformerLogFetcher {
         match logs {
             Ok(logs) => logs,
             Err(e) => {
-                debug!("Failed to fetch application logs within timeout: {}", e);
+                debug!("Failed to fetch application logs within timeout: {e}");
                 None
             }
         }

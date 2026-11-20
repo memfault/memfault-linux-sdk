@@ -313,7 +313,7 @@ impl MetricReport {
             .collect();
 
         if let Ok(json_str) = serde_json::to_string_pretty(&json_metrics) {
-            log::trace!("{}", json_str);
+            log::trace!("{json_str}");
         } else {
             log::trace!("❌ Failed to serialize metrics to JSON");
         }

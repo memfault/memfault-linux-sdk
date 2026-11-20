@@ -2,7 +2,7 @@
 name = "memfault-ssf"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.88"
 description = "Supporting crate for the Memfault memfaultd embedded Linux agent"
 homepage = "https://github.com/memfault/memfaultd"
 documentation = "https://docs.memfault.com/"

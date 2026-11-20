@@ -105,14 +105,14 @@ impl<'a> RebootReasonTracker<'a> {
         }
 
         if let Err(e) = std::fs::write(tmp_filename, boot_id.to_string()) {
-            error!("Failed to write last tracked boot_id: {}", e);
+            error!("Failed to write last tracked boot_id: {e}");
         }
 
         match last_boot_id {
             Some(last_boot_id) => {
                 let is_tracked = &last_boot_id == boot_id;
                 if is_tracked {
-                    info!("boot_id already tracked {}!", boot_id);
+                    info!("boot_id already tracked {boot_id}!");
                 }
 
                 is_tracked
@@ -167,25 +167,24 @@ impl<'a> Drop for RebootReasonTracker<'a> {
                     Ok(())
                 }
 
-                info!("Writing reboot reason to {:?}", reboot_file);
+                info!("Writing reboot reason to {reboot_file:?}");
                 match File::create(reboot_file) {
                     Ok(file) => {
                         if let Err(e) = inner_write(file) {
-                            error!("Failed to write reboot reason: {}", e);
+                            error!("Failed to write reboot reason: {e}");
                         }
                     }
                     Err(e) => {
-                        error!("Failed to create reboot reason file: {}", e);
+                        error!("Failed to create reboot reason file: {e}");
                     }
                 }
             }
             Ok(status) => {
                 debug!(
-                    "Service manager in state {:?} while closing. Not writing reboot reason",
-                    status
+                    "Service manager in state {status:?} while closing. Not writing reboot reason"
                 );
             }
-            Err(e) => error!("Failed to get service manager status: {}", e),
+            Err(e) => error!("Failed to get service manager status: {e}"),
         }
     }
 }
@@ -200,8 +199,14 @@ fn read_reboot_reason_and_clear_file_pstore(config: &Config) -> Option<RebootRea
         // Only capture pstore content in the event of a kernel panic
         let pstore_dir = Path::new(PSTORE_DIR);
         if config.config_file.reboot.capture_pstore && config.config_file.enable_data_collection {
-            if let Err(e) = capture_pstore_content(pstore_dir, config) {
-                error!("Failed to generate MAR with pstore content: {}", e);
+            if !config
+                .effective_device_config()
+                .capture_sampling()
+                .debugging_enabled()
+            {
+                info!("Debugging resolution below Normal, not saving pstore content");
+            } else if let Err(e) = capture_pstore_content(pstore_dir, config) {
+                error!("Failed to generate MAR with pstore content: {e}");
             }
         }
 
@@ -237,7 +242,7 @@ fn read_reboot_reason_and_clear_file(file_name: &PathBuf) -> Option<RebootReason
     };
 
     let reboot_reason = RebootReason::from_str(reboot_reason_string.trim()).unwrap_or_else(|_| {
-        warn!("Couldn't parse reboot reason: {}", reboot_reason_string);
+        warn!("Couldn't parse reboot reason: {reboot_reason_string}");
         RebootReason::Code(RebootReasonCode::Unknown)
     });
 
@@ -294,7 +299,7 @@ fn clean_pstore(pstore_dir: &str) {
     }
 
     if let Err(e) = inner_clean_pstore(Path::new(pstore_dir)) {
-        error!("Failed to clean pstore files: {}", e);
+        error!("Failed to clean pstore files: {e}");
     }
 }
 
@@ -302,7 +307,7 @@ pub fn write_reboot_reason_and_reboot(
     last_reboot_reason_file: &Path,
     reason: RebootReason,
 ) -> Result<()> {
-    write(last_reboot_reason_file, format!("{}", reason)).wrap_err_with(|| {
+    write(last_reboot_reason_file, format!("{reason}")).wrap_err_with(|| {
         format!(
             "Unable to write reboot reason (path: {}).",
             last_reboot_reason_file.display()

@@ -8,16 +8,16 @@ BBFILES ?= ""
 YOCTOROOT = "${@os.path.abspath(os.path.join("${TOPDIR}", os.pardir))}"
 
 BBLAYERS ?= " \
-    ${YOCTOROOT}/sources/memfault-linux-sdk/meta-memfault \
-    ${YOCTOROOT}/sources/memfault-linux-sdk/meta-memfault-example \
-    ${YOCTOROOT}/sources/meta-openembedded/meta-multimedia \
-    ${YOCTOROOT}/sources/meta-openembedded/meta-networking \
-    ${YOCTOROOT}/sources/meta-openembedded/meta-oe \
-    ${YOCTOROOT}/sources/meta-openembedded/meta-python \
-    ${YOCTOROOT}/sources/meta-rust-bin \
-    ${YOCTOROOT}/sources/meta-swupdate \
-    ${YOCTOROOT}/sources/poky/meta \
-    ${YOCTOROOT}/sources/poky/meta-poky \
-    ${YOCTOROOT}/sources/poky/meta-yocto-bsp \
-    ${YOCTOROOT}/sources/meta-raspberrypi \
+    ##OEROOT##/../memfault-linux-sdk/meta-memfault \
+    ##OEROOT##/../memfault-linux-sdk/meta-memfault-example \
+    ##OEROOT##/../meta-openembedded/meta-multimedia \
+    ##OEROOT##/../meta-openembedded/meta-networking \
+    ##OEROOT##/../meta-openembedded/meta-oe \
+    ##OEROOT##/../meta-openembedded/meta-python \
+    ##OEROOT##/../meta-rust-bin \
+    ##OEROOT##/../meta-swupdate \
+    ##OEROOT##/meta \
+    ##OEROOT##/meta-poky \
+    ##OEROOT##/meta-yocto-bsp \
+    ##OEROOT##/../meta-raspberrypi \
 "

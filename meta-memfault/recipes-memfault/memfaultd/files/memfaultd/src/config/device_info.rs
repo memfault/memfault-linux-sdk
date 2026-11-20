@@ -182,7 +182,7 @@ impl DeviceInfo {
                 |_| {
                     warnings.push(DeviceInfoWarning {
                         line: None,
-                        message: format!("Failed to open {}", DEVICE_ID_PATH),
+                        message: format!("Failed to open {DEVICE_ID_PATH}"),
                     });
                     None
                 },
@@ -195,8 +195,7 @@ impl DeviceInfo {
                     warnings.push(DeviceInfoWarning {
                         line: None,
                         message: format!(
-                            "Failed to to get hardware version from: '{}'",
-                            HARDWARE_VERSION_COMMAND
+                            "Failed to to get hardware version from: '{HARDWARE_VERSION_COMMAND}'"
                         ),
                     });
                     None
@@ -246,7 +245,7 @@ impl DeviceInfo {
         ]
         .iter()
         .filter_map(|(key, result)| match result {
-            Err(e) => Some(format!("  Invalid {}: {}", key, e)),
+            Err(e) => Some(format!("  Invalid {key}: {e}")),
             _ => None,
         })
         .collect();
@@ -577,11 +576,7 @@ mod tests {
         di_defaults.expect_device_id().never();
 
         let output = format!(
-            "MEMFAULT_DEVICE_ID={}\nMEMFAULT_HARDWARE_VERSION={}\nMEMFAULT_SOFTWARE_VERSION={}\nMEMFAULT_SOFTWARE_TYPE={}\n",
-            expected_device_id,
-            expected_hardware_version,
-            expected_software_version,
-            expected_software_type,
+            "MEMFAULT_DEVICE_ID={expected_device_id}\nMEMFAULT_HARDWARE_VERSION={expected_hardware_version}\nMEMFAULT_SOFTWARE_VERSION={expected_software_version}\nMEMFAULT_SOFTWARE_TYPE={expected_software_type}\n",
         );
 
         let r = DeviceInfo::parse(Some(output.as_bytes()), di_defaults).unwrap();

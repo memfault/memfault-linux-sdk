@@ -1,0 +1,56 @@
+{
+  "description": "Memfault Linux SDK example for QEMU and Raspberry Pi, Yocto Project 5.0 'scarthgap'",
+  "sources": {
+    "poky": {
+      "git-remote": {
+        "uri": "https://git.yoctoproject.org/poky",
+        "branch": "scarthgap",
+        "rev": "104772c5fd0653290cbb5e4b77813343957939cc"
+      }
+    },
+    "meta-openembedded": {
+      "git-remote": {
+        "uri": "https://github.com/openembedded/meta-openembedded.git",
+        "branch": "scarthgap",
+        "rev": "0f00f8b9a21950640da8c5707343e5540133f86e"
+      }
+    },
+    "meta-swupdate": {
+      "git-remote": {
+        "uri": "https://github.com/sbabic/meta-swupdate.git",
+        "branch": "scarthgap",
+        "rev": "25c9be858d1a0d060423b630b34e3a4c19061264"
+      }
+    },
+    "meta-raspberrypi": {
+      "git-remote": {
+        "uri": "https://git.yoctoproject.org/meta-raspberrypi",
+        "branch": "scarthgap",
+        "rev": "018d44467c4f09eb63f8ea5e86e85d755250cf89"
+      }
+    },
+    "meta-rust-bin": {
+      "git-remote": {
+        "uri": "https://github.com/rust-embedded/meta-rust-bin.git",
+        "rev": "54721fa1c7a4edaba7fb63cdbcaf0c6253c5fa3a"
+      }
+    },
+    "memfault-linux-sdk": {
+      "git-remote": {
+        "uri": "https://github.com/memfault/memfault-linux-sdk.git",
+        "branch": "scarthgap",
+        "rev": "scarthgap"
+      }
+    }
+  },
+  "bitbake-setup": {
+    "configurations": [
+      {
+        "name": "memfault-example",
+        "description": "QEMU and Raspberry Pi example images with memfaultd, SWUpdate and A/B rootfs",
+        "oe-template": "memfault-example-default"
+      }
+    ]
+  },
+  "version": "1.0"
+}

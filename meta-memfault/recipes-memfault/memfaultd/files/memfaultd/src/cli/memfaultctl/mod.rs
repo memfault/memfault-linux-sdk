@@ -42,7 +42,7 @@ use crate::cli::show_settings::show_settings;
 use crate::config::Config;
 use crate::network::NetworkConfig;
 use eyre::{eyre, Context, Result};
-use log::LevelFilter;
+use log::{info, LevelFilter};
 
 use self::session::{end_session, start_session};
 
@@ -341,9 +341,8 @@ fn check_data_collection_enabled(config: &Config, do_what: &str) -> Result<()> {
         true => Ok(()),
         false => {
             let msg = format!(
-                "Cannot {} because data collection is disabled. \
-                Hint: enable it with 'memfaultctl enable-data-collection'.",
-                do_what
+                "Cannot {do_what} because data collection is disabled. \
+                Hint: enable it with 'memfaultctl enable-data-collection'."
             );
             Err(eyre!(msg))
         }
@@ -360,7 +359,7 @@ pub fn main() -> Result<()> {
     })?;
 
     let config_path = args.config_file.as_ref().map(Path::new);
-    let warnings_handle_fn = |w: &_| eprintln!("{}", w);
+    let warnings_handle_fn = |w: &_| eprintln!("{w}");
     let mut config = Config::read_from_system(config_path, warnings_handle_fn)?;
     let network_config = NetworkConfig::from(&config);
     let mar_staging_path = config.mar_tmp_staging_path();
@@ -384,7 +383,7 @@ pub fn main() -> Result<()> {
         MemfaultctlCommand::Reboot(args) => {
             let reason = RebootReason::from_str(&args.reason)
                 .wrap_err(eyre!("Failed to parse {}", args.reason))?;
-            println!("Rebooting with reason {:?}", reason);
+            println!("Rebooting with reason {reason:?}");
             write_reboot_reason_and_reboot(
                 &config.config_file.reboot.last_reboot_reason_file,
                 reason,
@@ -441,6 +440,15 @@ pub fn main() -> Result<()> {
             }
             if !file_path.is_absolute() {
                 return Err(eyre!("{} is not an absolute path", file_name));
+            }
+
+            if !config
+                .effective_device_config()
+                .capture_sampling()
+                .debugging_enabled()
+            {
+                info!("Debugging resolution below Normal. Will not save Custom Data Recording");
+                return Ok(());
             }
 
             let file_name = file_name

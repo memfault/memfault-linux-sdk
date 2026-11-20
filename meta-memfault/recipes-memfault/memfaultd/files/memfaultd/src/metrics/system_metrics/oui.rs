@@ -24,7 +24,7 @@ impl OuiMetricsCollector {
 
         for (interface, oui) in snapshot.local_ouis() {
             readings.push(KeyedMetricReading::new_report_tag(
-                MetricStringKey::from_str(&format!("wireless/oui/local_{}", interface))
+                MetricStringKey::from_str(&format!("wireless/oui/local_{interface}"))
                     .map_err(|e| eyre::eyre!("Couldn't construct metric key: {}", e))?,
                 oui,
             ));
@@ -32,7 +32,7 @@ impl OuiMetricsCollector {
 
         for (interface, oui) in snapshot.ap_ouis() {
             readings.push(KeyedMetricReading::new_report_tag(
-                MetricStringKey::from_str(&format!("wireless/oui/ap_{}", interface))
+                MetricStringKey::from_str(&format!("wireless/oui/ap_{interface}"))
                     .map_err(|e| eyre::eyre!("Couldn't construct metric key: {}", e))?,
                 oui,
             ));

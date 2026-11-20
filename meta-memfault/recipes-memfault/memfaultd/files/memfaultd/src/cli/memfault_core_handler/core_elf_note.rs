@@ -161,7 +161,7 @@ impl<'a> Iterator for ElfNoteIterator<'a> {
             match Self::try_next_note(&mut self.offset, self.note_buffer) {
                 Ok(note) => Some(note),
                 Err(e) => {
-                    error!("{}", e);
+                    error!("{e}");
                     None
                 }
             }

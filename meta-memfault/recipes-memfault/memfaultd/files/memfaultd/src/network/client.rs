@@ -4,6 +4,7 @@
 use std::fs::File;
 use std::io::Read;
 use std::str;
+use std::time::Duration;
 
 use eyre::eyre;
 use eyre::Context;
@@ -23,6 +24,8 @@ use super::requests::UploadPrepareResponse;
 use super::requests::{DeviceConfigRequest, MarUploadMetadata};
 use super::NetworkClient;
 use super::NetworkConfig;
+
+const FILE_UPLOAD_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Memfault Network client
 pub struct NetworkClientImpl {
@@ -65,9 +68,14 @@ impl NetworkClientImpl {
             .default_headers(headers)
             .build()?;
 
+        let file_upload_client = blocking::ClientBuilder::new()
+            .connect_timeout(FILE_UPLOAD_CONNECT_TIMEOUT)
+            .timeout(config.upload_timeout)
+            .build()?;
+
         Ok(NetworkClientImpl {
             client,
-            file_upload_client: blocking::Client::new(),
+            file_upload_client,
             config,
         })
     }
@@ -149,7 +157,7 @@ impl NetworkClientImpl {
             .json::<UploadPrepareResponse>()
             .wrap_err("Prepare upload error")?;
 
-        trace!("Upload prepare response: {:?}", prepare_response);
+        trace!("Upload prepare response: {prepare_response:?}");
 
         self.put_file(
             &prepare_response.data.upload_url,
@@ -175,7 +183,7 @@ impl NetworkClientImpl {
             req = req.header(header::CONTENT_ENCODING, content_encoding);
         }
 
-        trace!("Uploading file to {}", url);
+        trace!("Uploading file to {url}");
         let body: Body = file.into();
         let r = req.body(body).send()?;
         Self::good_response_or_error(r).and(Ok(()))

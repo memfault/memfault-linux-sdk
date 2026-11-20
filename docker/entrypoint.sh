@@ -2,52 +2,44 @@
 
 # YOCTO_RELEASE environment variable is expected to be set to i.e. "kirkstone", "dunfell", ...
 
-poky_dir="${HOME}/yocto/sources/poky"
-
-# Yocto 6.0+ (wrynose+) dropped the poky combo-repo; assemble oe-core, bitbake, and
-# meta-yocto directly instead.
 case "${YOCTO_RELEASE}" in
-  dunfell | kirkstone | scarthgap)
-    templateconf="../memfault-linux-sdk/meta-memfault-example/conf/"
-    if [ ! -d "${poky_dir}" ]; then
-      git clone https://git.yoctoproject.org/poky --branch "${YOCTO_RELEASE}" "${poky_dir}"
-    else
-      git -C "${poky_dir}" remote set-url origin https://git.yoctoproject.org/poky
-      git -C "${poky_dir}" checkout "${YOCTO_RELEASE}" && git -C "${poky_dir}" pull --ff-only
-    fi
-    ;;
+  dunfell | kirkstone | scarthgap) ;;
   *)
-    # oe-setup-builddir now requires TEMPLATECONF under conf/templates/<name>/.
-    templateconf="../memfault-linux-sdk/meta-memfault-example/conf/templates/default/"
-    if [ ! -d "${poky_dir}" ]; then
-      git clone https://git.openembedded.org/openembedded-core --branch "${YOCTO_RELEASE}" "${poky_dir}"
+    setup_dir="${HOME}/yocto"
+    sdk_dir="${setup_dir}/sources/memfault-linux-sdk"
+    bitbake_setup=(
+      /opt/bitbake/bin/bitbake-setup
+      --setting default top-dir-prefix "$(dirname "${setup_dir}")"
+      --setting default top-dir-name .
+      --setting default dl-dir "${setup_dir}/build/downloads"
+    )
+    touch "$(dirname "${setup_dir}")/site.conf"
+    if [ -f "${setup_dir}/config/config-upstream.json" ] && [ -f "${setup_dir}/build/init-build-env" ]; then
+      "${bitbake_setup[@]}" update --setup-dir "${setup_dir}" --update-bb-conf no
     else
-      git -C "${poky_dir}" remote set-url origin https://git.openembedded.org/openembedded-core
-      git -C "${poky_dir}" checkout "${YOCTO_RELEASE}" && git -C "${poky_dir}" pull --ff-only
+      rm -rf "${setup_dir}/config"
+      "${bitbake_setup[@]}" init --non-interactive --no-init-vscode \
+        --setup-dir-name "$(basename "${setup_dir}")" \
+        -L memfault-linux-sdk "${sdk_dir}" \
+        "${sdk_dir}/bitbake-setup/memfault-linux-sdk.conf.json" memfault-example
     fi
 
-    # bitbake is versioned numerically, not by codename; 2.18 is oe-core's minimum for wrynose.
-    bitbake_dir="${poky_dir}/bitbake"
-    bitbake_branch="2.18"
-    if [ ! -d "${bitbake_dir}" ]; then
-      git clone https://git.openembedded.org/bitbake --branch "${bitbake_branch}" "${bitbake_dir}"
-    else
-      git -C "${bitbake_dir}" remote set-url origin https://git.openembedded.org/bitbake
-      git -C "${bitbake_dir}" checkout "${bitbake_branch}" && git -C "${bitbake_dir}" pull --ff-only
-    fi
-
-    meta_yocto_dir="${HOME}/yocto/sources/meta-yocto"
-    if [ ! -d "${meta_yocto_dir}" ]; then
-      git clone https://git.yoctoproject.org/meta-yocto --branch "${YOCTO_RELEASE}" "${meta_yocto_dir}"
-    else
-      git -C "${meta_yocto_dir}" remote set-url origin https://git.yoctoproject.org/meta-yocto
-      git -C "${meta_yocto_dir}" checkout "${YOCTO_RELEASE}" && git -C "${meta_yocto_dir}" pull --ff-only
-    fi
-    # bblayers.conf.sample expects meta-poky/meta-yocto-bsp inside poky_dir.
-    ln -sfn "${meta_yocto_dir}/meta-poky" "${poky_dir}/meta-poky"
-    ln -sfn "${meta_yocto_dir}/meta-yocto-bsp" "${poky_dir}/meta-yocto-bsp"
+    set +u
+    cd "${setup_dir}"
+    # shellcheck disable=SC1091
+    TEMPLATECONF="${setup_dir}/layers/memfault-linux-sdk/meta-memfault-example/conf/templates/default" \
+      source "${setup_dir}/layers/openembedded-core/oe-init-build-env" build
+    exec "$@"
     ;;
 esac
+
+poky_dir="${HOME}/yocto/sources/poky"
+if [ ! -d "${poky_dir}" ]; then
+  git clone https://git.yoctoproject.org/poky --branch "${YOCTO_RELEASE}" "${poky_dir}"
+else
+  git -C "${poky_dir}" remote set-url origin https://git.yoctoproject.org/poky
+  git -C "${poky_dir}" checkout "${YOCTO_RELEASE}" && git -C "${poky_dir}" pull --ff-only
+fi
 
 openembedded_dir="${HOME}/yocto/sources/meta-openembedded"
 if [ ! -d "${openembedded_dir}" ]; then
@@ -110,7 +102,7 @@ set +u
 
 cd "${HOME}/yocto"
 # shellcheck disable=SC1091
-TEMPLATECONF="${templateconf}" source "${HOME}/yocto/sources/poky/oe-init-build-env" build
+TEMPLATECONF="../memfault-linux-sdk/meta-memfault-example/conf/" source "${HOME}/yocto/sources/poky/oe-init-build-env" build
 
 # run any args given to us (defaults to Dockerfile's CMD)
 exec "$@"

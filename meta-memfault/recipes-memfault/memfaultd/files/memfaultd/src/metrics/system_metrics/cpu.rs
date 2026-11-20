@@ -273,8 +273,7 @@ where
                 .map(|(key, value)| -> Result<KeyedMetricReading, ErrReport> {
                     Ok(KeyedMetricReading::new(
                         MetricStringKey::from_str(&format!(
-                            "{}/cpu/percent/{}",
-                            CPU_METRIC_NAMESPACE, key
+                            "{CPU_METRIC_NAMESPACE}/cpu/percent/{key}"
                         ))
                         .map_err(|e| eyre!(e))?,
                         MetricReading::Histogram {

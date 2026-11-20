@@ -21,8 +21,7 @@ impl FromArgValue for ChunksEncoding {
             BIN => Ok(Self::Bin),
             SDK_DATA_EXPORT => Ok(Self::SdkDataExport),
             _ => Err(format!(
-                "Invalid chunks encoding: {}. Expected one of: base64, hex, bin, sdk_data_export",
-                value
+                "Invalid chunks encoding: {value}. Expected one of: base64, hex, bin, sdk_data_export"
             )),
         }
     }
@@ -31,10 +30,10 @@ impl FromArgValue for ChunksEncoding {
 impl fmt::Display for ChunksEncoding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Base64 => write!(f, "{}", BASE64),
-            Self::Hex => write!(f, "{}", HEX),
-            Self::Bin => write!(f, "{}", BIN),
-            Self::SdkDataExport => write!(f, "{}", SDK_DATA_EXPORT),
+            Self::Base64 => write!(f, "{BASE64}"),
+            Self::Hex => write!(f, "{HEX}"),
+            Self::Bin => write!(f, "{BIN}"),
+            Self::SdkDataExport => write!(f, "{SDK_DATA_EXPORT}"),
         }
     }
 }
