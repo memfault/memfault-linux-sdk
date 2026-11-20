@@ -81,8 +81,10 @@ impl Default for Producer {
     }
 }
 
-#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Default)]
 pub enum CompressionAlgorithm {
+    #[default]
+    #[serde(rename = "none")]
     None,
     #[serde(rename = "zlib")]
     Zlib,
@@ -105,7 +107,7 @@ pub enum Metadata {
         // PathBuf.file_name() -> OsString but serde does not handle it well
         // so we use a String here.
         log_file_name: String,
-        #[serde(skip_serializing_if = "CompressionAlgorithm::is_none")]
+        #[serde(default, skip_serializing_if = "CompressionAlgorithm::is_none")]
         compression: CompressionAlgorithm,
         cid: Cid,
         next_cid: Cid,
@@ -117,7 +119,7 @@ pub enum Metadata {
     #[serde(rename = "elf-coredump")]
     ElfCoredump {
         coredump_file_name: String,
-        #[serde(skip_serializing_if = "CompressionAlgorithm::is_none")]
+        #[serde(default, skip_serializing_if = "CompressionAlgorithm::is_none")]
         compression: CompressionAlgorithm,
     },
     #[serde(rename = "linux-reboot")]
@@ -834,5 +836,55 @@ mod tests {
         assert_json_snapshot!(producer, {
             ".version" => "[version]",
         });
+    }
+
+    #[test]
+    fn roundtrip_coredump_compression_none() {
+        let manifest = Manifest::new(
+            &NetworkConfig::test_fixture(),
+            CollectionTime::test_fixture(),
+            Metadata::new_coredump("/tmp/core.elf".into(), CompressionAlgorithm::None),
+        );
+        let json = serde_json::to_string(&manifest).unwrap();
+        assert!(!json.contains("compression"));
+        serde_json::from_str::<Manifest>(&json).unwrap();
+    }
+
+    #[rstest]
+    #[case(CompressionAlgorithm::None)]
+    #[case(CompressionAlgorithm::Zlib)]
+    #[case(CompressionAlgorithm::Gzip)]
+    fn roundtrip_compression_algorithm(#[case] compression: CompressionAlgorithm) {
+        let roundtrip = |metadata| {
+            let manifest = Manifest::new(
+                &NetworkConfig::test_fixture(),
+                CollectionTime::test_fixture(),
+                metadata,
+            );
+            let json = serde_json::to_string(&manifest).unwrap();
+            serde_json::from_str::<Manifest>(&json).unwrap().metadata
+        };
+
+        match roundtrip(Metadata::new_coredump("core.elf".into(), compression)) {
+            Metadata::ElfCoredump {
+                compression: parsed,
+                ..
+            } => assert_eq!(parsed, compression),
+            _ => panic!("unexpected metadata variant"),
+        }
+
+        let metadata = Metadata::new_log(
+            "log.zlib".into(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            compression,
+        );
+        match roundtrip(metadata) {
+            Metadata::LinuxLogs {
+                compression: parsed,
+                ..
+            } => assert_eq!(parsed, compression),
+            _ => panic!("unexpected metadata variant"),
+        }
     }
 }

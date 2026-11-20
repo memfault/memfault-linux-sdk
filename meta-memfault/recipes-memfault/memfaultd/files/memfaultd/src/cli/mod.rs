@@ -66,7 +66,7 @@ pub fn main() {
     match result {
         Ok(_) => (),
         Err(e) => {
-            eprintln!("{:#}", e);
+            eprintln!("{e:#}");
             std::process::exit(-1);
         }
     }

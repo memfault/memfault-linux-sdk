@@ -79,7 +79,7 @@ impl CollectdHandler {
             let mut buf = vec![];
             stream.read_to_end(&mut buf)?;
             let s = String::from_utf8_lossy(&buf);
-            trace!("Received JSON: {}", s);
+            trace!("Received JSON: {s}");
             match serde_json::from_slice(&buf) {
                 Ok(payloads) => payloads,
                 Err(e) => {
@@ -133,7 +133,7 @@ impl HttpHandler for CollectdHandler {
                     }
                 }
                 Err(e) => {
-                    warn!("Error parsing request: {}", e);
+                    warn!("Error parsing request: {e}");
                 }
             }
         }

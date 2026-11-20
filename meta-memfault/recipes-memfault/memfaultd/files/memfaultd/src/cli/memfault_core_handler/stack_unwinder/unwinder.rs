@@ -17,7 +17,7 @@ use eyre::{eyre, Result};
 use gimli::{
     read::{EhFrame, EhFrameHdr, UnwindSection},
     BaseAddresses, CfaRule, Encoding, EvaluationResult, Expression, Location, NativeEndian, Reader,
-    Register, RegisterRule, UnwindContext, Value,
+    Register, RegisterRule, UnwindContext, UnwindExpression, Value,
 };
 use gimli::{EndianSlice, ParsedEhFrameHdr};
 use log::debug;
@@ -35,13 +35,13 @@ const MAX_STACK_DEPTH: usize = 64;
 /// This struct is responsible for unwinding the stack of a crashed process. It is provided
 /// with the `.eh_frame_hdr` and `.eh_frame` sections of the ELF file, and it will use them
 /// to unwind the stack.
-pub struct Unwinder<'a, E: EhFrameFinder> {
-    eh_frame_finder: &'a mut E,
+pub struct Unwinder<S: FrameRuleSource> {
+    source: S,
 }
 
-impl<'a, E: EhFrameFinder> Unwinder<'a, E> {
-    pub fn new(eh_frame_finder: &'a mut E) -> Self {
-        Self { eh_frame_finder }
+impl<S: FrameRuleSource> Unwinder<S> {
+    pub fn new(source: S) -> Self {
+        Self { source }
     }
 
     // Given a starting address, unwind the stack and fill the context with the PC of each frame.
@@ -58,47 +58,9 @@ impl<'a, E: EhFrameFinder> Unwinder<'a, E> {
         let mut first_frame = true;
         // Limit the stack depth to prevent infinite loops
         for _ in 0..MAX_STACK_DEPTH {
-            let eh_frame_info = match self.eh_frame_finder.find_eh_frame(cur_return_addr) {
-                Ok(eh_frame_info) => eh_frame_info,
-                Err(_) => {
-                    // If we can't find an eh_frame, we've reached the end of the stack, or at
-                    // least the end of the stack we can unwind.
-                    debug!(
-                        "Failed to find eh_frame for address: {:#x}",
-                        cur_return_addr
-                    );
-                    break;
-                }
-            };
-            let unwind_info = eh_frame_from_sections(&eh_frame_info)?;
-
-            // TODO: Implement a naive FDE lookup for binaries without an eh_frame_hdr
-            let hdr_table = unwind_info
-                .eh_frame_hdr
-                .table()
-                .ok_or_else(|| eyre!("No table found"))?;
-
-            let mut unwind_ctx = UnwindContext::new();
-
-            // Parse and set up FDE
-            let fde = hdr_table.fde_for_address(
-                &unwind_info.eh_frame,
-                &unwind_info.bases,
-                cur_return_addr as _,
-                EhFrame::cie_from_offset,
-            );
-            match fde {
-                Ok(fde) => {
-                    let unwind_row = fde.unwind_info_for_address(
-                        &unwind_info.eh_frame,
-                        &unwind_info.bases,
-                        &mut unwind_ctx,
-                        cur_return_addr as _,
-                    )?;
-
-                    if unwind_row.register(return_register_idx()) == RegisterRule::Undefined
-                        && !first_frame
-                    {
+            let next_return_addr = match self.source.lookup(cur_return_addr)? {
+                FrameLookup::Row(row) => {
+                    if !first_frame && row.return_addr_undefined() {
                         // If the return address rule is undefined, we know this function never returns,
                         // so we can exit.
                         //
@@ -107,67 +69,17 @@ impl<'a, E: EhFrameFinder> Unwinder<'a, E> {
                         // address directly from the coredump.
                         break;
                     }
-
-                    // Unwind CFA
-                    let cfa_rule = unwind_row.cfa();
-                    let cfa = parse_cfa_rule(
-                        cfa_rule,
-                        ctx,
-                        &unwind_info.eh_frame,
-                        fde.cie().encoding(),
-                        memory,
-                    )?;
-
-                    // Unwind the registers
-                    let result = unwind_row.registers().try_for_each(|(register, rule)| {
-                        parse_register_rule(
-                            rule,
-                            register,
-                            cfa,
-                            ctx,
-                            memory,
-                            fde.cie().encoding(),
-                            &unwind_info.eh_frame,
-                        )
-                    });
-                    if let Err(e) = result {
-                        debug!("Failed to unwind registers: {:?}", e);
-                        break;
-                    }
-
-                    set_stack_pointer(&mut ctx.registers, cfa);
-
-                    cur_return_addr = get_return_register(&ctx.registers)
-                        .ok_or_else(|| eyre!("Failed to get return address from registers"))?;
-
-                    // A return address of 0 indicates the end of the stack
-                    if cur_return_addr == 0 {
-                        break;
-                    }
-
-                    // For trampoline functions, the return address is the address of the trampoline.
-                    // This differs from a normal function where the return address is the instruction
-                    // after the call
-                    let pc_offset = !fde.is_signal_trampoline() as usize;
-                    cur_return_addr -= pc_offset;
+                    row.apply(ctx, memory)?
                 }
-                Err(e) => {
-                    debug!("Failed to get FDE: {:?}", e);
-                    // if we're in the first frame, we can just fall back to the RA
-                    if first_frame {
-                        cur_return_addr = get_return_register(&ctx.registers)
-                            .ok_or_else(|| eyre!("Failed to get return address from registers"))?;
-
-                        // A return address of 0 indicates the end of the stack
-                        if cur_return_addr == 0 {
-                            break;
-                        }
-                    } else {
-                        // If we can't get an FDE, we've reached the end of the stack
-                        break;
-                    }
-                }
+                FrameLookup::NoUnwindTable => break,
+                FrameLookup::NotCovered if first_frame => nonzero_return_addr(ctx)?,
+                FrameLookup::NotCovered => break,
             };
+
+            match next_return_addr {
+                Some(addr) => cur_return_addr = addr,
+                None => break,
+            }
 
             ctx.pc_stack.push(cur_return_addr);
 
@@ -175,6 +87,143 @@ impl<'a, E: EhFrameFinder> Unwinder<'a, E> {
         }
 
         Ok(())
+    }
+}
+
+/// Abstraction for fetching frame rules for a given PC.
+///
+/// This abstraction doesn't do a ton, but gives us an easy entry point
+/// for unit tests mocks.
+pub trait FrameRuleSource {
+    fn lookup(&mut self, pc: usize) -> Result<FrameLookup<'_>>;
+}
+
+pub enum FrameLookup<'a> {
+    Row(FrameRow<'a>),
+    NoUnwindTable,
+    NotCovered,
+}
+
+pub struct FrameRow<'a> {
+    pub cfa: CfaRule<usize>,
+    pub registers: Vec<(Register, RegisterRule<usize>)>,
+    pub is_signal_trampoline: bool,
+    pub expressions: Option<ExpressionContext<'a>>,
+}
+
+pub struct ExpressionContext<'a> {
+    pub eh_frame: EhFrame<EndianSlice<'a, NativeEndian>>,
+    pub encoding: Encoding,
+}
+
+impl FrameRow<'_> {
+    fn return_addr_undefined(&self) -> bool {
+        self.registers
+            .iter()
+            .find(|(register, _)| *register == return_register_idx())
+            .is_none_or(|(_, rule)| *rule == RegisterRule::Undefined)
+    }
+
+    fn apply<M: Read + Seek>(
+        &self,
+        ctx: &mut UnwindFrameContext,
+        memory: &mut M,
+    ) -> Result<Option<usize>> {
+        let expressions = self.expressions.as_ref();
+        let cfa = parse_cfa_rule(&self.cfa, ctx, expressions, memory)?;
+
+        let result = self.registers.iter().try_for_each(|(register, rule)| {
+            parse_register_rule(rule, register, cfa, ctx, memory, expressions)
+        });
+        if let Err(e) = result {
+            debug!("Failed to unwind registers: {e:?}");
+            return Ok(None);
+        }
+
+        set_stack_pointer(&mut ctx.registers, cfa);
+
+        // For trampoline functions, the return address is the address of the trampoline.
+        // This differs from a normal function where the return address is the instruction
+        // after the call
+        let pc_offset = !self.is_signal_trampoline as usize;
+        Ok(nonzero_return_addr(ctx)?.map(|addr| addr - pc_offset))
+    }
+}
+
+fn nonzero_return_addr(ctx: &UnwindFrameContext) -> Result<Option<usize>> {
+    let addr = get_return_register(&ctx.registers)
+        .ok_or_else(|| eyre!("Failed to get return address from registers"))?;
+    Ok((addr != 0).then_some(addr))
+}
+
+pub struct FrameRuleSourceImpl<'a, E: EhFrameFinder> {
+    eh_frame_finder: &'a mut E,
+    eh_frame_info: Option<EhFrameInfo>,
+}
+
+impl<'a, E: EhFrameFinder> FrameRuleSourceImpl<'a, E> {
+    pub fn new(eh_frame_finder: &'a mut E) -> Self {
+        Self {
+            eh_frame_finder,
+            eh_frame_info: None,
+        }
+    }
+}
+
+impl<E: EhFrameFinder> FrameRuleSource for FrameRuleSourceImpl<'_, E> {
+    fn lookup(&mut self, pc: usize) -> Result<FrameLookup<'_>> {
+        // force a drop of previous frame info to not have both in memory at once
+        self.eh_frame_info = None;
+        let eh_frame_info = match self.eh_frame_finder.find_eh_frame(pc) {
+            Ok(eh_frame_info) => self.eh_frame_info.insert(eh_frame_info),
+            Err(_) => {
+                // If we can't find an eh_frame, we've reached the end of the stack, or at
+                // least the end of the stack we can unwind.
+                debug!("Failed to find eh_frame for address: {pc:#x}");
+                return Ok(FrameLookup::NoUnwindTable);
+            }
+        };
+        let unwind_info = eh_frame_from_sections(eh_frame_info)?;
+
+        // TODO: Implement a naive FDE lookup for binaries without an eh_frame_hdr
+        let hdr_table = unwind_info
+            .eh_frame_hdr
+            .table()
+            .ok_or_else(|| eyre!("No table found"))?;
+
+        let fde = match hdr_table.fde_for_address(
+            &unwind_info.eh_frame,
+            &unwind_info.bases,
+            pc as _,
+            EhFrame::cie_from_offset,
+        ) {
+            Ok(fde) => fde,
+            Err(e) => {
+                debug!("Failed to get FDE for address {pc:#x}: {e:?}");
+                return Ok(FrameLookup::NotCovered);
+            }
+        };
+
+        let mut unwind_ctx = UnwindContext::new();
+        let row = fde.unwind_info_for_address(
+            &unwind_info.eh_frame,
+            &unwind_info.bases,
+            &mut unwind_ctx,
+            pc as _,
+        )?;
+
+        Ok(FrameLookup::Row(FrameRow {
+            cfa: row.cfa().clone(),
+            registers: row
+                .registers()
+                .map(|(register, rule)| (*register, rule.clone()))
+                .collect(),
+            is_signal_trampoline: fde.is_signal_trampoline(),
+            expressions: Some(ExpressionContext {
+                eh_frame: unwind_info.eh_frame,
+                encoding: fde.cie().encoding(),
+            }),
+        }))
     }
 }
 
@@ -214,18 +263,12 @@ fn eh_frame_from_sections(eh_frame_info: &EhFrameInfo) -> Result<UnwindFrameInfo
 /// This function will calculate the CFA for the upcoming frame. The rules are outlined in section
 /// 6.4.1 of the DWARF standard:
 /// https://dwarfstd.org/doc/DWARF5.pdf
-fn parse_cfa_rule<R, S, M>(
+fn parse_cfa_rule<M: Read + Seek>(
     rule: &CfaRule<usize>,
     ctx: &UnwindFrameContext,
-    eh_frame: &S,
-    encoding: Encoding,
+    expressions: Option<&ExpressionContext>,
     memory: &mut M,
-) -> Result<usize>
-where
-    R: Reader<Offset = usize>,
-    S: UnwindSection<R>,
-    M: Read + Seek,
-{
+) -> Result<usize> {
     let cfa = match rule {
         CfaRule::RegisterAndOffset { register, offset } => ctx
             .registers
@@ -233,8 +276,7 @@ where
             .ok_or_else(|| eyre!("Failed to get register value"))?
             .wrapping_add_signed(*offset as isize),
         CfaRule::Expression(expression) => {
-            let expression = expression.get(eh_frame)?;
-            evaluate_expression(expression, ctx, encoding, memory)?
+            evaluate_unwind_expression(expression, expressions, ctx, memory)?
         }
     };
 
@@ -247,20 +289,14 @@ where
 /// are outlined in section 6.4.2 of the DWARF standard. Note that gimli does a lot of the heavy
 /// lifting in decoding the CFA rules for us, so we only need handle a small subset.
 /// https://dwarfstd.org/doc/DWARF5.pdf
-fn parse_register_rule<R, S, M>(
+fn parse_register_rule<M: Read + Seek>(
     rule: &RegisterRule<usize>,
     register: &Register,
     cfa: usize,
     ctx: &mut UnwindFrameContext,
     memory: &mut M,
-    encoding: Encoding,
-    eh_frame: &S,
-) -> Result<()>
-where
-    R: Reader<Offset = usize>,
-    S: UnwindSection<R>,
-    M: Read + Seek,
-{
+    expressions: Option<&ExpressionContext>,
+) -> Result<()> {
     let val = match rule {
         RegisterRule::Undefined | RegisterRule::SameValue => ctx.registers.get(register).copied(),
         RegisterRule::Offset(offset) => {
@@ -274,15 +310,16 @@ where
         RegisterRule::Register(reg) => ctx.registers.get(reg).copied(),
         RegisterRule::Constant(val) => Some(*val as usize),
         RegisterRule::Expression(expression) => {
-            let expression = expression.get(eh_frame)?;
-            let address = evaluate_expression(expression, ctx, encoding, memory)?;
+            let address = evaluate_unwind_expression(expression, expressions, ctx, memory)?;
 
             Some(read_word(memory, address)?)
         }
-        RegisterRule::ValExpression(expression) => {
-            let expression = expression.get(eh_frame)?;
-            Some(evaluate_expression(expression, ctx, encoding, memory)?)
-        }
+        RegisterRule::ValExpression(expression) => Some(evaluate_unwind_expression(
+            expression,
+            expressions,
+            ctx,
+            memory,
+        )?),
         // Fall through case, we should never hit this
         _ => {
             return Err(eyre!("Unsupported register rule: {:?}", rule));
@@ -296,6 +333,18 @@ where
         }
         None => Err(eyre!("Failed to parse register rule")),
     }
+}
+
+fn evaluate_unwind_expression<M: Read + Seek>(
+    expression: &UnwindExpression<usize>,
+    expressions: Option<&ExpressionContext>,
+    ctx: &UnwindFrameContext,
+    memory: &mut M,
+) -> Result<usize> {
+    let expressions =
+        expressions.ok_or_else(|| eyre!("Expression rule without expression context"))?;
+    let expression = expression.get(&expressions.eh_frame)?;
+    evaluate_expression(expression, ctx, expressions.encoding, memory)
 }
 
 fn evaluate_expression<R, M>(
@@ -431,8 +480,7 @@ mod test {
             cfa,
             &mut ctx,
             &mut memory_cursor,
-            encoding(),
-            &eh_frame(&[]),
+            Some(&expression_context()),
         )
         .unwrap();
         assert_eq!(*ctx.registers.get(&register).unwrap(), expected);
@@ -445,7 +493,8 @@ mod test {
         let mut memory = Cursor::new(vec![0u8]);
         ctx.registers.insert(Register(0), 0xfeed0000);
 
-        let cfa = parse_cfa_rule(&cfa_rule, &ctx, &eh_frame(&[]), encoding(), &mut memory).unwrap();
+        let cfa =
+            parse_cfa_rule(&cfa_rule, &ctx, Some(&expression_context()), &mut memory).unwrap();
         assert_eq!(cfa, expected);
     }
 
@@ -526,7 +575,7 @@ mod test {
         ctx.registers.insert(return_register_idx(), ra_val);
 
         let mut memory = Cursor::new(vec![0u8; 0x10000]);
-        let mut unwinder = Unwinder::new(&mut mock);
+        let mut unwinder = Unwinder::new(FrameRuleSourceImpl::new(&mut mock));
         unwinder
             .unwind_stack(starting_addr, &mut ctx, &mut memory)
             .unwrap();
@@ -534,11 +583,121 @@ mod test {
         assert_eq!(ctx.pc_stack, vec![starting_addr, ra_val]);
     }
 
+    #[rstest]
+    #[case(RegisterRule::Expression(UnwindExpression { offset: 0, length: 0 }))]
+    #[case(RegisterRule::ValExpression(UnwindExpression { offset: 0, length: 0 }))]
+    fn test_expression_rule_without_expression_context_is_err(
+        #[case] register_rule: RegisterRule<usize>,
+    ) {
+        let mut ctx = UnwindFrameContext::default();
+        let mut memory = Cursor::new(vec![0u8]);
+
+        let result =
+            parse_register_rule(&register_rule, &Register(0), 0, &mut ctx, &mut memory, None);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_dwarf_lookup_pc_between_fdes_is_not_covered() {
+        let mut finder = MockEhFrameFinder {
+            responses: [Ok(simple_exe_eh_frame_info())].into_iter().collect(),
+        };
+        let mut source = FrameRuleSourceImpl::new(&mut finder);
+
+        let lookup = source.lookup(0x1100).unwrap();
+
+        assert!(matches!(lookup, FrameLookup::NotCovered));
+    }
+
+    #[test]
+    fn test_dwarf_lookup_fde_error_is_not_covered() {
+        let mut eh_frame_info = simple_exe_eh_frame_info();
+        eh_frame_info.eh_frame_hdr.data[16..20].copy_from_slice(&0x7fff_fff0u32.to_ne_bytes());
+        let mut finder = MockEhFrameFinder {
+            responses: [Ok(eh_frame_info)].into_iter().collect(),
+        };
+        let mut source = FrameRuleSourceImpl::new(&mut finder);
+
+        let lookup = source.lookup(0x1030).unwrap();
+
+        assert!(matches!(lookup, FrameLookup::NotCovered));
+    }
+
+    #[test]
+    fn test_dwarf_lookup_without_eh_frame_is_no_unwind_table() {
+        let mut finder = MockEhFrameFinder {
+            responses: VecDeque::new(),
+        };
+        let mut source = FrameRuleSourceImpl::new(&mut finder);
+
+        let lookup = source.lookup(0x1150).unwrap();
+
+        assert!(matches!(lookup, FrameLookup::NoUnwindTable));
+    }
+
+    #[test]
+    fn test_dwarf_lookup_pc_inside_fde_returns_row() {
+        let mut finder = MockEhFrameFinder {
+            responses: [Ok(simple_exe_eh_frame_info())].into_iter().collect(),
+        };
+        let mut source = FrameRuleSourceImpl::new(&mut finder);
+
+        let FrameLookup::Row(row) = source.lookup(0x1150).unwrap() else {
+            panic!("expected a row for a PC inside an FDE");
+        };
+
+        assert!(row.expressions.is_some());
+        assert!(!row.is_signal_trampoline);
+        assert!(!row.registers.is_empty());
+    }
+
+    #[rstest]
+    #[case(Err(eyre!("broken FDE")), vec![0x1], true)]
+    #[case(Ok(FrameLookup::NotCovered), vec![0x1, 0x4321], false)]
+    #[case(Ok(FrameLookup::NoUnwindTable), vec![0x1], false)]
+    fn test_first_frame_lookup_outcome(
+        #[case] lookup: Result<FrameLookup<'static>>,
+        #[case] expected: Vec<usize>,
+        #[case] expect_err: bool,
+    ) {
+        let source = MockFrameRuleSource {
+            responses: [lookup].into_iter().collect(),
+        };
+        let mut ctx = UnwindFrameContext::default();
+        ctx.registers.insert(return_register_idx(), 0x4321);
+        let mut memory = Cursor::new(vec![0u8]);
+
+        let result = Unwinder::new(source).unwind_stack(0x1, &mut ctx, &mut memory);
+
+        assert_eq!(result.is_err(), expect_err);
+        assert_eq!(ctx.pc_stack, expected);
+    }
+
+    struct MockFrameRuleSource {
+        responses: VecDeque<Result<FrameLookup<'static>>>,
+    }
+
+    impl FrameRuleSource for MockFrameRuleSource {
+        fn lookup(&mut self, _pc: usize) -> Result<FrameLookup<'_>> {
+            self.responses
+                .pop_front()
+                .unwrap_or(Ok(FrameLookup::NoUnwindTable))
+        }
+    }
+
     fn encoding() -> Encoding {
         Encoding {
             format: Format::Dwarf32,
             version: 4,
             address_size: 8,
+        }
+    }
+
+    fn expression_context() -> ExpressionContext<'static> {
+        ExpressionContext {
+            eh_frame: eh_frame(&[]),
+            encoding: encoding(),
         }
     }
 

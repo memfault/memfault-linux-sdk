@@ -107,18 +107,22 @@ impl ChunkRelayService {
         for entry in fs::read_dir(&self.tmp_path)? {
             match entry {
                 Ok(chunks_path) => {
-                    self.store_mar_entry(
-                        chunks_path.path(),
+                    let chunks_path = chunks_path.path();
+                    if let Err(e) = self.store_mar_entry(
+                        chunks_path.clone(),
                         &staging_area,
                         network_config,
                         mar_config,
-                    )?;
+                    ) {
+                        warn!(
+                            "Failed to generate MAR entry from chunks file {}: {:?}",
+                            chunks_path.display(),
+                            e
+                        );
+                    }
                 }
                 Err(e) => {
-                    return Err(eyre!(
-                        "Invalid MAR entry found in chunks temporary path: {}",
-                        e
-                    ))
+                    warn!("Invalid MAR entry found in chunks temporary path: {e}");
                 }
             }
         }
@@ -140,11 +144,16 @@ impl ChunkRelayService {
             .to_owned();
 
         let file = File::open(&chunks_path)?;
-        let (key, serial) = BufReader::new(file)
-            .lines()
-            .take(2)
-            .collect_tuple()
-            .ok_or(eyre!("couldn't read first two lines of chunks file"))?;
+        let Some((key, serial)) = BufReader::new(file).lines().take(2).collect_tuple() else {
+            warn!(
+                "Removing chunks file without a complete header: {}",
+                chunks_path.display()
+            );
+            fs::remove_file(&chunks_path).wrap_err_with(|| {
+                format!("Unable to remove chunks file: {}", chunks_path.display())
+            })?;
+            return Ok(());
+        };
 
         let mar_entry = MarEntryBuilder::new(staging_area)?
             .set_metadata(Metadata::new_chunks(chunks_filename, serial?, key?))
@@ -182,13 +191,13 @@ impl Handler<RelayChunksMsg> for ChunkRelayService {
             // check if there's enough space to begin with
             if !self.headroom_limiter.check_with_added_space(chunk.len())? {
                 let errmsg = "ran out of space while writing chunks";
-                warn!("{}", errmsg);
+                warn!("{errmsg}");
                 return Err(eyre!("{}", errmsg));
             };
             if let Err(errmsg) = check_base64_encoding(chunk) {
-                warn!("{}", errmsg);
+                warn!("{errmsg}");
             }
-            if let Err(e) = writeln!(file, "MC:{}:", chunk) {
+            if let Err(e) = writeln!(file, "MC:{chunk}:") {
                 log::error!("Chunk relay: failed to write chunk to file: {e}");
                 return Err(e.into());
             }
@@ -263,7 +272,10 @@ fn parse_mc_string_to_iresult(input: &str) -> IResult<&str, &str> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::mar::MarEntry;
+    use crate::util::disk_size::DiskSize;
     use rstest::rstest;
+    use tempfile::tempdir;
 
     #[rstest]
     #[case("MC:asdf:", "asdf")]
@@ -301,5 +313,45 @@ mod test {
     #[case("aGk=", ChunksEncoding::Hex)]
     fn test_mismatched_format_errors(#[case] line: String, #[case] encoding: ChunksEncoding) {
         assert!(encoding.to_base64(&line).is_err());
+    }
+
+    #[rstest]
+    fn test_malformed_chunks_files_are_removed_and_skipped() {
+        let chunks_dir = tempdir().unwrap();
+        let mar_staging = tempdir().unwrap();
+        let persist_staging = tempdir().unwrap();
+
+        let empty_path = chunks_dir.path().join("empty.chunks");
+        let one_line_path = chunks_dir.path().join("one_line.chunks");
+        let valid_path = chunks_dir.path().join("valid.chunks");
+        fs::write(&empty_path, "").unwrap();
+        fs::write(&one_line_path, "test-project-key\n").unwrap();
+        fs::write(&valid_path, "test-project-key\ntest-serial\nMC:aGk=:\n").unwrap();
+
+        let mut service = ChunkRelayService::new(
+            chunks_dir.path().to_path_buf(),
+            ChunksHeadroomLimiter::new(DiskSize::ZERO, || Ok(DiskSize::new_capacity(u64::MAX))),
+            String::from("test-project-key"),
+        );
+        let mar_config = MarConfig::test_fixture(mar_staging.path(), persist_staging.path());
+
+        service
+            .store_all_mar_entries(&NetworkConfig::test_fixture(), &mar_config)
+            .unwrap();
+
+        assert!(!empty_path.exists());
+        assert!(!one_line_path.exists());
+        assert!(!valid_path.exists());
+
+        let entries = MarEntry::iterate_from_container(mar_staging.path())
+            .unwrap()
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(matches!(
+            &entries[0].manifest.metadata,
+            Metadata::Chunks { chunks_file, device_serial, .. }
+                if chunks_file == "valid.chunks" && device_serial == "test-serial"
+        ));
     }
 }

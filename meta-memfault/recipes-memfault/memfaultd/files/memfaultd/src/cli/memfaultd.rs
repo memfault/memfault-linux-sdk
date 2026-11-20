@@ -69,7 +69,7 @@ pub fn main() -> Result<()> {
         return Ok(());
     }
 
-    let warning_handle_fn = |w: &_| debug!("{}", w);
+    let warning_handle_fn = |w: &_| debug!("{w}");
     let config = Config::read_from_system(config_path, warning_handle_fn)
         .wrap_err(eyre!("Unable to load configuration"))?;
 
@@ -131,7 +131,7 @@ pub fn main() -> Result<()> {
 
         let err = Command::new(arg0).args(&args).exec();
         // This next line will only be executed if we failed to exec().
-        error!("Unable to restart {:?}: {:?}", args, err);
+        error!("Unable to restart {args:?}: {err:?}");
     };
 
     if args.daemonize {

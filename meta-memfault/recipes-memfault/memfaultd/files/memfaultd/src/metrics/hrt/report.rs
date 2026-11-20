@@ -44,8 +44,7 @@ impl HrtReport {
             .expect("Default HRT limit should be nonzero");
         let rate_limit = if max_readings_per_min > rate_limit_upper_bound {
             debug!(
-                "Configured HRT rate limit is {} - capping at {} samples per minute",
-                max_readings_per_min, rate_limit_upper_bound
+                "Configured HRT rate limit is {max_readings_per_min} - capping at {rate_limit_upper_bound} samples per minute"
             );
             rate_limit_upper_bound
         } else {
@@ -79,7 +78,7 @@ impl HrtReport {
                     }
                 })
         {
-            warn!("Failed to add HRT metric reading: {}", e);
+            warn!("Failed to add HRT metric reading: {e}");
         }
     }
 }

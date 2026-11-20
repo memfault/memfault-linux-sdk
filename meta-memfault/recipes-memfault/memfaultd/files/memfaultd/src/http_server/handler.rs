@@ -86,8 +86,8 @@ mod tests {
         pub fn expect(self, m: &'static str) -> ResponseBox {
             match self {
                 HttpHandlerResult::Response(response) => response,
-                HttpHandlerResult::Error(e) => panic!("{}: HttpHandlerResult::Error({})", m, e),
-                HttpHandlerResult::NotHandled => panic!("{}: HttpHandlerResult::Nothandled", m),
+                HttpHandlerResult::Error(e) => panic!("{m}: HttpHandlerResult::Error({e})"),
+                HttpHandlerResult::NotHandled => panic!("{m}: HttpHandlerResult::Nothandled"),
             }
         }
     }

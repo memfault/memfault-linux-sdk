@@ -70,15 +70,15 @@ impl SymbolFileDescriptor {
         path: String,
     ) -> Self {
         let pc_range = PcRange {
-            start: format!("{:#x}", start_addr),
-            end: format!("{:#x}", end_addr),
+            start: format!("{start_addr:#x}"),
+            end: format!("{end_addr:#x}"),
         };
 
         Self {
             pc_range,
             build_id,
-            compiled_offset: format!("{:#x}", compiled_offset),
-            runtime_offset: format!("{:#x}", runtime_offset),
+            compiled_offset: format!("{compiled_offset:#x}"),
+            runtime_offset: format!("{runtime_offset:#x}"),
             path,
         }
     }
@@ -102,7 +102,7 @@ pub struct ThreadDescriptor {
 
 impl ThreadDescriptor {
     pub fn new(active: bool, pcs: Vec<usize>, name: Option<String>) -> Self {
-        let pcs = pcs.into_iter().map(|pc| format!("{:#x}", pc)).collect();
+        let pcs = pcs.into_iter().map(|pc| format!("{pc:#x}")).collect();
         Self { active, pcs, name }
     }
 }

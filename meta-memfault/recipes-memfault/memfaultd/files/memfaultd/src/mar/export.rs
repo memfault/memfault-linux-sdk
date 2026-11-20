@@ -382,7 +382,7 @@ mod tests {
                 .with_path(EXPORT_MAR_URL);
 
             if let Some(hash) = hash {
-                r = r.with_header(Header::from_str(&format!("If-Match: {}", hash)).unwrap())
+                r = r.with_header(Header::from_str(&format!("If-Match: {hash}")).unwrap())
             }
 
             self.handler

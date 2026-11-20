@@ -81,6 +81,8 @@ mod tests {
     #[case("DEMO 1234", false)]
     // Too short (0 characters)
     #[case("", false)]
+    #[case(&"A".repeat(128), true)]
+    #[case(&"A".repeat(129), false)]
     // Too long (129 characters)
     #[case("012345679012345679012345679012345679012345679012345679012345679012345679012345679012345679012345679012345679012345678901234567890", false)]
     fn device_id_is_valid_works(#[case] device_id: &str, #[case] expected: bool) {

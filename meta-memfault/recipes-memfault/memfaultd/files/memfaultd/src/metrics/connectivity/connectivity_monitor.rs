@@ -100,7 +100,7 @@ where
 {
     fn deliver(&mut self, _tick: ConnectivityMonitorTick) {
         if let Err(e) = self.update_connected_time() {
-            warn!("Failed to update connected time metrics: {}", e);
+            warn!("Failed to update connected time metrics: {e}");
         }
     }
 }

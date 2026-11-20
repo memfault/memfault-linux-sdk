@@ -15,7 +15,7 @@ IMAGE_FSTYPES:append = " ext4.gz"
 # IMAGE_OVERHEAD_FACTOR = "1"
 # IMAGE_ROOTFS_MAXSIZE = "262144"
 # IMAGE_CLASSES:append = " image_types_zchunk"
-# IMAGE_FSTYPES:append = " ext4.zck ext4.zck.zckheader"
+# IMAGE_FSTYPES:append = " ext4 ext4.zck"
 
 # wrynose folds this into IMAGE_LINK_NAME, adding a .rootfs infix to every
 # artifact; SWUPDATE_IMAGES, the CLI uploads and the docs all omit it.

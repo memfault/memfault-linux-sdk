@@ -88,14 +88,14 @@ impl JournalRawImpl {
         let seek_to_cursor = cursor_string
             .map(|cursor| {
                 Self::try_seek_to_cursor(journal, cursor)
-                    .map_err(|e| warn!("{}", e))
+                    .map_err(|e| warn!("{e}"))
                     .is_ok()
             })
             .unwrap_or(false);
 
         if !seek_to_cursor {
             if let Err(e) = Self::seek_to_current_boot_start(journal) {
-                warn!("Couldn't seek journal to start of current boot: {}", e);
+                warn!("Couldn't seek journal to start of current boot: {e}");
             }
         }
 
@@ -154,7 +154,7 @@ impl JournalRawImpl {
         let mut cursor: MaybeUninit<*const c_char> = MaybeUninit::uninit();
         let ret = unsafe { sd_journal_get_cursor(self.journal, cursor.as_mut_ptr()) };
         if ret < 0 {
-            warn!("Failed to get journal cursor: {}", ret);
+            warn!("Failed to get journal cursor: {ret}");
         } else {
             let cursor = unsafe { cursor.assume_init() };
             let cursor_cstr = unsafe { std::ffi::CStr::from_ptr(cursor) };
@@ -213,10 +213,7 @@ impl JournalRaw for JournalRawImpl {
         let mut fields = Vec::new();
 
         let timestamp = self.get_timestamp().unwrap_or_else(|e| {
-            debug!(
-                "Failed to get journal entry timestamp, falling back to ingestion time: {}",
-                e
-            );
+            debug!("Failed to get journal entry timestamp, falling back to ingestion time: {e}");
             Utc::now()
         });
 
@@ -354,7 +351,7 @@ impl<J: JournalRaw> Journal<J> {
         std::iter::from_fn(move || match self.next_entry() {
             Ok(entry) => entry,
             Err(e) => {
-                warn!("Failed to get next journal entry: {}", e);
+                warn!("Failed to get next journal entry: {e}");
                 None
             }
         })

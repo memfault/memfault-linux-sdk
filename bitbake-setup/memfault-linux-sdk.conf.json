@@ -1,0 +1,70 @@
+{
+  "description": "Memfault Linux SDK example for QEMU and Raspberry Pi, Yocto Project 6.0 'wrynose'",
+  "sources": {
+    "bitbake": {
+      "git-remote": {
+        "uri": "https://git.openembedded.org/bitbake",
+        "branch": "2.18",
+        "rev": "2.18"
+      }
+    },
+    "openembedded-core": {
+      "git-remote": {
+        "uri": "https://git.openembedded.org/openembedded-core",
+        "branch": "wrynose",
+        "rev": "wrynose"
+      }
+    },
+    "meta-yocto": {
+      "git-remote": {
+        "uri": "https://git.yoctoproject.org/meta-yocto",
+        "branch": "wrynose",
+        "rev": "wrynose"
+      }
+    },
+    "meta-openembedded": {
+      "git-remote": {
+        "uri": "https://github.com/openembedded/meta-openembedded.git",
+        "branch": "wrynose",
+        "rev": "wrynose"
+      }
+    },
+    "meta-swupdate": {
+      "git-remote": {
+        "uri": "https://github.com/sbabic/meta-swupdate.git",
+        "branch": "wrynose",
+        "rev": "wrynose"
+      }
+    },
+    "meta-raspberrypi": {
+      "git-remote": {
+        "uri": "https://git.yoctoproject.org/meta-raspberrypi",
+        "branch": "wrynose",
+        "rev": "wrynose"
+      }
+    },
+    "meta-rust-bin": {
+      "git-remote": {
+        "uri": "https://github.com/rust-embedded/meta-rust-bin.git",
+        "rev": "54721fa1c7a4edaba7fb63cdbcaf0c6253c5fa3a"
+      }
+    },
+    "memfault-linux-sdk": {
+      "git-remote": {
+        "uri": "https://github.com/memfault/memfault-linux-sdk.git",
+        "branch": "wrynose",
+        "rev": "wrynose"
+      }
+    }
+  },
+  "bitbake-setup": {
+    "configurations": [
+      {
+        "name": "memfault-example",
+        "description": "QEMU and Raspberry Pi example images with memfaultd, SWUpdate and A/B rootfs",
+        "oe-template": "memfault-example-default"
+      }
+    ]
+  },
+  "version": "1.0"
+}

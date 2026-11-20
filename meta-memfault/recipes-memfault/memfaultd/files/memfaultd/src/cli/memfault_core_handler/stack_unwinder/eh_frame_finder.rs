@@ -85,7 +85,7 @@ impl TryFrom<&MappedFileInfo> for SymbolFileDescriptor {
             Some(ref binary_fino) => {
                 let build_id = binary_fino.build_id.iter().try_fold(
                     String::with_capacity(binary_fino.build_id.len()),
-                    |mut acc, b| match write!(acc, "{:02x}", b) {
+                    |mut acc, b| match write!(acc, "{b:02x}") {
                         Ok(()) => Ok(acc),
                         Err(e) => Err(eyre!("Failed to write build_id byte: {}", e)),
                     },
@@ -200,7 +200,7 @@ impl EhFrameFinderImpl {
                     return None;
                 }
                 MappedFileInfo::try_from(memory_map)
-                    .map_err(|e| debug!("Failed to parse memory map: {}", e))
+                    .map_err(|e| debug!("Failed to parse memory map: {e}"))
                     .ok()
             })
             .sorted_by(|a, b| a.start_addr.cmp(&b.start_addr))

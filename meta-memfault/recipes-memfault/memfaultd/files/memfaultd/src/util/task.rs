@@ -91,7 +91,7 @@ fn loop_with_exponential_error_backoff_internal<
                 );
 
                 count_errors_since_success += 1;
-                warn!("Error in Memfaultd main loop: {}", e);
+                warn!("Error in Memfaultd main loop: {e}");
                 next_run
             }
         };
@@ -104,7 +104,7 @@ fn loop_with_exponential_error_backoff_internal<
                 // offset established by the jitter in the first iteration
                 // while remaining evenly spaced out from each other.
                 PreviousIterationKind::First => {
-                    trace!("Finished first sync: Sleep for {:?}", next_run_in);
+                    trace!("Finished first sync: Sleep for {next_run_in:?}");
                     sleep(next_run_in);
                 }
                 // Space subsequent iterations out evenly regardless of how long
@@ -112,7 +112,7 @@ fn loop_with_exponential_error_backoff_internal<
                 PreviousIterationKind::Subsequent => {
                     let sleep_maybe = next_run_in.checked_sub(start_work.elapsed());
                     if let Some(howlong) = sleep_maybe {
-                        trace!("Sleep for {:?}", howlong);
+                        trace!("Sleep for {howlong:?}");
                         sleep(howlong);
                     }
                 }

@@ -43,13 +43,13 @@ impl HttpHandler for MetricsEventHandler {
                     match self.metrics_mbox.send_and_forget(metrics_request.readings) {
                         Ok(()) => HttpHandlerResult::Response(Response::empty(200).boxed()),
                         Err(e) => {
-                            error!("Failed to send metrics to mailbox: {}", e);
+                            error!("Failed to send metrics to mailbox: {e}");
                             HttpHandlerResult::Response(Response::empty(500).boxed())
                         }
                     }
                 }
                 Err(e) => {
-                    error!("Failed to parse metrics request: {}", e);
+                    error!("Failed to parse metrics request: {e}");
                     HttpHandlerResult::Response(Response::empty(400).boxed())
                 }
             }

@@ -56,7 +56,7 @@ impl<J: JournalRaw> TaskService for JournaldLogProvider<J> {
         Box::pin(async {
             self.run_once()
                 .await
-                .map_err(|e| format!("journald parser failed: {}", e))
+                .map_err(|e| format!("journald parser failed: {e}"))
         })
     }
 }

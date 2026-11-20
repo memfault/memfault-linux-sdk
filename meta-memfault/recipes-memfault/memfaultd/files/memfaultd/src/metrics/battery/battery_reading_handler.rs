@@ -56,15 +56,13 @@ impl HttpHandler for BatteryReadingHandler {
                     {
                         Ok(()) => HttpHandlerResult::Response(Response::empty(200).boxed()),
                         Err(e) => HttpHandlerResult::Error(format!(
-                            "Failed to add battery reading to metrics: {:#}",
-                            e
+                            "Failed to add battery reading to metrics: {e:#}"
                         )),
                     }
                 }
-                Err(e) => HttpHandlerResult::Error(format!(
-                    "Failed to parse battery reading string: {}",
-                    e
-                )),
+                Err(e) => {
+                    HttpHandlerResult::Error(format!("Failed to parse battery reading string: {e}"))
+                }
             }
         } else {
             HttpHandlerResult::Response(Response::empty(200).boxed())

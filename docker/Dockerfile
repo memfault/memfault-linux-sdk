@@ -10,26 +10,30 @@ RUN apt-get update && \
     apt-get -y upgrade
 
 # Core utilities
-RUN apt-get install -y bash build-essential curl git sudo vim
+RUN apt-get update && apt-get install -y bash build-essential curl git sudo vim
 
 # Yocto dependencies
-RUN apt-get install -y chrpath cpio diffstat gawk file lz4 python3-distutils wget zstd
+RUN apt-get update && apt-get install -y chrpath cpio diffstat gawk file lz4 python3-distutils wget zstd
 
 # Yocto QEMU dependencies
-RUN apt-get install -y samba
+RUN apt-get update && apt-get install -y samba
 
 # Yocto wic dependencies
-RUN apt-get install -y parted
+RUN apt-get update && apt-get install -y parted
 
 # Install pip for python testing dependencies
-RUN apt-get install -y python3-pip
+RUN apt-get update && apt-get install -y python3-pip
+
+RUN git init --quiet /opt/bitbake && \
+    git -C /opt/bitbake fetch --quiet --depth 1 https://git.openembedded.org/bitbake fae9db3168dbff1b8c76fe9c6726a9687ff97514 && \
+    git -C /opt/bitbake -c advice.detachedHead=false checkout --quiet FETCH_HEAD
 
 # Add normal user
 RUN useradd --create-home --gid users --groups sudo --shell /bin/bash build
 RUN sed -i -e 's/^\(%sudo[[:space:]].*\)ALL$/\1NOPASSWD: ALL/' /etc/sudoers
 
 # Add en_US.UTF-8 locale, required by Yocto
-RUN apt-get install -y locales
+RUN apt-get update && apt-get install -y locales
 RUN sed -i -e 's/^# en_US.UTF-8 UTF-8$/en_US.UTF-8 UTF-8/' /etc/locale.gen && echo 'LANG="en_US.UTF-8"' | tee -a /etc/default/locale && dpkg-reconfigure locales && update-locale LANG=en_US.UTF-8
 
 USER build

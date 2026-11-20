@@ -82,9 +82,9 @@ impl Display for RebootReason {
             RebootReason::Code(c) => write!(f, "{}", (*c as u32)),
             RebootReason::Custom(RebootReasonString { unexpected, name }) => {
                 if *unexpected {
-                    write!(f, "!{}", name)
+                    write!(f, "!{name}")
                 } else {
-                    write!(f, "{}", name)
+                    write!(f, "{name}")
                 }
             }
         }

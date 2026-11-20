@@ -199,6 +199,8 @@ pub enum DeviceConfigResponseResolution {
 mod test {
     use super::*;
 
+    use std::time::Duration;
+
     use insta::assert_json_snapshot;
     use serde_json::{json, Value};
 
@@ -211,6 +213,7 @@ mod test {
             hardware_version: "hardware_version".to_string(),
             software_version: "software_version".to_string(),
             software_type: "software_type".to_string(),
+            upload_timeout: Duration::from_secs(30),
         };
         let prepare_request =
             UploadPrepareRequest::prepare(&network_config, 123, false, UploadPrepareKind::Mar);

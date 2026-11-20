@@ -15,7 +15,7 @@ where
 
 pub fn alphanum_slug_is_valid(s: &str, max_len: usize) -> eyre::Result<()> {
     match (
-        (1..max_len).contains(&s.len()),
+        (1..=max_len).contains(&s.len()),
         s.chars()
             .all(|c| matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' )),
     ) {

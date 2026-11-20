@@ -21,7 +21,7 @@ pub fn get_files_sorted_by_mtime(dir: &Path) -> Result<Vec<PathBuf>> {
         .filter_map(|e| match e {
             Ok(e) => Some(e),
             Err(e) => {
-                warn!("Error reading directory entry: {:#}", e);
+                warn!("Error reading directory entry: {e:#}");
                 None
             }
         })

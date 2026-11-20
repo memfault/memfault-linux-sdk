@@ -10,7 +10,7 @@
 //! the below rules:
 //!
 //! +=================+=====+=====+========+======+
-//! |    MAR Type     | Off | Low | Medium | High |
+//! |    MAR Type     | Off | Low | Normal | High |
 //! +=================+=====+=====+========+======+
 //! | heartbeat       |     |     | x      | x    |
 //! +-----------------+-----+-----+--------+------+
@@ -37,9 +37,8 @@ use itertools::Itertools;
 use log::{debug, trace};
 
 use crate::{
-    config::{Resolution, Sampling},
+    config::Sampling,
     mar::{MarEntry, Metadata},
-    metrics::MetricReportType,
     network::NetworkClient,
     util::zip::{zip_stream_len_empty, zip_stream_len_for_file, ZipEncoder, ZipEntryInfo},
 };
@@ -77,14 +76,14 @@ pub fn collect_and_upload(
 
             let mut entries = persist_entries.chain(tmp_entries);
             upload_mar_entries(&mut entries, client, max_zip_size, |included_entries| {
-                trace!("Uploaded {:?} - deleting...", included_entries);
+                trace!("Uploaded {included_entries:?} - deleting...");
                 included_entries.iter().for_each(|f| {
                     let _ = remove_dir_all(f);
                 })
             })
         }
         None => upload_mar_entries(&mut tmp_entries, client, max_zip_size, |included_entries| {
-            trace!("Uploaded {:?} - deleting...", included_entries);
+            trace!("Uploaded {included_entries:?} - deleting...");
             included_entries.iter().for_each(|f| {
                 let _ = remove_dir_all(f);
             })
@@ -112,20 +111,18 @@ fn should_upload(
     }
 
     match &manifest.metadata {
-        Metadata::DeviceAttributes { .. } => sampling.monitoring_resolution >= Resolution::Normal,
+        Metadata::DeviceAttributes { .. } => sampling.monitoring_enabled(),
         Metadata::DeviceConfig { .. } => true, // Always upload device config
-        Metadata::ElfCoredump { .. } => sampling.debugging_resolution >= Resolution::Normal,
-        Metadata::LinuxHeartbeat { .. } => sampling.monitoring_resolution >= Resolution::Normal,
-        Metadata::LinuxMetricReport { report_type, .. } => match report_type {
-            MetricReportType::Heartbeat => sampling.monitoring_resolution >= Resolution::Normal,
-            MetricReportType::Session(_) => sampling.monitoring_resolution >= Resolution::Normal,
-            MetricReportType::DailyHeartbeat => sampling.monitoring_resolution >= Resolution::Low,
-        },
-        Metadata::LinuxLogs { .. } => sampling.logging_resolution >= Resolution::Normal,
+        Metadata::ElfCoredump { .. } => sampling.debugging_enabled(),
+        Metadata::LinuxHeartbeat { .. } => sampling.monitoring_enabled(),
+        Metadata::LinuxMetricReport { report_type, .. } => {
+            sampling.metric_report_enabled(report_type)
+        }
+        Metadata::LinuxLogs { .. } => sampling.logging_enabled(),
         Metadata::LinuxReboot { .. } => true, // Always upload reboots
-        Metadata::LinuxCustomTrace { .. } => sampling.debugging_resolution >= Resolution::Normal,
-        Metadata::CustomDataRecording { .. } => sampling.debugging_resolution >= Resolution::Normal,
-        Metadata::Stacktrace { .. } => sampling.debugging_resolution >= Resolution::Normal,
+        Metadata::LinuxCustomTrace { .. } => sampling.debugging_enabled(),
+        Metadata::CustomDataRecording { .. } => sampling.debugging_enabled(),
+        Metadata::Stacktrace { .. } => sampling.debugging_enabled(),
         Metadata::Chunks { .. } => true, // forward chunks whenever possible
     }
 }
@@ -159,7 +156,7 @@ pub fn gather_mar_entries_to_zip(
             entry_and_infos
         }
         Err(e) => {
-            debug!("Invalid folder in MAR staging: {:?}", e);
+            debug!("Invalid folder in MAR staging: {e:?}");
             None
         }
     });
@@ -208,12 +205,11 @@ impl TryFrom<&MarEntry> for Vec<ZipEntryInfo> {
                 // readable. Yes, this is prone to a race condition where it is no longer readable by
                 // the time is going to be read by the zip writer, but it is better than nothing.
                 let file =
-                    File::open(&path).wrap_err_with(|| format!("Error opening {:?}", filename))?;
+                    File::open(&path).wrap_err_with(|| format!("Error opening {filename:?}"))?;
                 drop(file);
 
                 let base = entry_path.parent().ok_or(eyre!("No parent directory"))?;
-                ZipEntryInfo::new(path, base)
-                    .wrap_err_with(|| format!("Error adding {:?}", filename))
+                ZipEntryInfo::new(path, base).wrap_err_with(|| format!("Error adding {filename:?}"))
             })
             .collect::<Result<Vec<_>>>()
     }
@@ -252,8 +248,9 @@ mod tests {
 
     use crate::reboot::{RebootReason, RebootReasonCode};
     use crate::{
+        config::Resolution,
         mar::test_utils::{assert_mar_content_matches, MarCollectorFixture},
-        metrics::SessionName,
+        metrics::{MetricReportType, SessionName},
         network::MockNetworkClient,
     };
     use crate::{

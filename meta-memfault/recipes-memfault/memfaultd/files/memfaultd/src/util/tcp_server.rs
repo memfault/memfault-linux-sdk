@@ -46,12 +46,12 @@ impl ThreadedTcpServer {
                     let handler = handler.clone();
                     pool.execute(move || {
                         if let Err(e) = handler.handle_connection(stream) {
-                            warn!("Error while handling connection: {}", e)
+                            warn!("Error while handling connection: {e}")
                         }
                     })
                 }
                 Err(e) => {
-                    warn!("TCP server listener error {}", e);
+                    warn!("TCP server listener error {e}");
                     break;
                 }
             }
@@ -76,7 +76,7 @@ impl TcpConnectionHandler for TcpNullConnectionHandler {
                 Ok(0) => break, // EOF
                 Ok(_) => {}     // drop the data
                 Err(e) => {
-                    warn!("TCP read error: {:?}", e);
+                    warn!("TCP read error: {e:?}");
                     break;
                 }
             }

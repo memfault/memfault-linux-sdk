@@ -44,7 +44,7 @@ impl StatsDServer {
                     "Couldn't start StatsD server on {}: {} - StatsD metrics will not be collected",
                     self.listening_address, e
                 );
-                return Err(format!("could not bind the StatsD socket: {}", e));
+                return Err(format!("could not bind the StatsD socket: {e}"));
             }
         };
         debug!(
@@ -59,7 +59,7 @@ impl StatsDServer {
         self.init_socket()?;
         loop {
             if let Err(e) = self.run_once() {
-                warn!("{}", e);
+                warn!("{e}");
             }
         }
     }
@@ -94,7 +94,7 @@ impl StatsDServer {
             // Drop strings that couldn't be parsed as a KeyedMetricReading
             .filter_map(|res| {
                 if let Err(e) = &res {
-                    warn!("{}", e)
+                    warn!("{e}")
                 };
 
                 if self.legacy_gauge_aggregation {
@@ -119,7 +119,7 @@ impl StatsDServer {
             .collect();
 
         if let Err(e) = self.metrics_mailbox.send_and_forget(metric_readings) {
-            warn!("Error adding metric sent to StatsD server: {}", e);
+            warn!("Error adding metric sent to StatsD server: {e}");
         }
     }
 }
@@ -244,8 +244,7 @@ mod test {
             .expect_err("init_socket() should fail when the address is already bound");
         assert!(
             error.contains("could not bind the StatsD socket"),
-            "unexpected error: {}",
-            error
+            "unexpected error: {error}"
         );
     }
 

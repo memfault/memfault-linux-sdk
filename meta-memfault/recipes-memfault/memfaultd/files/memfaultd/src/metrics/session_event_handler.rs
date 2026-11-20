@@ -108,24 +108,21 @@ impl HttpHandler for SessionEventHandler {
                     if request.url() == "/v1/session/start" {
                         if let Err(e) = self.start_session(session_name, readings) {
                             return HttpHandlerResult::Error(format!(
-                                "Failed to start session: {:?}",
-                                e
+                                "Failed to start session: {e:?}"
                             ));
                         }
                     } else if request.url() == "/v1/session/end" {
                         if let Err(e) = self.stop_session(session_name, readings) {
                             return HttpHandlerResult::Error(format!(
-                                "Failed to end session: {:?}",
-                                e
+                                "Failed to end session: {e:?}"
                             ));
                         }
                     }
                 }
                 Err(e) => {
-                    warn!("Failed to parse session request: {:?}", e);
+                    warn!("Failed to parse session request: {e:?}");
                     return HttpHandlerResult::Error(format!(
-                        "Failed to parse session request: {:?}",
-                        e
+                        "Failed to parse session request: {e:?}"
                     ));
                 }
             }
@@ -383,6 +380,7 @@ mod tests {
             &[session_config],
             true,
             MetricsSet::empty(),
+            std::sync::Arc::new(crate::config::DeviceConfig::default()),
         ));
 
         let tempdir = TempDir::new().unwrap();

@@ -14,9 +14,9 @@ fn main() {
 
     let mut cc = Build::new();
     cc.flag("-fPIC");
-    cc.include(format!("{}/include", LIBMEMFAULTC));
+    cc.include(format!("{LIBMEMFAULTC}/include"));
 
-    cc.file(format!("{}/src/crash.c", LIBMEMFAULTC));
+    cc.file(format!("{LIBMEMFAULTC}/src/crash.c"));
 
     // Build a list of the library that we want to link into the final binary.
     let mut libs = vec![];
@@ -26,13 +26,13 @@ fn main() {
         // that the rust code can be checked but we don't actually build the C
         // code.
         if cfg!(not(target_os = "macos")) {
-            cc.file(format!("{}/src/systemd.c", LIBMEMFAULTC));
+            cc.file(format!("{LIBMEMFAULTC}/src/systemd.c"));
             libs.push("libsystemd");
         }
     }
 
     if env::var("CARGO_FEATURE_SWUPDATE").is_ok() {
-        cc.file(format!("{}/src/swupdate.c", LIBMEMFAULTC));
+        cc.file(format!("{LIBMEMFAULTC}/src/swupdate.c"));
         libs.push("libconfig");
     }
 
@@ -53,7 +53,7 @@ fn main() {
             Ok(lib) => {
                 cc.includes(lib.include_paths);
             }
-            Err(e) => println!("WARNING - Library {} was not found: {}", lib, e),
+            Err(e) => println!("WARNING - Library {lib} was not found: {e}"),
         }
     });
 
@@ -62,7 +62,7 @@ fn main() {
     println!("cargo:rustc-link-lib=static=memfaultc");
 
     // Tell cargo to rebuild the project when any of the C project files changes
-    let root_src_dir = format!("{}/src", LIBMEMFAULTC);
+    let root_src_dir = format!("{LIBMEMFAULTC}/src");
     WalkDir::new(root_src_dir)
         .into_iter()
         .filter_map(Result::ok)

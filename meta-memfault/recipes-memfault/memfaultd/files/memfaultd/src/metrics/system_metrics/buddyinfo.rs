@@ -73,11 +73,9 @@ impl BuddyInfoMetricsCollector {
             .iter()
             .enumerate()
             .map(|(order, count)| {
-                let key = MetricStringKey::from_str(&format!(
-                    "{}/order_{}",
-                    BUDDYINFO_METRIC_PREFIX, order
-                ))
-                .map_err(|e| eyre!("Couldn't build buddyinfo metric key: {}", e))?;
+                let key =
+                    MetricStringKey::from_str(&format!("{BUDDYINFO_METRIC_PREFIX}/order_{order}"))
+                        .map_err(|e| eyre!("Couldn't build buddyinfo metric key: {}", e))?;
                 Ok(KeyedMetricReading::new_histogram(key, *count as f64))
             })
             .collect()

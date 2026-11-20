@@ -8,7 +8,9 @@ use std::{io::Read, str::from_utf8};
 use tiny_http::{Method, Request, Response};
 
 use crate::chunk_relay::RelayChunksMsg;
+use crate::config::device_id_is_valid;
 use crate::http_server::{ChunksRequest, HttpHandler, HttpHandlerResult};
+use crate::util::patterns::alphanum_slug_is_valid;
 
 pub struct ChunkRelayHttpHandler {
     relay_service_mbox: MsgMailbox<RelayChunksMsg>,
@@ -36,7 +38,15 @@ impl ChunkRelayHttpHandler {
             return Err(eyre!("Request body too large (max {MAX_BODY_BYTES} bytes)"));
         }
         let body = from_utf8(&buf)?;
-        Ok(serde_json::from_str(body)?)
+        let chunks_request: ChunksRequest = serde_json::from_str(body)?;
+        if let Some(project_key) = &chunks_request.project_key {
+            alphanum_slug_is_valid(project_key, 128)
+                .map_err(|e| eyre!("Invalid project_key: {e}"))?;
+        }
+        if let Some(device_serial) = &chunks_request.device_serial {
+            device_id_is_valid(device_serial).map_err(|e| eyre!("Invalid device_serial: {e}"))?;
+        }
+        Ok(chunks_request)
     }
 
     fn relay_chunks(&self, chunks_request: &ChunksRequest) -> Result<()> {
@@ -61,18 +71,14 @@ impl HttpHandler for ChunkRelayHttpHandler {
                 Ok(chunks_request) => match self.relay_chunks(&chunks_request) {
                     Ok(()) => (),
                     Err(e) => {
-                        error!("Failed to relay chunks: {:?}", e);
-                        return HttpHandlerResult::Error(format!(
-                            "Failed to relay chunks: {:?}",
-                            e
-                        ));
+                        error!("Failed to relay chunks: {e:?}");
+                        return HttpHandlerResult::Error(format!("Failed to relay chunks: {e:?}"));
                     }
                 },
                 Err(e) => {
-                    error!("Failed to parse chunks relay request: {:?}", e);
+                    error!("Failed to parse chunks relay request: {e:?}");
                     return HttpHandlerResult::Error(format!(
-                        "Failed to parse chunks relay request: {:?}",
-                        e
+                        "Failed to parse chunks relay request: {e:?}"
                     ));
                 }
             }
@@ -142,5 +148,73 @@ mod tests {
         }
 
         assert_eq!(mock.take_messages().len(), msgs.len())
+    }
+
+    #[rstest]
+    #[case(r#"{"project_key":"1234-5678","device_serial":"ABCDEFGHIJ","chunks":["aGk="]}"#)]
+    #[case(r#"{"project_key":"1234-5678","device_serial":null,"chunks":["aGk="]}"#)]
+    #[case(r#"{"project_key":null,"device_serial":"ABC_DEF-123","chunks":["aGk="]}"#)]
+    fn accepts_valid_project_key_and_device_serial(#[case] body: &'static str) {
+        let mut mock = ssf::ServiceMock::new();
+        let handler = ChunkRelayHttpHandler::new(mock.mbox.clone(), true);
+        let r = TestRequest::new()
+            .with_method(Method::Post)
+            .with_path("/v1/chunks")
+            .with_body(body);
+        assert!(matches!(
+            handler.handle_request(&mut r.into()),
+            HttpHandlerResult::Response(_)
+        ));
+
+        assert_eq!(mock.take_messages().len(), 1)
+    }
+
+    #[rstest]
+    #[case(128, true)]
+    #[case(129, false)]
+    fn enforces_device_serial_max_length(#[case] len: usize, #[case] accepted: bool) {
+        let mut mock = ssf::ServiceMock::new();
+        let handler = ChunkRelayHttpHandler::new(mock.mbox.clone(), true);
+        let body = format!(
+            r#"{{"project_key":null,"device_serial":"{}","chunks":["aGk="]}}"#,
+            "A".repeat(len)
+        );
+        let r = TestRequest::new()
+            .with_method(Method::Post)
+            .with_path("/v1/chunks")
+            .with_body(body.leak());
+        let result = handler.handle_request(&mut r.into());
+        if accepted {
+            assert!(matches!(result, HttpHandlerResult::Response(_)));
+            assert_eq!(mock.take_messages().len(), 1)
+        } else {
+            assert!(matches!(result, HttpHandlerResult::Error(_)));
+            assert_eq!(mock.take_messages().len(), 0)
+        }
+    }
+
+    #[rstest]
+    #[case(r#"{"project_key":"1234\n5678","device_serial":null,"chunks":["aGk="]}"#)]
+    #[case(r#"{"project_key":"1234\r\n5678","device_serial":null,"chunks":["aGk="]}"#)]
+    #[case(r#"{"project_key":"1234 5678","device_serial":null,"chunks":["aGk="]}"#)]
+    #[case(r#"{"project_key":"","device_serial":null,"chunks":["aGk="]}"#)]
+    #[case(r#"{"project_key":null,"device_serial":"ABC\nSPOOFED","chunks":["aGk="]}"#)]
+    #[case(r#"{"project_key":null,"device_serial":"ABC\r\nSPOOFED","chunks":["aGk="]}"#)]
+    #[case(r#"{"project_key":null,"device_serial":"ABC\rSPOOFED","chunks":["aGk="]}"#)]
+    #[case(r#"{"project_key":null,"device_serial":"ABC/../DEF","chunks":["aGk="]}"#)]
+    #[case(r#"{"project_key":"1234-5678","device_serial":"ABC\nSPOOFED","chunks":["aGk="]}"#)]
+    fn rejects_invalid_project_key_or_device_serial(#[case] body: &'static str) {
+        let mut mock = ssf::ServiceMock::new();
+        let handler = ChunkRelayHttpHandler::new(mock.mbox.clone(), true);
+        let r = TestRequest::new()
+            .with_method(Method::Post)
+            .with_path("/v1/chunks")
+            .with_body(body);
+        assert!(matches!(
+            handler.handle_request(&mut r.into()),
+            HttpHandlerResult::Error(_)
+        ));
+
+        assert_eq!(mock.take_messages().len(), 0)
     }
 }

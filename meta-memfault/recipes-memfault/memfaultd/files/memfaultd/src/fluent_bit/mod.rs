@@ -179,7 +179,7 @@ impl TcpConnectionHandler for FluentBitConnectionHandler {
                         {
                             // silently ignore end of stream
                         }
-                        _ => warn!("FluentD decoding error: {:?}", e),
+                        _ => warn!("FluentD decoding error: {e:?}"),
                     }
                     // After any deserialization error, we want to kill the connection.
                     break;

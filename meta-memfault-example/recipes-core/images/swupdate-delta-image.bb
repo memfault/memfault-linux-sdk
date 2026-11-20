@@ -13,6 +13,8 @@ SWUPDATE_SRC_URI_EXCLUDE = "sw-description-delta.in"
 
 IMAGE_DEPENDS = "base-image"
 
+DEPENDS += "zchunk-native"
+
 SWUPDATE_IMAGES = "base-image-${MACHINE}"
 
 ZCK_IMAGE = "base-image-${MACHINE}${IMAGE_NAME_SUFFIX}.ext4.zck"
@@ -22,8 +24,13 @@ python() {
       raise bb.parse.SkipRecipe('set MEMFAULT_DELTA_OTA = "1" in conf/local.conf to '
                                 "build the zchunk delta artifacts this .swu needs")
   suffix = d.getVar("IMAGE_NAME_SUFFIX") or ""
+  if "swugenerator-native" in (d.getVar("DEPENDS") or "").split():
+      header_source = ".ext4"
+  else:
+      header_source = ".ext4.zck.zckheader"
   d.appendVarFlag("SWUPDATE_IMAGES_FSTYPES", f"base-image-{d.getVar('MACHINE')}",
-                  f"{suffix}.ext4.zck.zckheader")
+                  f"{suffix}{header_source}")
+  d.setVar("ZCK_HEADER_SOURCE", f"base-image-${{MACHINE}}${{IMAGE_NAME_SUFFIX}}{header_source}")
 }
 
 do_swupdate_update_swdescription() {
@@ -34,7 +41,7 @@ do_swupdate_update_swdescription() {
     sed -i -e "s%__MEMFAULT_HARDWARE_VERSION%${MEMFAULT_HARDWARE_VERSION}%" ${UNPACKDIR}/sw-description
     sed -i -e "s%__OTA_PARTITION_A%${OTA_PARTITION_A}%" ${UNPACKDIR}/sw-description
     sed -i -e "s%__OTA_PARTITION_B%${OTA_PARTITION_B}%" ${UNPACKDIR}/sw-description
-    sed -i -e "s%__ZCK_HEADER_FILE%${ZCK_IMAGE}.zckheader%" ${UNPACKDIR}/sw-description
+    sed -i -e "s%__ZCK_HEADER_FILE%${ZCK_HEADER_SOURCE}%" ${UNPACKDIR}/sw-description
     sed -i -e "s%__ZCK_FILE%${ZCK_IMAGE}%" ${UNPACKDIR}/sw-description
 }
 addtask do_swupdate_update_swdescription before do_swuimage after do_unpack do_prepare_recipe_sysroot

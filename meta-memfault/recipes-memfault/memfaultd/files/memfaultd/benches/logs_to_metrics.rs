@@ -1,7 +1,7 @@
 //
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
-use std::{collections::HashMap, iter::repeat};
+use std::{collections::HashMap, iter::repeat_n};
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use memfaultd::config::LogToMetricRule;
@@ -36,8 +36,7 @@ fn send_logs(num_log_lines: u64) {
         filter: HashMap::new(),
     }];
 
-    let log_lines = repeat("eager evaluation is bad")
-        .take(num_log_lines as usize)
+    let log_lines = repeat_n("eager evaluation is bad", num_log_lines as usize)
         .map(log_line_from_str)
         .collect::<Vec<LogEntry>>();
 
