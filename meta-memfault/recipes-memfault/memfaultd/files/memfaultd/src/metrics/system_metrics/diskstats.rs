@@ -135,14 +135,14 @@ where
             Ok(Some(vec![
                 KeyedMetricReading::new_histogram(
                     MetricStringKey::from_str(
-                        format!("diskstats/{}/reads_per_second", device_name).as_str(),
+                        format!("diskstats/{device_name}/reads_per_second").as_str(),
                     )
                     .map_err(|e| eyre!("Couldn't parse metric key: {}", e))?,
                     reads_per_second,
                 ),
                 KeyedMetricReading::new_histogram(
                     MetricStringKey::from_str(
-                        format!("diskstats/{}/writes_per_second", device_name).as_str(),
+                        format!("diskstats/{device_name}/writes_per_second").as_str(),
                     )
                     .map_err(|e| eyre!("Couldn't parse metric key: {}", e))?,
                     writes_per_second,

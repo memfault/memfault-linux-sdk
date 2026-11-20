@@ -129,6 +129,17 @@ impl LogFileControlImpl {
         })
     }
 
+    /// Closes and deletes the current log file without dispatching it.
+    pub fn discard_current(&mut self) -> Result<()> {
+        if let Some(current_log) = self.current_log.take() {
+            let path = current_log.path.clone();
+            drop(current_log);
+            remove_file(&path).wrap_err_with(|| format!("Failed to remove {path:?}"))?;
+            *self.next_cid()? = Uuid::new_v4();
+        }
+        Ok(())
+    }
+
     /// Starts recovey of logs.
     ///
     /// Checks if the next CID is populated. If is we've, already recovered
@@ -178,7 +189,7 @@ impl LogFileControlImpl {
     ) {
         // Drop the old log, finishing the compression, closing the buffered writer and the file.
         log.writer.flush().unwrap_or_else(|e| {
-            warn!("Failed to flush logs: {}", e);
+            warn!("Failed to flush logs: {e}");
         });
         // Drop file handle before move to prevent errors on some file systems
         drop(log.writer);
@@ -193,12 +204,9 @@ impl LogFileControlImpl {
             compression: CompressionAlgorithm::Zlib,
         })
         .unwrap_or_else(|e| {
-            warn!(
-                "Dropping log due to failed on_log_completion callback: {}",
-                e
-            );
+            warn!("Dropping log due to failed on_log_completion callback: {e}");
             remove_file(&path).unwrap_or_else(|e| {
-                warn!("Failed to remove log file: {}", e);
+                warn!("Failed to remove log file: {e}");
             });
         });
     }
@@ -326,5 +334,28 @@ mod tests {
             }
         }
         assert_eq!(count_invalid_lines, 0);
+    }
+
+    #[rstest]
+    fn test_discard_current_uses_new_cid() {
+        let tmp = tempdir().expect("tmpdir");
+        let mut control = LogFileControlImpl::open(
+            tmp.path().to_path_buf(),
+            1024,
+            Duration::from_secs(3600),
+            Compression::fast(),
+            |_| Ok(()),
+        )
+        .expect("open control error");
+
+        let discarded_log = control.current_log().expect("current log error");
+        let discarded_cid = discarded_log.cid;
+        let discarded_path = discarded_log.path.clone();
+
+        control.discard_current().expect("discard error");
+        assert!(!discarded_path.exists());
+
+        let next_cid = control.current_log().expect("current log error").cid;
+        assert_ne!(discarded_cid, next_cid);
     }
 }

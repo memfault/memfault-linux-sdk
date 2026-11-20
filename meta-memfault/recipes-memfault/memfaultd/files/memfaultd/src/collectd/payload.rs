@@ -73,7 +73,7 @@ impl Payload {
         let name = if use_simple_reading_name {
             name_prefix
         } else {
-            format!("{}/{}", name_prefix, name)
+            format!("{name_prefix}/{name}")
         };
         MetricStringKey::from_str(&name).map_err(|e| eyre!("Invalid metric name: {e}"))
     }
@@ -88,7 +88,7 @@ impl From<Payload> for Vec<KeyedMetricReading> {
             .filter_map(|(name, value, dstype)| match payload.metric_name(name) {
                 Ok(key) => Some((key, value, dstype)),
                 _ => {
-                    warn!("Ignoring metric with invalid name: {}", name);
+                    warn!("Ignoring metric with invalid name: {name}");
                     None
                 }
             })

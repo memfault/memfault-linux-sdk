@@ -7,8 +7,8 @@
 Exercises the SWUpdate delta handler with no Memfault backend. The device polls
 this script through suricatta, is offered a deployment carrying the .swu and the
 .zck, and fetches chunks with HTTP range requests. Needs a SWUpdate built with
-CONFIG_DELTA=y and CONFIG_ZSTD=y and a base-image built with the ext4.zck and
-ext4.zck.zckheader image types; see DEVELOPMENT.md.
+CONFIG_DELTA=y and CONFIG_ZSTD=y and a base-image built with the ext4 and
+ext4.zck image types; see DEVELOPMENT.md.
 
     # what the device polls; leave running
     ./delta_ota_local_server.py ddi tmp/deploy/images/qemuarm64

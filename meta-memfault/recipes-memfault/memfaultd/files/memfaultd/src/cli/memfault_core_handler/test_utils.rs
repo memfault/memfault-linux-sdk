@@ -184,7 +184,7 @@ impl Seek for FakeProcMem {
                     .get_mut()
                     .seek(SeekFrom::Start(ph.p_offset + vaddr - ph.p_vaddr))
             }
-            None => Err(Error::other(format!("Invalid seek position: {:#x}", vaddr))),
+            None => Err(Error::other(format!("Invalid seek position: {vaddr:#x}"))),
         }
     }
 

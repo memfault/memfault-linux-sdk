@@ -156,14 +156,11 @@ impl<S: TaskService + Send + 'static> BoundedTaskServiceThread<S> {
             {
                 Ok(runtime) => runtime,
                 Err(e) => {
-                    error!("Failed to build task service runtime: {}", e);
+                    error!("Failed to build task service runtime: {e}");
                     if let Err(send_err) =
                         handle_tx.send(Err("Failed to start task service runtime"))
                     {
-                        error!(
-                            "Failed to send task service failure notification: {}",
-                            send_err
-                        );
+                        error!("Failed to send task service failure notification: {send_err}");
                     }
                     return;
                 }
@@ -199,7 +196,7 @@ impl<S: TaskService + 'static> BoundedTaskServiceThread<S> {
                 .build();
             match runtime {
                 Ok(runtime) => runtime.block_on(init_and_async_run(service, receiver, handle_tx)),
-                Err(e) => error!("Failed to spawn service: {}", e),
+                Err(e) => error!("Failed to spawn service: {e}"),
             }
         });
 
@@ -218,7 +215,7 @@ async fn init_and_async_run<S>(
     S: TaskService,
 {
     if let Err(e) = service.init().await {
-        error!("Failed to initialize task: {}", e);
+        error!("Failed to initialize task: {e}");
         return;
     }
 
@@ -260,7 +257,7 @@ pub(crate) async fn async_run<S>(
             },
             result = service.run_task() => {
                 if let Err(e) = result {
-                    warn!("Service task failed: {}", e);
+                    warn!("Service task failed: {e}");
                 }
             }
         };

@@ -151,6 +151,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     // Metric store
     let extra_histo_min_max =
         MetricsSet::from_metric_keys(&config.config_file.metrics.min_max_metrics);
+    let metrics_device_config = Arc::new(config.effective_device_config());
     let metric_report_manager = match config.session_configs() {
         Some(session_configs) => MetricReportManager::new_with_session_configs(
             config.hrt_enabled(),
@@ -158,15 +159,19 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
             session_configs,
             config.config_file.metrics.enable_daily_heartbeats,
             extra_histo_min_max,
+            metrics_device_config,
         ),
         None => MetricReportManager::new(
             config.hrt_enabled(),
             config.hrt_max_samples_per_min(),
             config.config_file.metrics.enable_daily_heartbeats,
             extra_histo_min_max,
+            metrics_device_config,
         ),
     };
     let metrics_mbox = system.spawn_service_thread(metric_report_manager);
+    let metric_msg_mailbox: MsgMailbox<DeviceConfigUpdateMessage> = metrics_mbox.clone().into();
+    device_config_mailboxes.push(metric_msg_mailbox);
 
     let mar_tmp_staging_config = MarStagingConfig::new(
         config.mar_tmp_staging_path(),
@@ -202,7 +207,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                 system.spawn_bounded_task_service_thread(disk_io, 1024);
             }
             Err(e) => {
-                warn!("Failed to load disk I/O eBPF program, disk I/O metrics will be unavailable: {:#}", e);
+                warn!("Failed to load disk I/O eBPF program, disk I/O metrics will be unavailable: {e:#}");
             }
         }
     }
@@ -338,7 +343,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                     bind_address,
                 );
                 if let Err(e) = statsd_server.run() {
-                    warn!("Couldn't start StatsD server: {}", e);
+                    warn!("Couldn't start StatsD server: {e}");
                 }
             });
         }
@@ -557,14 +562,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                 })
             };
 
-            let device_config = Arc::new(
-                config
-                    .cached_device_config
-                    .read()
-                    .expect("RWLock Poisoned")
-                    .get()
-                    .clone(),
-            );
+            let device_config = Arc::new(config.effective_device_config());
             let log_collector = LogCollector::open(
                 log_config,
                 on_log_completion,
@@ -582,7 +580,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
             device_config_mailboxes.push(log_msg_mailbox);
             // Begin log recovery in spawned thread
             if let Err(e) = log_collector_mbox.send_and_forget(RecoverLogsMsg) {
-                warn!("Failed to start log recovery: {}", e);
+                warn!("Failed to start log recovery: {e}");
             }
             match log_source {
                 LogSource::FluentBit => {
@@ -602,7 +600,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
 
                     let spawn_fn = move || SyslogServer::new(sender, bind_address);
 
-                    debug!("Log source is syslog, spawning SyslogServer for {}", bind_address);
+                    debug!("Log source is syslog, spawning SyslogServer for {bind_address}");
                     system.spawn_bounded_task_service_thread_with_fn(spawn_fn, 128);
                     debug!("SyslogServer service thread spawned");
                 }
@@ -695,7 +693,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
 
     let reboot_tracker = RebootReasonTracker::new(&config, &service_manager);
     if let Err(e) = reboot_tracker.track_reboot() {
-        error!("Unable to track reboot reason: {:#}", e);
+        error!("Unable to track reboot reason: {e:#}");
     }
 
     // Start the http server
@@ -719,13 +717,13 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
 
     // Start the scheduler
     let failed_send_fn = Box::new(|e| {
-        error!("Failed to run scheduled job: {}", e);
+        error!("Failed to run scheduled job: {e}");
     });
     scheduler.run(failed_send_fn);
 
     shutdown_tasks.push(Box::new(move || {
         let stats = system.stop();
-        debug!("Service stats: {:#?}", stats);
+        debug!("Service stats: {stats:#?}");
 
         Ok(())
     }));
@@ -797,25 +795,18 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                 // Refresh device config from the server
                 match config.refresh_device_config(&client) {
                     Err(e) => {
-                        warn!("Unable to refresh device config: {}", e);
+                        warn!("Unable to refresh device config: {e}");
                         // We continue processing the pending uploads on errors.
                         // We expect rate limiting errors here.
                     }
                     Ok(UpdateStatus::Updated) => {
                         info!("Device config updated");
                         last_device_config_refresh = Some(Instant::now());
-                        let config = Arc::new(
-                            config
-                                .cached_device_config
-                                .read()
-                                .expect("RWLock poisoned")
-                                .get()
-                                .clone(),
-                        );
+                        let config = Arc::new(config.effective_device_config());
                         if let Err(e) = device_config_broadcast
                             .send_and_forget(DeviceConfigUpdateMessage { config })
                         {
-                            warn!("Failed to broadcast device config update: {}", e);
+                            warn!("Failed to broadcast device config update: {e}");
                         }
                     }
                     Ok(UpdateStatus::Unchanged) => {
@@ -827,7 +818,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
 
             for task in &mut sync_tasks {
                 if let Err(e) = task(forced, skip_serialization) {
-                    warn!("{:#}", e);
+                    warn!("{e:#}");
                 }
             }
 
@@ -850,7 +841,7 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
                     persist_mar_staging,
                     &client,
                     config.config_file.mar.mar_file_max_size,
-                    config.sampling(),
+                    config.upload_sampling(),
                     data_retention_start,
                 );
                 let _metric_result =
@@ -891,17 +882,14 @@ pub fn memfaultd_loop<C: Fn() -> Result<()>>(
     info!("Memfaultd shutting down...");
     for task in shutdown_tasks {
         if let Err(e) = task() {
-            warn!("Error while shutting down: {}", e);
+            warn!("Error while shutting down: {e}");
         }
     }
     let shutdown_duration = shutdown_start_time.elapsed().as_secs_f64();
     if shutdown_duration > MAX_EXPECTED_SHUTDOWN_DURATION_SECONDS {
-        warn!(
-            "memfaultd took longer than expected to shutdown ({} seconds)",
-            shutdown_duration
-        )
+        warn!("memfaultd took longer than expected to shutdown ({shutdown_duration} seconds)")
     } else {
-        debug!("memfaultd took {} seconds to shutdown", shutdown_duration)
+        debug!("memfaultd took {shutdown_duration} seconds to shutdown")
     }
 
     if reload.load(Ordering::Relaxed) {

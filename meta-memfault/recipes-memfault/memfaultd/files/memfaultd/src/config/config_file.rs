@@ -33,6 +33,7 @@ pub struct MemfaultdConfig {
     pub heartbeat_interval: Duration,
     pub enable_data_collection: bool,
     pub enable_dev_mode: bool,
+    pub enable_data_spooling: bool,
     pub software_version: Option<String>,
     pub software_type: Option<String>,
     pub project_key: String,
@@ -282,6 +283,8 @@ pub struct MarConfig {
     #[serde(rename = "mar_entry_max_age_seconds", with = "seconds_to_duration")]
     pub mar_entry_max_age: Duration,
     pub mar_entry_max_count: usize,
+    #[serde(rename = "upload_timeout_seconds", with = "seconds_to_duration")]
+    pub upload_timeout: Duration,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -434,22 +437,18 @@ impl MemfaultdConfig {
                 let report_str = match serde_err.classify() {
                     Category::Io => "IO failure on reading bytes from memfaultd config".into(),
                     Category::Syntax => {
-                        format!(
-                            "{}:{}:{}: syntactically invalid JSON",
-                            path_str, line, column
-                        )
+                        format!("{path_str}:{line}:{column}: syntactically invalid JSON")
                     }
                     Category::Data => {
                         format!(
-                            "{}:{}:{}: semantically invalid data for memfaultd config",
-                            path_str, line, column
+                            "{path_str}:{line}:{column}: semantically invalid data for memfaultd config"
                         )
                     }
                     Category::Eof => {
-                        format!("{}:{}:{}: unexpected EOF", path_str, line, column)
+                        format!("{path_str}:{line}:{column}: unexpected EOF")
                     }
                 };
-                debug!("{}", report_str);
+                debug!("{report_str}");
                 return Err(eyre!("{}", report_str));
             }
             Ok(config) => config,
@@ -458,19 +457,19 @@ impl MemfaultdConfig {
         let mut validation_errors = vec![];
         if let Some(software_version) = &config.software_version {
             if let Err(e) = software_version_is_valid(software_version) {
-                validation_errors.push(format!("  Invalid value for \"software_version\": {}", e));
+                validation_errors.push(format!("  Invalid value for \"software_version\": {e}"));
             }
         }
         if let Some(software_type) = &config.software_type {
             if let Err(e) = software_type_is_valid(software_type) {
-                validation_errors.push(format!("  Invalid value for \"software_type\": {}", e));
+                validation_errors.push(format!("  Invalid value for \"software_type\": {e}"));
             }
         }
         if let Some(filters) = &config.coredump.filters {
             filters.iter().for_each(|filter| {
                 if let TraceFilter::ExecutablePath { path } = filter {
                     if let Err(e) = filter_path_is_valid(path) {
-                        warn!("Invalid coredump filter path: {}", e);
+                        warn!("Invalid coredump filter path: {e}");
                     }
                 }
             });

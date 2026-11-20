@@ -26,6 +26,7 @@ use serde_json::to_writer;
 use super::{
     eh_frame_finder::EhFrameFinder,
     stacktrace_format::{StacktraceFormat, ThreadDescriptor},
+    unwinder::{FrameRuleSource, FrameRuleSourceImpl},
     UnwindFrameContext, Unwinder,
 };
 
@@ -66,7 +67,7 @@ where
         signal: i32,
         thread_names: &BTreeMap<u32, String>,
     ) -> Result<()> {
-        let mut unwinder = Unwinder::new(&mut eh_frame_finder);
+        let mut unwinder = Unwinder::new(FrameRuleSourceImpl::new(&mut eh_frame_finder));
 
         // Collect all prstatus notes from the core file. These will act as the starting points
         // for unwinding each stack.
@@ -94,7 +95,7 @@ where
             .into_iter()
             .map(|(tid, pcs)| {
                 let active = tid as i32 == crashing_tid;
-                println!("Thread {} active: {}", tid, active);
+                println!("Thread {tid} active: {active}");
                 ThreadDescriptor::new(active, pcs, thread_names.get(&tid).cloned())
             })
             .collect::<Vec<_>>();
@@ -117,17 +118,17 @@ where
         Ok(())
     }
 
-    fn unwind_stack<E: EhFrameFinder>(
+    fn unwind_stack<S: FrameRuleSource>(
         &mut self,
         prstatus_note: &ProcessStatusNote,
-        unwinder: &mut Unwinder<E>,
+        unwinder: &mut Unwinder<S>,
     ) -> Vec<usize> {
         let regs = &prstatus_note.pr_reg;
         let pc = get_program_counter(regs);
 
         let mut ctx = UnwindFrameContext::from(regs);
         if let Err(e) = unwinder.unwind_stack(pc, &mut ctx, &mut self.proc_mem_stream) {
-            debug!("Stack unwinding aborted: {}", e);
+            debug!("Stack unwinding aborted: {e}");
         }
 
         ctx.pc_stack

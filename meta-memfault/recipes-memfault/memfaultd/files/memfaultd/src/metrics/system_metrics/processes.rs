@@ -596,8 +596,8 @@ mod tests {
         let process_b_path = process_b_dir.join("stat");
         let mut process_b_file = File::create(process_b_path.clone()).unwrap();
 
-        writeln!(process_a_file, "{}", process_a_sample_1).unwrap();
-        writeln!(process_b_file, "{}", process_b_sample_1).unwrap();
+        writeln!(process_a_file, "{process_a_sample_1}").unwrap();
+        writeln!(process_b_file, "{process_b_sample_1}").unwrap();
 
         // Read /proc/<pid/stat files - since this is the first sample for
         // both processes no metric readings should be returned
@@ -620,8 +620,8 @@ mod tests {
         let process_b_path = temp_proc_dir.join("24071").join("stat");
         let mut process_b_file = File::create(process_b_path).unwrap();
 
-        writeln!(process_a_file, "{}", process_a_sample_2).unwrap();
-        writeln!(process_b_file, "{}", process_b_sample_2).unwrap();
+        writeln!(process_a_file, "{process_a_sample_2}").unwrap();
+        writeln!(process_b_file, "{process_b_sample_2}").unwrap();
 
         // Read /proc/<pid/stat files again - this time
         // metric readings should be returned

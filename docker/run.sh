@@ -40,7 +40,14 @@ while getopts "bv:c:e:r:tv:" options; do
 done
 
 metamount="--mount type=bind,source=${PWD}/..,target=/home/build/yocto/sources/memfault-linux-sdk"
-sourcesmount="--mount type=volume,source=yocto-sources-${YOCTO_RELEASE},target=/home/build/yocto/sources"
+case "${YOCTO_RELEASE}" in
+  dunfell | kirkstone | scarthgap)
+    sourcesmount="--mount type=volume,source=yocto-sources-${YOCTO_RELEASE},target=/home/build/yocto/sources"
+    ;;
+  *)
+    sourcesmount="--mount type=volume,source=yocto-setup-${YOCTO_RELEASE},target=/home/build/yocto"
+    ;;
+esac
 
 if [ -n "$MEMFAULT_CLI_DIST_PATH" ]; then
   memfaultclimount="--mount type=bind,source=$(readlink -f "$MEMFAULT_CLI_DIST_PATH"),target=/home/build/memfault-cli-dist"

@@ -30,6 +30,7 @@ def get_host_arch() -> str:
 BASE_IMAGE_RECIPE = "base-image"
 
 SYSTEM_PARTITION_A_INDEX = 2
+SYSTEM_PARTITION_B_INDEX = 3
 
 _IMAGE_LINK_NAME_RE = re.compile(r'^(?:export )?IMAGE_LINK_NAME="(?P<value>.*)"$', re.MULTILINE)
 
@@ -58,6 +59,10 @@ def qemu_get_image_wic_path(filename: str) -> pathlib.Path:
 
 def qemu_get_system_partition_a_index() -> int:
     return SYSTEM_PARTITION_A_INDEX
+
+
+def qemu_get_system_partition_b_index() -> int:
+    return SYSTEM_PARTITION_B_INDEX
 
 
 def _sysroots_components_dir() -> pathlib.Path:

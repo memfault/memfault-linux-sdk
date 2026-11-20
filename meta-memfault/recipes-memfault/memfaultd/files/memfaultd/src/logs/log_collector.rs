@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use ssf::{Handler, MsgMailbox, Service};
 use tiny_http::{Header, Method, Request, Response, ResponseBox, StatusCode};
 
-use crate::config::{Config, DeviceConfig, DeviceConfigUpdateMessage, LogFilterConfig, Resolution};
+use crate::config::{Config, DeviceConfig, DeviceConfigUpdateMessage, LogFilterConfig};
 use crate::http_server::HttpHandlerResult;
 use crate::{config::LogToMetricRule, logs::completed_log::CompletedLog};
 use crate::{config::StorageConfig, http_server::ConvenientHeader};
@@ -140,7 +140,7 @@ impl<H: HeadroomCheck + Send + 'static> LogCollector<H> {
 impl<H: HeadroomCheck + Send> Drop for LogCollector<H> {
     fn drop(&mut self) {
         if let Err(e) = self.close_internal() {
-            warn!("Error closing log collector: {}", e);
+            warn!("Error closing log collector: {e}");
         }
     }
 }
@@ -206,10 +206,17 @@ impl<H: HeadroomCheck + Send + 'static> Handler<DeviceConfigUpdateMessage> for L
         &mut self,
         m: DeviceConfigUpdateMessage,
     ) -> <DeviceConfigUpdateMessage as ssf::Message>::Reply {
-        let _ = self.with_mut_inner(|inner| {
+        if let Err(e) = self.with_mut_inner(|inner| {
+            let was_persisting = inner.should_persist();
             inner.device_config = m.config;
+            // Drop the current log file when persistence gets disabled
+            if was_persisting && !inner.should_persist() {
+                inner.log_file_control.discard_current()?;
+            }
             Ok(())
-        });
+        }) {
+            warn!("Failed to apply device config to log collector: {e}");
+        }
     }
 }
 
@@ -280,7 +287,7 @@ impl<H: HeadroomCheck> Inner<H> {
 
     fn should_persist(&mut self) -> bool {
         matches!(self.storage_config, StorageConfig::Persist)
-            || matches!(self.logging_resolution(), Resolution::Normal)
+            && self.device_config.capture_sampling().logging_enabled()
     }
 
     pub fn get_log_queue(&mut self) -> Result<Vec<String>> {
@@ -299,10 +306,6 @@ impl<H: HeadroomCheck> Inner<H> {
 
     fn rotate_if_needed(&mut self) -> Result<bool> {
         self.log_file_control.rotate_if_needed()
-    }
-
-    fn logging_resolution(&self) -> Resolution {
-        self.device_config.sampling.logging_resolution
     }
 }
 
@@ -524,7 +527,10 @@ mod tests {
             log_file::{LogFile, LogFileControl},
         },
     };
-    use crate::{config::Sampling, test_utils::setup_logger};
+    use crate::{
+        config::{Resolution, Sampling},
+        test_utils::setup_logger,
+    };
     use crate::{logs::headroom::HeadroomCheck, util::circular_queue::CircularQueue};
     use chrono::{DateTime, Duration as ChronoDuration, Utc};
     use eyre::Context;
@@ -544,6 +550,50 @@ mod tests {
         fixture.write_log(test_line());
         assert_eq!(fixture.count_log_files(), 1);
         assert_eq!(fixture.on_log_completion_calls(), 0);
+    }
+
+    #[rstest]
+    fn persist_logs_before_device_config_fetched(mut fixture: LogFixture) {
+        // Default device config (revision None) has logging Off
+        fixture
+            .collector
+            .lock()
+            .unwrap()
+            .with_mut_inner(|inner| {
+                inner.device_config = Arc::new(DeviceConfig::default());
+                Ok(())
+            })
+            .unwrap();
+
+        fixture.write_log(test_line());
+        assert_eq!(fixture.count_log_files(), 1);
+    }
+
+    #[rstest]
+    fn discard_log_when_persistence_disabled(mut fixture: LogFixture) {
+        fixture.write_log(test_line());
+        assert_eq!(fixture.on_log_completion_calls(), 0);
+        assert_eq!(fixture.count_log_files(), 1);
+
+        let off_config = DeviceConfig {
+            revision: Some(1),
+            sampling: Sampling {
+                debugging_resolution: Resolution::Off,
+                logging_resolution: Resolution::Off,
+                monitoring_resolution: Resolution::Off,
+            },
+            data_upload_start_date: None,
+            logging: None,
+        };
+        use ssf::Handler;
+        let mut collector = fixture.collector.lock().unwrap();
+        (*collector).deliver(DeviceConfigUpdateMessage {
+            config: Arc::new(off_config),
+        });
+        drop(collector);
+
+        assert_eq!(fixture.on_log_completion_calls(), 0);
+        assert_eq!(fixture.count_log_files(), 0);
     }
 
     #[rstest]
@@ -880,7 +930,7 @@ mod tests {
             log_to_metrics_rules: vec![],
             log_filter_config: LogFilterConfig::default(),
             in_memory_lines: IN_MEMORY_LINES,
-            storage_config: StorageConfig::Disabled, // Use Disabled to test resolution logic
+            storage_config: StorageConfig::Persist, // Use Persist to test resolution logic
             level_mapping_config: LevelMappingConfig {
                 enable: false,
                 regex: None,
@@ -889,7 +939,7 @@ mod tests {
 
         // Create initial device config with Normal resolution
         let initial_config = DeviceConfig {
-            revision: None,
+            revision: Some(1),
             sampling: Sampling {
                 debugging_resolution: Resolution::Normal,
                 logging_resolution: Resolution::Normal,
@@ -921,7 +971,7 @@ mod tests {
 
         // Create updated config with Off resolution
         let updated_config = DeviceConfig {
-            revision: None,
+            revision: Some(1),
             sampling: Sampling {
                 debugging_resolution: Resolution::Off,
                 logging_resolution: Resolution::Off,
@@ -950,7 +1000,7 @@ mod tests {
 
         // Test with High resolution
         let high_resolution_config = DeviceConfig {
-            revision: None,
+            revision: Some(1),
             sampling: Sampling {
                 debugging_resolution: Resolution::High,
                 logging_resolution: Resolution::High,
@@ -966,18 +1016,18 @@ mod tests {
 
         collector.deliver(high_resolution_message);
 
-        // Verify High resolution does NOT enable persistence (only Normal does)
+        // Verify High resolution does enable persistence
         let should_persist_high = collector
             .with_mut_inner(|inner| Ok(inner.should_persist()))
             .unwrap();
         assert!(
-            !should_persist_high,
-            "Should NOT persist logs with High resolution (only Normal enables persistence)"
+            should_persist_high,
+            "Should persist logs with High resolution (enables persistence)"
         );
 
         // Test with Normal resolution to verify it does enable persistence
         let normal_resolution_config = DeviceConfig {
-            revision: None,
+            revision: Some(1),
             sampling: Sampling {
                 debugging_resolution: Resolution::Normal,
                 logging_resolution: Resolution::Normal,
@@ -1011,6 +1061,45 @@ mod tests {
             Resolution::Normal,
             "Device config should be updated to Normal resolution"
         );
+    }
+
+    #[rstest]
+    #[case::persist_off(StorageConfig::Persist, Resolution::Off, Some(1), false)]
+    #[case::persist_low(StorageConfig::Persist, Resolution::Low, Some(1), false)]
+    #[case::persist_normal(StorageConfig::Persist, Resolution::Normal, Some(1), true)]
+    #[case::persist_high(StorageConfig::Persist, Resolution::High, Some(1), true)]
+    #[case::disabled_off(StorageConfig::Disabled, Resolution::Off, Some(1), false)]
+    #[case::disabled_low(StorageConfig::Disabled, Resolution::Low, Some(1), false)]
+    #[case::disabled_normal(StorageConfig::Disabled, Resolution::Normal, Some(1), false)]
+    #[case::disabled_high(StorageConfig::Disabled, Resolution::High, Some(1), false)]
+    #[case::persist_off_not_fetched(StorageConfig::Persist, Resolution::Off, None, true)]
+    #[case::disabled_off_not_fetched(StorageConfig::Disabled, Resolution::Off, None, false)]
+    fn should_persist_storage_and_resolution(
+        mut fixture: LogFixture,
+        #[case] storage_config: StorageConfig,
+        #[case] logging_resolution: Resolution,
+        #[case] revision: Option<crate::network::DeviceConfigRevision>,
+        #[case] expected: bool,
+    ) {
+        fixture.set_log_config(storage_config);
+
+        let should_persist = fixture
+            .collector
+            .lock()
+            .unwrap()
+            .with_mut_inner(|inner| {
+                inner.device_config = Arc::new(DeviceConfig {
+                    revision,
+                    sampling: Sampling {
+                        logging_resolution,
+                        ..Sampling::development()
+                    },
+                    ..DeviceConfig::default()
+                });
+                Ok(inner.should_persist())
+            })
+            .unwrap();
+        assert_eq!(should_persist, expected);
     }
 
     struct LogFixture {
@@ -1115,7 +1204,15 @@ mod tests {
 
         let on_completion_should_fail = Arc::new(AtomicBool::new(false));
 
-        let device_config = Arc::new(DeviceConfig::default());
+        let device_config = Arc::new(DeviceConfig {
+            revision: Some(1),
+            sampling: Sampling {
+                debugging_resolution: Resolution::Normal,
+                logging_resolution: Resolution::Normal,
+                monitoring_resolution: Resolution::Normal,
+            },
+            ..DeviceConfig::default()
+        });
         let collector = {
             let on_completion_should_fail = on_completion_should_fail.clone();
             let on_log_completion = move |CompletedLog { path, cid, .. }| {

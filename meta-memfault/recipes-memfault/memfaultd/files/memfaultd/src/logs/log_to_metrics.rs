@@ -32,7 +32,7 @@ impl LogToMetrics {
 
     pub fn process(&mut self, structured_log: &LogEntry) -> Result<()> {
         if !self.rules.is_empty() {
-            debug!("LogToMetrics: Processing log: {:?}", structured_log);
+            debug!("LogToMetrics: Processing log: {structured_log:?}");
             for rule in &self.rules {
                 match rule {
                     LogToMetricRule::CountMatching {
@@ -59,7 +59,7 @@ impl LogToMetrics {
         for (i, capture) in captures.iter().enumerate() {
             if let Some(capture) = capture {
                 metric_name_with_captures =
-                    metric_name_with_captures.replace(&format!("${}", i), capture.as_str());
+                    metric_name_with_captures.replace(&format!("${i}"), capture.as_str());
             }
         }
         metric_name_with_captures
@@ -106,8 +106,7 @@ impl LogToMetrics {
                     .send_and_forget(vec![KeyedMetricReading::increment_counter(metric_key)])?,
                 Err(e) => {
                     warn!(
-                        "LogToMetrics suggested invalid metric name {}: {}",
-                        metric_name_with_captures, e
+                        "LogToMetrics suggested invalid metric name {metric_name_with_captures}: {e}"
                     )
                 }
             }

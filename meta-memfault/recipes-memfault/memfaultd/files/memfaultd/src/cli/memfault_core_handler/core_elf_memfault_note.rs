@@ -122,7 +122,7 @@ impl CoredumpMetadata {
                 Ok(file_attributes) => attributes.extend(file_attributes),
                 // A missing or malformed attributes file must never prevent capture, so we log and
                 // continue with whatever attributes we already have.
-                Err(e) => warn!("Ignoring coredump attributes file: {}", e),
+                Err(e) => warn!("Ignoring coredump attributes file: {e}"),
             }
         }
         attributes
@@ -525,8 +525,7 @@ mod attributes_file_test {
         // `MetricStringKey` caps keys at 128 characters; a 129-character key is invalid and is
         // skipped individually, leaving the valid entry intact.
         let long_key = "a".repeat(129);
-        let (_dir, path) =
-            write_attributes_file(&format!(r#"{{"kept": "x", "{}": "y"}}"#, long_key));
+        let (_dir, path) = write_attributes_file(&format!(r#"{{"kept": "x", "{long_key}": "y"}}"#));
 
         let attributes = read_attributes_file(&path).unwrap();
 

@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.31.0] - 2026-11-20
+
+### Added
+
+- Added `mar.upload_timeout_seconds` (default: 30) to `/etc/memfaultd.conf` to
+  set the time allowed for uploading a MAR file to storage. Raise it on slow
+  links where large MAR uploads time out. Connecting to the storage host now
+  times out after 10 seconds so an unreachable network is detected quickly.
+- Turn off data spooling by default. To opt into this feature
+  `enable_data_spooling` flag in `memfaultd.conf` has to be set to `true`. By
+  default data collection will match the devices visibility level.
+
+### Changed
+
+- Updated MSRV of `memfaultd` to 1.88.0. The `PREFERRED_VERSION` of
+- `rust-bin-cross` and `cargo-bin-cross` in `meta-memfault` is now 1.88.0.
+
+### Security
+
+- `zip` bumped from 1.1.4 to 9.0.5 to address
+  [GHSA-m665-v7pm-7grj](https://github.com/advisories/GHSA-m665-v7pm-7grj).
+
+### Fixed
+
+- Fixed the `memfault-ssf` scheduler thread spinning at 100% CPU when it had no
+  jobs scheduled. The thread now exits instead. This is a defensive fix: no
+  current code path runs the scheduler without jobs.
+- Chunk relay now rejects `/v1/chunks` requests whose `project_key` or
+  `device_serial` contain characters other than alphanumerics, `-` and `_`
+- Chunk relay now removes chunks files with an incomplete header and skips files
+  it fails to process, instead of stopping all chunk relay MAR generation
+- Updated `swupdate-delta-image` for meta-swupdate wrynose 5542c9e and later,
+  which build the `.swu` with swugenerator. With those, replace
+  `ext4.zck.zckheader` with `ext4` in `IMAGE_FSTYPES`.
+- Fixed coredump parsing when compression is set to `none`.
+- Fixed log attachments on custom traces.
+
 ## [1.30.1] - 2026-10-21
 
 This release bumps a dependency, `rustls-webpki`, to address a certificate
@@ -1794,3 +1831,5 @@ package][nginx-pid-report] for a discussion on the topic.
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.30.0-wrynose
 [1.30.1]:
   https://github.com/memfault/memfault-linux-sdk/releases/tag/1.30.1-wrynose
+[1.31.0]:
+  https://github.com/memfault/memfault-linux-sdk/releases/tag/1.31.0-wrynose

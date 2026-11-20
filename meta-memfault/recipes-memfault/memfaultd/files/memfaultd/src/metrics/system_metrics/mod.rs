@@ -166,14 +166,14 @@ impl SystemMetricsCollector {
                         .filter_map(|disk_path| match MmcImpl::new(PathBuf::from(disk_path)) {
                             Ok(mmc) => Some(mmc),
                             Err(e) => {
-                                debug!("Failed to open disk: {}", e);
+                                debug!("Failed to open disk: {e}");
                                 None
                             }
                         })
                         .collect::<Vec<_>>();
                     metric_family_collectors.push(Box::new(DiskMetricsCollector::new(mmc)));
                 }
-                Err(e) => error!("Failed to start disk metrics collector: {}", e),
+                Err(e) => error!("Failed to start disk metrics collector: {e}"),
             },
         };
 

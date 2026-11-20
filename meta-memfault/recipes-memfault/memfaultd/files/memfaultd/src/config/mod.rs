@@ -58,7 +58,7 @@ pub use device_config::{DeviceConfigLogging, DeviceConfigLoggingFilters};
 mod device_info;
 mod messages;
 mod utils;
-pub use utils::coredump_attribute_value_is_valid;
+pub use utils::{coredump_attribute_value_is_valid, device_id_is_valid};
 
 pub use messages::DeviceConfigUpdateMessage;
 
@@ -214,13 +214,21 @@ impl Config {
     pub fn device_config_path(&self) -> PathBuf {
         Self::device_config_path_from_config(&self.config_file)
     }
+    pub fn capture_all(&self) -> bool {
+        self.config_file.enable_dev_mode || self.config_file.enable_data_spooling
+    }
 
-    pub fn sampling(&self) -> Sampling {
+    pub fn upload_sampling(&self) -> Sampling {
         if self.config_file.enable_dev_mode {
             Sampling::development()
         } else {
             self.device_config().sampling
         }
+    }
+
+    /// Override device_config if dev mode or data spooling is enabled
+    pub fn effective_device_config(&self) -> DeviceConfig {
+        self.device_config().with_dev_mode(self.capture_all())
     }
 
     /// Returns the device_config at the time of the call. If the device_config is updated
@@ -466,6 +474,37 @@ mod tests {
         let config = Config::test_fixture();
 
         assert_eq!(config.tmp_dir(), config.config_file.persist_dir);
+    }
+
+    #[rstest]
+    #[case::neither(false, false, false, false)]
+    #[case::dev_mode(true, false, true, true)]
+    #[case::data_spooling(false, true, true, false)]
+    #[case::both(true, true, true, true)]
+    fn capture_and_upload_sampling_overrides(
+        #[case] enable_dev_mode: bool,
+        #[case] enable_data_spooling: bool,
+        #[case] expect_capture_all: bool,
+        #[case] expect_upload_all: bool,
+    ) {
+        let mut config = Config::test_fixture();
+        config.config_file.enable_dev_mode = enable_dev_mode;
+        config.config_file.enable_data_spooling = enable_data_spooling;
+        let fleet_sampling = config.device_config().sampling;
+        let expected = |all: bool| {
+            if all {
+                Sampling::development()
+            } else {
+                fleet_sampling
+            }
+        };
+
+        assert_eq!(config.capture_all(), expect_capture_all);
+        assert_eq!(
+            config.effective_device_config().sampling,
+            expected(expect_capture_all)
+        );
+        assert_eq!(config.upload_sampling(), expected(expect_upload_all));
     }
 
     #[test]

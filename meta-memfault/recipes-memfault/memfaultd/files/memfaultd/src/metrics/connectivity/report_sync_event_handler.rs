@@ -43,7 +43,7 @@ impl HttpHandler for ReportSyncEventHandler {
                             METRIC_SYNC_SUCCESS.into(),
                         )])
                 {
-                    warn!("Couldn't increment sync_success counter: {:#}", e);
+                    warn!("Couldn't increment sync_success counter: {e:#}");
                 }
             } else if request.url() == "/v1/sync/failure" {
                 if let Err(e) =
@@ -52,7 +52,7 @@ impl HttpHandler for ReportSyncEventHandler {
                             METRIC_SYNC_FAILURE.into(),
                         )])
                 {
-                    warn!("Couldn't increment sync_failure counter: {:#}", e);
+                    warn!("Couldn't increment sync_failure counter: {e:#}");
                 }
             }
         }

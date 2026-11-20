@@ -75,7 +75,7 @@ impl MarStagingCleaner {
                 &self.metrics_mbox,
             )
             .map_err(|e| {
-                warn!("Unable to clean MAR entries: {}", e);
+                warn!("Unable to clean MAR entries: {e}");
                 e
             })?
         } else {
@@ -99,7 +99,7 @@ impl MarStagingCleaner {
                     &self.metrics_mbox,
                 )
                 .map_err(|e| {
-                    warn!("Unable to clean MAR entries: {}", e);
+                    warn!("Unable to clean MAR entries: {e}");
                     e
                 })
             })
@@ -257,7 +257,7 @@ fn collect_mar_entries(
             "Unable to open MAR staging area: {}",
             mar_staging.display()
         ))?
-        .filter_map(|r| r.map_err(|e| warn!("Unable to read DirEntry: {}", e)).ok())
+        .filter_map(|r| r.map_err(|e| warn!("Unable to read DirEntry: {e}")).ok())
         .map(|dir_entry| {
             let path = dir_entry.path();
             let timestamp = path
@@ -357,7 +357,7 @@ fn remove_marked_entries(marked_entries: Vec<(AgeSizePath, DeletionReason)>) -> 
             deletion_reason
         );
         if let Err(e) = std::fs::remove_dir_all(&entry.path) {
-            warn!("Unable to remove MAR entry: {}", e);
+            warn!("Unable to remove MAR entry: {e}");
         } else {
             debug!(
                 "Removed MAR entry: {} {:?}",
@@ -1623,8 +1623,7 @@ mod test {
         assert_eq!(
             path.exists(),
             expect_entry_kept,
-            "entry existence did not match expectation for available inodes = {}",
-            available_inodes
+            "entry existence did not match expectation for available inodes = {available_inodes}"
         );
         assert!(size_avail.bytes > 0);
     }

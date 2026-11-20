@@ -160,7 +160,7 @@ impl<P: ProcessNameMapper> TaskService for DiskIo<P> {
 
             self.run_once()
                 .await
-                .map_err(|e| format!("Failed to collect disk I/O metrics: {}", e))
+                .map_err(|e| format!("Failed to collect disk I/O metrics: {e}"))
         })
     }
 
@@ -188,8 +188,8 @@ fn build_metric_reading(
     bytes: u64,
 ) -> Option<KeyedMetricReading> {
     let metric_key_string = match op {
-        DISK_OP_READ => format!("diskstats/{}/{}/bytes_read", dev_name, proc_name),
-        DISK_OP_WRITE => format!("diskstats/{}/{}/bytes_written", dev_name, proc_name),
+        DISK_OP_READ => format!("diskstats/{dev_name}/{proc_name}/bytes_read"),
+        DISK_OP_WRITE => format!("diskstats/{dev_name}/{proc_name}/bytes_written"),
         _ => return None,
     };
 
@@ -263,7 +263,7 @@ impl ProcNameCache {
 ///     2. If partition, go up one directory
 ///     3. Extract the device name from the uevent entry
 async fn base_block_device_name(major_num: u32, minor_num: u32, root_dir: &str) -> Option<String> {
-    let sys_block_link = PathBuf::from(format!("{}/{}:{}", root_dir, major_num, minor_num));
+    let sys_block_link = PathBuf::from(format!("{root_dir}/{major_num}:{minor_num}"));
 
     if !sys_block_link.exists() {
         return None;

@@ -2,6 +2,7 @@
 // Copyright (c) Memfault, Inc.
 // See License.txt for details
 use std::io::Read;
+use std::time::Duration;
 
 use eyre::Result;
 #[cfg(test)]
@@ -34,6 +35,7 @@ pub struct NetworkConfig {
     pub hardware_version: String,
     pub software_version: String,
     pub software_type: String,
+    pub upload_timeout: Duration,
 }
 
 impl From<&Config> for NetworkConfig {
@@ -45,6 +47,7 @@ impl From<&Config> for NetworkConfig {
             hardware_version: config.device_info.hardware_version.clone(),
             software_type: config.software_type().to_string(),
             software_version: config.software_version().to_string(),
+            upload_timeout: config.config_file.mar.upload_timeout,
         }
     }
 }
@@ -59,6 +62,7 @@ impl NetworkConfig {
             hardware_version: "DVT".to_owned(),
             software_version: "1.0.0".to_owned(),
             software_type: "test".to_owned(),
+            upload_timeout: Duration::from_secs(30),
         }
     }
 }
