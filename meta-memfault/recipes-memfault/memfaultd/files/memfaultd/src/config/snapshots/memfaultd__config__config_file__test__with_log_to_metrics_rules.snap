@@ -1,6 +1,5 @@
 ---
 source: memfaultd/src/config/config_file.rs
-assertion_line: 716
 expression: content
 ---
 {
@@ -13,6 +12,7 @@ expression: content
   "heartbeat_interval_seconds": 3600,
   "enable_data_collection": true,
   "enable_dev_mode": false,
+  "enable_data_spooling": false,
   "software_version": null,
   "software_type": null,
   "project_key": "",
@@ -83,7 +83,8 @@ expression: content
   "mar": {
     "mar_file_max_size_kib": 10240,
     "mar_entry_max_age_seconds": 604800,
-    "mar_entry_max_count": 1000
+    "mar_entry_max_count": 1000,
+    "upload_timeout_seconds": 30
   },
   "http_server": {
     "bind_address": "127.0.0.1:8787"

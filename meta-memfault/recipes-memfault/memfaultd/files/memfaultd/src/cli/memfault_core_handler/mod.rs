@@ -124,15 +124,15 @@ pub fn main() -> Result<()> {
     init_kernel_logger(log_level, core_handler_logs_tx)?;
 
     if let Err(e) = dumpable_result {
-        warn!("Failed to set dumpable: {}", e);
+        warn!("Failed to set dumpable: {e}");
     };
 
     let config_path = args.config_file.as_ref().map(Path::new);
-    let warnings_handle_fn = |w: &_| debug!("{}", w);
+    let warnings_handle_fn = |w: &_| debug!("{w}");
     let config = match Config::read_from_system(config_path, warnings_handle_fn) {
         Ok(config) => config,
         Err(e) => {
-            error!("Failed to read configuration: {}", e);
+            error!("Failed to read configuration: {e}");
             return Err(e);
         }
     };
@@ -155,22 +155,30 @@ pub fn main() -> Result<()> {
             match client {
                 Ok(client) => {
                     if let Err(e) = client.notify_crash(p) {
-                        debug!("Failed to notify memfaultd of crash: {:?}", e);
+                        debug!("Failed to notify memfaultd of crash: {e:?}");
+                    }
+                    if !config
+                        .effective_device_config()
+                        .capture_sampling()
+                        .debugging_enabled()
+                    {
+                        info!("Debugging resolution below Normal, not saving crash");
+                        return;
                     }
                     debug!("Getting crash logs");
                     match client.get_crash_logs(Utc::now()) {
                         Ok(logs) => {
                             if let Err(e) = app_logs_tx.send(logs) {
-                                debug!("Application logs channel rx already dropped: {:?}", e);
+                                debug!("Application logs channel rx already dropped: {e:?}");
                             }
                         }
                         Err(e) => {
-                            debug!("Failed to get crash logs: {:?}", e);
+                            debug!("Failed to get crash logs: {e:?}");
                         }
                     }
                 }
                 Err(e) => {
-                    debug!("Failed to create memfaultd client: {:?}", e);
+                    debug!("Failed to create memfaultd client: {e:?}");
                 }
             }
         });
@@ -196,6 +204,15 @@ pub fn process_corefile(
     process_name: String,
     process_path: &Path,
 ) -> Result<()> {
+    if !config
+        .effective_device_config()
+        .capture_sampling()
+        .debugging_enabled()
+    {
+        info!("Debugging resolution below Normal, not processing corefile");
+        return Ok(());
+    }
+
     let rate_limiter = if !config.config_file.enable_dev_mode {
         config.coredump_rate_limiter_file_path();
         let mut rate_limiter = PersistentRateLimiter::load(
@@ -236,7 +253,7 @@ pub fn process_corefile(
         thread_filter_supported,
     };
 
-    let cmd_line_file_name = format!("/proc/{}/cmdline", pid);
+    let cmd_line_file_name = format!("/proc/{pid}/cmdline");
     let mut cmd_line_file = File::open(cmd_line_file_name)?;
     let cmd_line = read_proc_cmdline(&mut cmd_line_file)?;
 
@@ -380,7 +397,7 @@ pub fn process_corefile(
 
 fn read_thread_names_or_empty(pid: i32) -> BTreeMap<u32, String> {
     read_thread_names(pid).unwrap_or_else(|e| {
-        debug!("Thread names will not be included in the coredump: {}", e);
+        debug!("Thread names will not be included in the coredump: {e}");
         BTreeMap::new()
     })
 }
@@ -391,7 +408,7 @@ fn generate_tmp_file_name(compression: CoredumpCompression) -> String {
         CoredumpCompression::Gzip => "elf.gz",
         CoredumpCompression::None => "elf",
     };
-    format!("core-{}.{}", id, extension)
+    format!("core-{id}.{extension}")
 }
 
 fn calculate_available_space(config: &Config) -> Result<usize> {

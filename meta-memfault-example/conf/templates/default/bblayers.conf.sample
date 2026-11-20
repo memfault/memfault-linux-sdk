@@ -1,1 +1,23 @@
-../../bblayers.conf.sample
+# POKY_BBLAYERS_CONF_VERSION is increased each time build/conf/bblayers.conf
+# changes incompatibly
+POKY_BBLAYERS_CONF_VERSION = "2"
+
+BBPATH = "${TOPDIR}"
+BBFILES ?= ""
+
+YOCTOROOT = "${@os.path.abspath(os.path.join("${TOPDIR}", os.pardir))}"
+
+BBLAYERS ?= " \
+    ##OEROOT##/../memfault-linux-sdk/meta-memfault \
+    ##OEROOT##/../memfault-linux-sdk/meta-memfault-example \
+    ##OEROOT##/../meta-openembedded/meta-multimedia \
+    ##OEROOT##/../meta-openembedded/meta-networking \
+    ##OEROOT##/../meta-openembedded/meta-oe \
+    ##OEROOT##/../meta-openembedded/meta-python \
+    ##OEROOT##/../meta-rust-bin \
+    ##OEROOT##/../meta-swupdate \
+    ##OEROOT##/meta \
+    ##OEROOT##/meta-poky \
+    ##OEROOT##/meta-yocto-bsp \
+    ##OEROOT##/../meta-raspberrypi \
+"

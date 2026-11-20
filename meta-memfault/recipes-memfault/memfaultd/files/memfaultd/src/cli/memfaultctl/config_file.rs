@@ -75,7 +75,7 @@ fn check_already_set(module: &str, config_val: bool, new_value: bool) -> bool {
         println!("{} is already {}", capitalize(module), enable_string);
     } else {
         let enable_string = if new_value { "Enabling" } else { "Disabling" };
-        println!("{} {}", enable_string, module);
+        println!("{enable_string} {module}");
     }
 
     is_set

@@ -326,7 +326,7 @@ impl BatteryReadingService {
                         .battery_mbox
                         .send_and_forget(BatteryReadingMessage::new(reading))
                     {
-                        warn!("Error updating battery monitor metrics: {}", e);
+                        warn!("Error updating battery monitor metrics: {e}");
                     }
                 }
                 Err(e) => warn!("Failed to get battery reading: {e}"),

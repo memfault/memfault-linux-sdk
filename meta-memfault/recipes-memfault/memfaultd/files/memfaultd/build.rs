@@ -132,7 +132,7 @@ mod ebpf {
             .into_string()
             .expect("Failed to convert to string");
         let dest_path = Path::new(&out_dir).join("ebpf_programs.rs");
-        println!("Output ebpf: {:?}", dest_path);
+        println!("Output ebpf: {dest_path:?}");
         write(dest_path, ebpf_programs_rs_src).expect("Failed to write ebpf_program.rs");
     }
 }

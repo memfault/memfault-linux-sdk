@@ -54,12 +54,12 @@ impl HttpServer {
             match handler.handle_request(&mut request) {
                 HttpHandlerResult::Response(response) => {
                     if let Err(e) = request.respond(response) {
-                        warn!("HTTP: Error sending response {} {}: {:?}", method, url, e);
+                        warn!("HTTP: Error sending response {method} {url}: {e:?}");
                     }
                     return;
                 }
                 HttpHandlerResult::Error(e) => {
-                    warn!("HTTP: Error processing request {} {}: {}", method, url, e);
+                    warn!("HTTP: Error processing request {method} {url}: {e}");
                     let _r = request
                         .respond(Response::empty(500).with_data(e.as_bytes(), Some(e.len())));
                     return;
@@ -67,7 +67,7 @@ impl HttpServer {
                 HttpHandlerResult::NotHandled => { /* continue  */ }
             };
         }
-        debug!("HTTP[404] {} {}", method, url);
+        debug!("HTTP[404] {method} {url}");
         let _r = request.respond(Response::empty(404));
     }
 }

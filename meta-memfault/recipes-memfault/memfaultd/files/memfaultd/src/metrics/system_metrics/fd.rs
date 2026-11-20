@@ -180,7 +180,7 @@ mod test {
                                 "expected MetricReading and result MetricReading differ variant"
                             ),
                         },
-                        _ => panic!("expected a MetricReading::Gauge, got a {:#?}", mr_expected),
+                        _ => panic!("expected a MetricReading::Gauge, got a {mr_expected:#?}"),
                     }
                 })
             }

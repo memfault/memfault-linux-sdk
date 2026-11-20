@@ -65,8 +65,8 @@ impl ThermalMetricsCollector {
     }
 
     fn read_thermal_zone_temp(root_dir: &str, zone_name: &str) -> Result<ThermalZoneTemp> {
-        let temp_file = format!("{}/{}/temp", root_dir, zone_name);
-        let type_file = format!("{}/{}/type", root_dir, zone_name);
+        let temp_file = format!("{root_dir}/{zone_name}/temp");
+        let type_file = format!("{root_dir}/{zone_name}/type");
 
         let temp = read_to_string(temp_file)?.trim().to_string();
         let zone = read_to_string(type_file)?.trim().to_string();
@@ -131,10 +131,10 @@ mod tests {
         std::fs::create_dir(&thermal_zone_dir).unwrap();
 
         let mut temp_file = File::create(thermal_zone_dir.join("temp")).unwrap();
-        writeln!(temp_file, "{}", temp).unwrap();
+        writeln!(temp_file, "{temp}").unwrap();
 
         let mut type_file = File::create(thermal_zone_dir.join("type")).unwrap();
-        writeln!(type_file, "{}", zone_type).unwrap();
+        writeln!(type_file, "{zone_type}").unwrap();
     }
 
     fn thermal_dir_with_zones(zones: &[(&str, &str, &str)]) -> TempDir {

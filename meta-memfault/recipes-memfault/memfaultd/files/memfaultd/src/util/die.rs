@@ -8,8 +8,8 @@ use log::error;
 
 /// Prints the error message to the error log, and then panics.
 pub fn die<E: Error>(e: E) -> ! {
-    error!("Irrecoverable error: {:#}", e);
-    panic!("Irrecoverable error: {:#}", e)
+    error!("Irrecoverable error: {e:#}");
+    panic!("Irrecoverable error: {e:#}")
 }
 
 pub trait UnwrapOrDie<T> {

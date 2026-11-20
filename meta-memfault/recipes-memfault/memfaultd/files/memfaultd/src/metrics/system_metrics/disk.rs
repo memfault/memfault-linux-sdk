@@ -95,7 +95,7 @@ where
                 match self.build_disk_metrics(raw, &disk_stats_map) {
                     Ok(metrics) => Some(metrics),
                     Err(e) => {
-                        error!("Failed to get MMC metrics for disk {}: {}", disk_name, e);
+                        error!("Failed to get MMC metrics for disk {disk_name}: {e}");
                         None
                     }
                 }
@@ -155,8 +155,7 @@ where
             match lifetime.lifetime_a_pct {
                 Some(lifetime_a_pct) => {
                     let lifetime_a_metric_key = MetricStringKey::from_str(&format!(
-                        "{}/{}/lifetime_remaining_pct",
-                        DISK_METRIC_NAMESPACE, disk_name
+                        "{DISK_METRIC_NAMESPACE}/{disk_name}/lifetime_remaining_pct"
                     ))
                     .map_err(|e| eyre!("Invalid metric key: {}", e))?;
                     let lifetime_a_metric_reading =
@@ -178,8 +177,7 @@ where
             match lifetime.lifetime_b_pct {
                 Some(lifetime_b_pct) => {
                     let lifetime_b_metric_key = MetricStringKey::from_str(&format!(
-                        "{}/{}/lifetime_b_remaining_pct",
-                        DISK_METRIC_NAMESPACE, disk_name
+                        "{DISK_METRIC_NAMESPACE}/{disk_name}/lifetime_b_remaining_pct"
                     ))
                     .map_err(|e| eyre!("Invalid metric key: {}", e))?;
                     let lifetime_b_metric_reading =
@@ -233,31 +231,28 @@ where
             ) {
                 Ok(Some(reading)) => metrics.push(reading),
                 Ok(None) => {}
-                Err(e) => debug!("Failed to calculate bytes_written: {}", e),
+                Err(e) => debug!("Failed to calculate bytes_written: {e}"),
             }
         }
 
         match raw.product_name {
             Ok(product_name) => {
-                let product_name_metric_key = MetricStringKey::from_str(&format!(
-                    "{}/{}/name",
-                    DISK_METRIC_NAMESPACE, disk_name
-                ))
-                .map_err(|e| eyre!("Invalid metric key: {}", e))?;
+                let product_name_metric_key =
+                    MetricStringKey::from_str(&format!("{DISK_METRIC_NAMESPACE}/{disk_name}/name"))
+                        .map_err(|e| eyre!("Invalid metric key: {}", e))?;
                 let product_name_reading =
                     KeyedMetricReading::new_report_tag(product_name_metric_key, product_name);
                 metrics.push(product_name_reading);
             }
             Err(e) => {
-                debug!("Failed to read product name: {}", e)
+                debug!("Failed to read product name: {e}")
             }
         }
 
         match raw.manufacturer_id {
             Ok(manufacturer_id) => {
                 let manufacturer_id_metric_key = MetricStringKey::from_str(&format!(
-                    "{}/{}/manufacturer_id",
-                    DISK_METRIC_NAMESPACE, disk_name
+                    "{DISK_METRIC_NAMESPACE}/{disk_name}/manufacturer_id"
                 ))
                 .map_err(|e| eyre!("Invalid metric key: {}", e))?;
                 let manufacturer_id_reading =
@@ -265,15 +260,14 @@ where
                 metrics.push(manufacturer_id_reading);
             }
             Err(e) => {
-                debug!("Failed to read product name: {}", e)
+                debug!("Failed to read product name: {e}")
             }
         }
 
         match raw.sector_count {
             Ok(sector_count) => {
                 let disk_size_metric_key = MetricStringKey::from_str(&format!(
-                    "{}/{}/total_size_bytes",
-                    DISK_METRIC_NAMESPACE, disk_name
+                    "{DISK_METRIC_NAMESPACE}/{disk_name}/total_size_bytes"
                 ))
                 .map_err(|e| eyre!("Invalid metric key: {}", e))?;
                 let device_size = sector_count * SECTOR_SIZE;
@@ -282,15 +276,14 @@ where
                 metrics.push(sector_count_reading);
             }
             Err(e) => {
-                debug!("Failed to read disk sector count: {}", e)
+                debug!("Failed to read disk sector count: {e}")
             }
         }
 
         match raw.manufacture_date {
             Ok(manufacture_date) => {
                 let manufacture_date_metric_key = MetricStringKey::from_str(&format!(
-                    "{}/{}/manufacture_date",
-                    DISK_METRIC_NAMESPACE, disk_name
+                    "{DISK_METRIC_NAMESPACE}/{disk_name}/manufacture_date"
                 ))
                 .map_err(|e| eyre!("Invalid metric key: {}", e))?;
                 let manufacture_date_reading = KeyedMetricReading::new_report_tag(
@@ -300,15 +293,14 @@ where
                 metrics.push(manufacture_date_reading);
             }
             Err(e) => {
-                debug!("Failed to read manufacture date: {}", e)
+                debug!("Failed to read manufacture date: {e}")
             }
         }
 
         match raw.revision {
             Ok(revision) => {
                 let revision_metric_key = MetricStringKey::from_str(&format!(
-                    "{}/{}/revision",
-                    DISK_METRIC_NAMESPACE, disk_name
+                    "{DISK_METRIC_NAMESPACE}/{disk_name}/revision"
                 ))
                 .map_err(|e| eyre!("Invalid metric key: {}", e))?;
                 let revision_reading =
@@ -316,22 +308,21 @@ where
                 metrics.push(revision_reading);
             }
             Err(e) => {
-                debug!("Failed to read revision: {}", e)
+                debug!("Failed to read revision: {e}")
             }
         }
 
         match raw.serial {
             Ok(serial) => {
                 let serial_metric_key = MetricStringKey::from_str(&format!(
-                    "{}/{}/serial",
-                    DISK_METRIC_NAMESPACE, disk_name
+                    "{DISK_METRIC_NAMESPACE}/{disk_name}/serial"
                 ))
                 .map_err(|e| eyre!("Invalid metric key: {}", e))?;
                 let serial_reading = KeyedMetricReading::new_report_tag(serial_metric_key, serial);
                 metrics.push(serial_reading);
             }
             Err(e) => {
-                debug!("Failed to read serial: {}", e)
+                debug!("Failed to read serial: {e}")
             }
         }
 
@@ -352,8 +343,7 @@ where
             {
                 Some(bytes_since_last_reading) => {
                     let bytes_metric_key = MetricStringKey::from_str(&format!(
-                        "{}/{}/bytes_written",
-                        DISK_METRIC_NAMESPACE, disk_name
+                        "{DISK_METRIC_NAMESPACE}/{disk_name}/bytes_written"
                     ))
                     .map_err(|e| eyre!("Invalid metric key: {}", e))?;
 
@@ -364,10 +354,7 @@ where
                     Ok(Some(bytes_metric))
                 }
                 None => {
-                    warn!(
-                        "bytes_written metric overflow for disk {}, discarding reading",
-                        disk_name
-                    );
+                    warn!("bytes_written metric overflow for disk {disk_name}, discarding reading");
                     Ok(None)
                 }
             }
@@ -402,13 +389,13 @@ pub fn get_tracked_disks(
 
                 file_name
                     .contains(TRACKED_DISK_PREFIX)
-                    .then(|| format!("/dev/{}", file_name))
+                    .then(|| format!("/dev/{file_name}"))
             })
             .collect(),
         DiskstatsMetricsConfig::Devices(devs) => devs
             .iter()
             .filter(|dev| dev.contains(TRACKED_DISK_PREFIX))
-            .map(|dev| format!("/dev/{}", dev))
+            .map(|dev| format!("/dev/{dev}"))
             .collect(),
     };
 

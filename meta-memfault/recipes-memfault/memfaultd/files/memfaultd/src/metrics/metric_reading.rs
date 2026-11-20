@@ -224,7 +224,7 @@ impl KeyedMetricReading {
         };
 
         let key_string = if use_legacy_keys {
-            format!("{}/{}", prefix, name)
+            format!("{prefix}/{name}")
         } else {
             name.to_string()
         };

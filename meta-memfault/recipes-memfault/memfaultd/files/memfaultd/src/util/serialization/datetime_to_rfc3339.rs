@@ -18,7 +18,7 @@ where
 {
     let datetime_str = String::deserialize(deserializer)?;
     let datetime = DateTime::parse_from_rfc3339(&datetime_str)
-        .map_err(|e| serde::de::Error::custom(format!("invalid timestamp: {}", e)))?;
+        .map_err(|e| serde::de::Error::custom(format!("invalid timestamp: {e}")))?;
 
     Ok(datetime.with_timezone(&Utc))
 }

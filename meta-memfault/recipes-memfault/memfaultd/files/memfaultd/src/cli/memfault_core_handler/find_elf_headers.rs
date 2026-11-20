@@ -21,10 +21,7 @@ pub fn find_elf_headers_and_build_id_note_ranges<P: Read + Seek>(
     vaddr_base: ElfPtrSize,
     stream: &mut P,
 ) -> Result<Vec<MemoryRange>> {
-    debug!(
-        "Detecting ELF headers and build ID note ranges from vaddr 0x{:x}",
-        vaddr_base
-    );
+    debug!("Detecting ELF headers and build ID note ranges from vaddr 0x{vaddr_base:x}");
 
     let mut elf_reader = CoreReaderImpl::new(stream)?;
     let elf_header = elf_reader.elf_header();

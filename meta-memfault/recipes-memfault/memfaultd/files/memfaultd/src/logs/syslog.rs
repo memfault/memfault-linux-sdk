@@ -62,7 +62,7 @@ impl TaskService for SyslogServer {
         Box::pin(async {
             let socket = UdpSocket::bind(self.bind_address)
                 .await
-                .map_err(|e| format!("could not bind the syslog socket: {}", e))?;
+                .map_err(|e| format!("could not bind the syslog socket: {e}"))?;
 
             debug!(
                 "SyslogServer listening on {}",
@@ -73,13 +73,13 @@ impl TaskService for SyslogServer {
         })
     }
     fn run_task(&mut self) -> LocalBoxFuture<'_, Result<(), String>> {
-        Box::pin(async { self.run_once().await.map_err(|e| format!("{}", e)) })
+        Box::pin(async { self.run_once().await.map_err(|e| format!("{e}")) })
     }
 }
 
 impl SyslogServer {
     pub fn new(sender: LogEntrySender, bind_address: SocketAddr) -> Self {
-        debug!("SyslogServer created for {}", bind_address);
+        debug!("SyslogServer created for {bind_address}");
         Self {
             sender,
             bind_address,

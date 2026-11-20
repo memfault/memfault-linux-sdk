@@ -309,7 +309,7 @@ mod test {
             let mut entry = LogEntry::new_with_message(&message);
             mapper
                 .map_log(&mut entry)
-                .unwrap_or_else(|_| panic!("Failed to map log string {:?}", message));
+                .unwrap_or_else(|_| panic!("Failed to map log string {message:?}"));
 
             assert_eq!(
                 entry.data.priority.as_ref().unwrap().as_str(),

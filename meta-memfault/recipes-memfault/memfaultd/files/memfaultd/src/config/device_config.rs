@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config::{LogFilterRule, LogRuleAction},
+    metrics::MetricReportType,
     network::{
         DeviceConfigResponse, DeviceConfigResponseLogFilters, DeviceConfigResponseResolution,
         DeviceConfigRevision,
@@ -132,7 +133,44 @@ impl Default for DeviceConfig {
     }
 }
 
+impl DeviceConfig {
+    /// Overrides the sampling with the development sampling if `enable_dev_mode` is true.
+    pub fn with_dev_mode(mut self, enable_dev_mode: bool) -> Self {
+        if enable_dev_mode {
+            self.sampling = Sampling::development();
+        }
+        self
+    }
+
+    // when no config is set default to capturing data
+    pub fn capture_sampling(&self) -> Sampling {
+        match self.revision {
+            None => Sampling::development(),
+            Some(_) => self.sampling,
+        }
+    }
+}
+
 impl Sampling {
+    pub fn debugging_enabled(&self) -> bool {
+        self.debugging_resolution >= Resolution::Normal
+    }
+
+    pub fn logging_enabled(&self) -> bool {
+        self.logging_resolution >= Resolution::Normal
+    }
+
+    pub fn monitoring_enabled(&self) -> bool {
+        self.monitoring_resolution >= Resolution::Normal
+    }
+
+    pub fn metric_report_enabled(&self, report_type: &MetricReportType) -> bool {
+        match report_type {
+            MetricReportType::DailyHeartbeat => self.monitoring_resolution >= Resolution::Low,
+            MetricReportType::Heartbeat | MetricReportType::Session(_) => self.monitoring_enabled(),
+        }
+    }
+
     pub fn development() -> Self {
         Self {
             debugging_resolution: Resolution::High,
@@ -144,7 +182,11 @@ impl Sampling {
 
 #[cfg(test)]
 mod test {
+    use std::str::FromStr;
+
     use insta::assert_json_snapshot;
+
+    use crate::metrics::SessionName;
 
     use crate::network::{
         DeviceConfigResponseConfig, DeviceConfigResponseData, DeviceConfigResponseMemfault,
@@ -152,6 +194,80 @@ mod test {
     };
 
     use super::*;
+
+    #[rstest::rstest]
+    #[case::not_fetched(None, Resolution::Off, true)]
+    #[case::fetched_off(Some(1), Resolution::Off, false)]
+    #[case::fetched_low(Some(1), Resolution::Low, false)]
+    #[case::fetched_normal(Some(1), Resolution::Normal, true)]
+    #[case::fetched_high(Some(1), Resolution::High, true)]
+    fn test_debugging_capture_enabled(
+        #[case] revision: Option<crate::network::DeviceConfigRevision>,
+        #[case] debugging_resolution: Resolution,
+        #[case] expected: bool,
+    ) {
+        let config = DeviceConfig {
+            revision,
+            sampling: Sampling {
+                debugging_resolution,
+                ..DeviceConfig::default().sampling
+            },
+            ..DeviceConfig::default()
+        };
+        assert_eq!(config.capture_sampling().debugging_enabled(), expected);
+    }
+
+    #[rstest::rstest]
+    #[case::heartbeat_not_fetched(MetricReportType::Heartbeat, None, Resolution::Off, true)]
+    #[case::heartbeat_off(MetricReportType::Heartbeat, Some(1), Resolution::Off, false)]
+    #[case::heartbeat_low(MetricReportType::Heartbeat, Some(1), Resolution::Low, false)]
+    #[case::heartbeat_normal(MetricReportType::Heartbeat, Some(1), Resolution::Normal, true)]
+    #[case::heartbeat_high(MetricReportType::Heartbeat, Some(1), Resolution::High, true)]
+    #[case::daily_heartbeat_not_fetched(
+        MetricReportType::DailyHeartbeat,
+        None,
+        Resolution::Off,
+        true
+    )]
+    #[case::daily_heartbeat_off(MetricReportType::DailyHeartbeat, Some(1), Resolution::Off, false)]
+    #[case::daily_heartbeat_low(MetricReportType::DailyHeartbeat, Some(1), Resolution::Low, true)]
+    #[case::daily_heartbeat_normal(
+        MetricReportType::DailyHeartbeat,
+        Some(1),
+        Resolution::Normal,
+        true
+    )]
+    #[case::daily_heartbeat_high(MetricReportType::DailyHeartbeat, Some(1), Resolution::High, true)]
+    #[case::session_not_fetched(session(), None, Resolution::Off, true)]
+    #[case::session_off(session(), Some(1), Resolution::Off, false)]
+    #[case::session_low(session(), Some(1), Resolution::Low, false)]
+    #[case::session_normal(session(), Some(1), Resolution::Normal, true)]
+    #[case::session_high(session(), Some(1), Resolution::High, true)]
+    fn test_metric_report_capture_enabled(
+        #[case] report_type: MetricReportType,
+        #[case] revision: Option<crate::network::DeviceConfigRevision>,
+        #[case] monitoring_resolution: Resolution,
+        #[case] expected: bool,
+    ) {
+        let config = DeviceConfig {
+            revision,
+            sampling: Sampling {
+                monitoring_resolution,
+                ..DeviceConfig::default().sampling
+            },
+            ..DeviceConfig::default()
+        };
+        assert_eq!(
+            config
+                .capture_sampling()
+                .metric_report_enabled(&report_type),
+            expected
+        );
+    }
+
+    fn session() -> MetricReportType {
+        MetricReportType::Session(SessionName::from_str("test").unwrap())
+    }
 
     #[test]
     fn test_device_config_from_response() {

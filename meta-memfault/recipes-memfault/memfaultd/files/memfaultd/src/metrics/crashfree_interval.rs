@@ -113,11 +113,7 @@ where
         let process_crash_metrics = self.process_crash_count.drain().flat_map(
             |(process_name, crash_count)| -> Result<KeyedMetricReading> {
                 let operation_crashes_process_key = MetricStringKey::from_str(
-                    format!(
-                        "{}{}",
-                        METRIC_OPERATIONAL_CRASHES_PROCESS_PREFIX, process_name
-                    )
-                    .as_str(),
+                    format!("{METRIC_OPERATIONAL_CRASHES_PROCESS_PREFIX}{process_name}").as_str(),
                 )
                 .map_err(|e| eyre!("Couldn't construct MetricStringKey: {}", e))?;
                 Ok(KeyedMetricReading::add_to_counter(
@@ -129,7 +125,7 @@ where
 
         metrics.extend(process_crash_metrics);
 
-        trace!("Crashfree hours metrics: {:?}", metrics);
+        trace!("Crashfree hours metrics: {metrics:?}");
 
         self.metrics_mbox.send_and_forget(metrics)?;
 
@@ -193,7 +189,7 @@ where
             .or_insert(0) += 1;
 
         if let Err(e) = self.update() {
-            warn!("Error updating crashfree hours: {}", e);
+            warn!("Error updating crashfree hours: {e}");
         }
     }
 }
@@ -204,7 +200,7 @@ where
 {
     fn deliver(&mut self, _: CrashFreeTickMessage) {
         if let Err(e) = self.update() {
-            warn!("Error updating crashfree hours: {}", e);
+            warn!("Error updating crashfree hours: {e}");
         }
     }
 }
@@ -241,10 +237,9 @@ where
                         .expect("crashfree mailbox closed");
                 }
                 Err(e) => {
-                    warn!("Failed to parse notify crash request: {}", e);
+                    warn!("Failed to parse notify crash request: {e}");
                     return HttpHandlerResult::Error(format!(
-                        "Failed to notify crash request: {}",
-                        e
+                        "Failed to notify crash request: {e}"
                     ));
                 }
             }

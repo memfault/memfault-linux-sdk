@@ -50,10 +50,7 @@ pub fn find_dynamic_linker_ranges<P: Read + Seek>(
     memory_maps: &[MemoryRange],
     output: &mut Vec<MemoryRange>,
 ) -> Result<()> {
-    debug!(
-        "Detecting dynamic linker ranges from vaddr 0x{:x}",
-        phdr_vaddr
-    );
+    debug!("Detecting dynamic linker ranges from vaddr 0x{phdr_vaddr:x}");
 
     let phdr = read_main_executable_phdr(proc_mem_stream, phdr_vaddr, phdr_num)?;
     let main_reloc_addr = calc_relocation_addr(phdr_vaddr, phdr);
@@ -133,7 +130,7 @@ fn find_c_string_region<P: Read + Seek>(
             )
         })
         .unwrap_or_else(|e| {
-            warn!("Failed to read C-string at 0x{:x}: {}", c_string_vaddr, e);
+            warn!("Failed to read C-string at 0x{c_string_vaddr:x}: {e}");
             MemoryRange::from_start_and_size(c_string_vaddr, read_size)
         })
 }

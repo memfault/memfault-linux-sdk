@@ -192,7 +192,7 @@ where
 
         if bytes_total > 0.0 {
             let bytes_free_reading = KeyedMetricReading::new_histogram(
-                format!("disk_space/{}/free_bytes", disk_id)
+                format!("disk_space/{disk_id}/free_bytes")
                     .as_str()
                     .parse()
                     .map_err(|e| eyre!("Couldn't parse metric key for bytes free: {}", e))?,
@@ -200,7 +200,7 @@ where
             );
 
             let bytes_used_reading = KeyedMetricReading::new_histogram(
-                format!("disk_space/{}/used_bytes", disk_id)
+                format!("disk_space/{disk_id}/used_bytes")
                     .as_str()
                     .parse()
                     .map_err(|e| eyre!("Couldn't parse metric key for bytes used: {}", e))?,
@@ -283,7 +283,7 @@ mod test {
         let mounts_file_path = dir.path().join("mounts");
         let mut mounts_file = File::create(&mounts_file_path).unwrap();
         for line in lines {
-            writeln!(mounts_file, "{}", line).unwrap();
+            writeln!(mounts_file, "{line}").unwrap();
         }
         mounts_file_path
     }
